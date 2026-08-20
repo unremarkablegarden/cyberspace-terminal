@@ -14,9 +14,9 @@ export class Baud {
     return this.chunks.length === 0
   }
 
-  /** Returns how many bytes went out this call. */
+  /** dt in milliseconds. Returns how many bytes went out this call. */
   drain(dt: number): number {
-    let budget = Math.max(1, Math.round(this.cps * dt))
+    let budget = Math.max(1, Math.round((this.cps * dt) / 1000))
     let sent = 0
     while (budget > 0 && this.chunks.length) {
       const head = this.chunks[0]

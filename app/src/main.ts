@@ -100,6 +100,7 @@ xt.onBell(() => snd.beep(880, 0.09))
 let gridLock = 0
 let halted = false
 let killSession: (() => void) | null = null
+let lastKeyAt = 0
 
 async function withGrid(fn: () => Promise<void>): Promise<void> {
   gridLock++
@@ -215,10 +216,20 @@ async function rebootProgram(p: Proc): Promise<number> {
   return 0
 }
 
+const MOTD_CPS = 240
+
 async function session(kernel: Kernel): Promise<void> {
   while (!halted) {
     const motd = await fs.promises.readFile('/etc/motd', 'utf8').catch(() => '')
-    tty.stdout.write(String(motd))
+    const cps = tx.cps
+    if (cps <= 38400) {
+      tx.cps = Math.min(cps, MOTD_CPS)
+      tty.stdout.write(String(motd))
+      await waitForDrain()
+      tx.cps = cps
+    } else {
+      tty.stdout.write(String(motd))
+    }
     const task = kernel.spawn(shellMain, {
       argv: ['sh'],
       env: { ...ENV },
@@ -325,6 +336,7 @@ function wake(): void {
 }
 
 function handleKeyName(name: string, ctrl = false): void {
+  lastKeyAt = performance.now()
   if (overlay?.open) {
     overlay.key(name)
     if (!overlay.open) gridLock--
@@ -429,14 +441,15 @@ const program = {
     last = t
     if (gridLock === 0 && !halted) {
       const sent = tx.drain(dt)
-      // Bulk output chatters; a single echoed keystroke does not.
-      if (sent >= 4) snd.blip(1400)
+      // Machine output chatters; the echo of a keystroke does not.
+      if (sent > 0 && performance.now() - lastKeyAt > 90) snd.blip(1400)
       syncTerm(xt, s.term)
     }
   },
 
   key(_s: unknown, e: KeyboardEvent): void {
     wake()
+    lastKeyAt = performance.now()
     if (e.key === 'F1') {
       e.preventDefault()
       toggleOverlay()
@@ -461,7 +474,7 @@ const program = {
 // machine advancing while nobody is looking.
 setInterval(() => {
   if (!document.hidden || gridLock !== 0 || halted || !screen) return
-  tx.drain(1)
+  tx.drain(1000)
   syncTerm(xt, screen.term)
 }, 1000)
 
