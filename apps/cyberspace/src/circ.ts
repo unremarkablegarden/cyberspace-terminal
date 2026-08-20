@@ -3,8 +3,9 @@
 // commands resolve server-side except /join, /rooms, /who, /quit.
 
 import { dec, type Proc, type Program } from '@cyberspace/kernel'
-import { Surface, parseKeys, NORMAL, BOLD, DIM, INVERSE } from '@cyberspace/tui'
+import { Surface, parseKeys, NORMAL, BOLD, DIM } from '@cyberspace/tui'
 import { ApiClient, ApiError } from './api.js'
+import { bodyOf, followList, hhmm, wrapSpans, type MsgBody, type Span } from './chatui.js'
 
 interface Room {
   id: string
@@ -19,83 +20,19 @@ interface RoomUser {
   lastActivity: number | null
 }
 
-interface Msg {
+interface Msg extends MsgBody {
   id: string
   username?: string
-  content?: string
   timestamp?: number
   isAction?: boolean
   isSystem?: boolean
   deleted?: boolean
-  eightballAnswer?: string
-  fortuneText?: string
-  gifUrl?: string
-  imageUrl?: string
-  audioAttachment?: { artist?: string; title?: string }
-  style?: string
 }
-
-type Span = [text: string, attr: number]
 
 const SIDEBAR_W = 14
 const NARROW = 60
 const MAX_MSGS = 200
 const MAX_INPUT = 2048
-
-const hhmm = (t?: number): string => {
-  if (typeof t !== 'number') return '--:--'
-  const d = new Date(t)
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-}
-
-/** One message's tail: text plus any attachment placeholders. */
-function bodyOf(m: Msg): string {
-  let text = m.style === 'art' ? '[ART]' : (m.content ?? '')
-  if (m.eightballAnswer) text += ` ${m.eightballAnswer}`
-  if (m.fortuneText) text += ` ${m.fortuneText}`
-  if (m.audioAttachment) {
-    const a = m.audioAttachment
-    text += ` [song: ${[a.artist, a.title].filter(Boolean).join(' - ')}]`
-  }
-  if (m.gifUrl) text += ' [GIF]'
-  if (m.imageUrl) text += ' [IMG]'
-  return text.trim()
-}
-
-/** Wrap spans to width; continuation lines get a hanging indent. */
-function wrapSpans(spans: Span[], width: number, indent: number): Span[][] {
-  const out: Span[][] = []
-  let line: Span[] = []
-  let used = 0
-  const pad: Span = [' '.repeat(indent), NORMAL]
-
-  const flush = (): void => {
-    if (line.length) out.push(line)
-    line = [pad]
-    used = indent
-  }
-
-  for (const [text, attr] of spans) {
-    for (const word of text.split(/(\s+)/)) {
-      if (!word) continue
-      if (used + word.length > width && used > indent) flush()
-      // A word longer than the line hard-breaks.
-      let w = word
-      while (used + w.length > width) {
-        const take = width - used
-        line.push([w.slice(0, take), attr])
-        w = w.slice(take)
-        flush()
-      }
-      if (w && !(w.trim() === '' && used === indent)) {
-        line.push([w, attr])
-        used += w.length
-      }
-    }
-  }
-  if (line.length && (line.length > 1 || line[0] !== pad)) out.push(line)
-  return out.length ? out : [[]]
-}
 
 export function circProgram(api: ApiClient, rtdb: string): Program {
   const base = rtdb.replace(/\/$/, '')
@@ -132,9 +69,8 @@ export function circProgram(api: ApiClient, rtdb: string): Program {
     let lastActivity = Date.now()
     let running = true
 
-    let es: EventSource | null = null
+    let stopStream: (() => void) | null = null
     let heartbeat: ReturnType<typeof setInterval> | null = null
-    let reconnect: ReturnType<typeof setTimeout> | null = null
 
     const system = (text: string): void => {
       const id = `local-${Date.now()}-${Math.random()}`
@@ -208,9 +144,8 @@ export function circProgram(api: ApiClient, rtdb: string): Program {
     }
 
     const closeStream = (): void => {
-      es?.close()
-      es = null
-      if (reconnect) { clearTimeout(reconnect); reconnect = null }
+      stopStream?.()
+      stopStream = null
     }
 
     const applyRaw = (id: string, raw: Record<string, unknown> | null): void => {
@@ -223,45 +158,24 @@ export function circProgram(api: ApiClient, rtdb: string): Program {
       for (const m of ordered().slice(0, msgs.size - MAX_MSGS)) msgs.delete(m.id)
     }
 
-    const connect = async (roomId: string, renew = false): Promise<void> => {
+    const connect = (roomId: string): void => {
       closeStream()
-      const token = await api.token(renew)
-      if (!token || !running || room?.id !== roomId) return
-
-      const url = `${base}/chat_messages/${encodeURIComponent(roomId)}.json` +
-        `?orderBy=%22timestamp%22&limitToLast=100&auth=${encodeURIComponent(token)}`
-      const stream = new EventSource(url)
-      es = stream
-
-      const retry = (expired: boolean): void => {
-        if (!running || es !== stream || room?.id !== roomId) return
-        closeStream()
-        reconnect = setTimeout(() => { void connect(roomId, expired) }, 2000)
-      }
-
-      const onData = (e: MessageEvent): void => {
-        const { path, data } = JSON.parse(e.data as string) as
-          { path: string; data: Record<string, unknown> | null }
-        const seg = path.replace(/^\//, '').split('/')[0]
-        if (seg === '') {
-          if (data === null) msgs.clear()
-          else for (const [id, raw] of Object.entries(data)) {
-            applyRaw(id, raw as Record<string, unknown> | null)
+      stopStream = followList(
+        api,
+        token => `${base}/chat_messages/${encodeURIComponent(roomId)}.json` +
+          `?orderBy=%22timestamp%22&limitToLast=100&auth=${encodeURIComponent(token)}`,
+        (id, data, snapshot) => {
+          if (id === null) {
+            if (snapshot) msgs.clear()
+            for (const [k, raw] of Object.entries(data ?? {})) {
+              applyRaw(k, raw as Record<string, unknown> | null)
+            }
+          } else {
+            applyRaw(id, data)
           }
-        } else {
-          applyRaw(seg, data)
-        }
-        trim()
-        paint()
-      }
-
-      stream.addEventListener('put', onData)
-      stream.addEventListener('patch', onData)
-      stream.addEventListener('auth_revoked', () => retry(true))
-      stream.addEventListener('cancel', () => retry(false))
-      stream.onerror = () => {
-        if (stream.readyState === EventSource.CLOSED) retry(false)
-      }
+          trim()
+          paint()
+        })
     }
 
     const fetchUsers = async (): Promise<void> => {
@@ -315,7 +229,7 @@ export function circProgram(api: ApiClient, rtdb: string): Program {
       room = next
       scroll = 0
       void api.post(`/v1/circ/${next.id}/read`, {}).catch(() => {})
-      void connect(next.id)
+      connect(next.id)
       void fetchUsers()
       if (heartbeat) clearInterval(heartbeat)
       heartbeat = setInterval(() => { void beat(); void fetchUsers() }, heartbeatMs)
