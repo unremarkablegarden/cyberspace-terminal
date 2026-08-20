@@ -57,6 +57,13 @@ export class Term extends CellGrid {
      */
     this.alt = null
 
+    /**
+     * The coverage face: asked last, before `?`, for codepoints the family
+     * lacks. Fitted like any foreign face, so a borrowed glyph is visibly a
+     * size out — the reader can see the machine reached for it.
+     */
+    this.fallback = null
+
     // Assigned by setFont.
     this.w = 0
     this.h = 0
@@ -128,6 +135,10 @@ export class Term extends CellGrid {
           if (!glyph) face = null
         }
         if (!glyph) glyph = glyphs.get(code)
+        if (!glyph && this.fallback) {
+          const fb2 = this.fallback.glyphs.get(code)
+          if (fb2) { glyph = fb2; face = this.fallback }
+        }
         if (!glyph) glyph = glyphs.get(63)
         if (!glyph) continue
 

@@ -10,18 +10,26 @@ export class Baud {
     if (data.length) this.chunks.push(data)
   }
 
-  drain(dt: number): void {
+  get idle(): boolean {
+    return this.chunks.length === 0
+  }
+
+  /** Returns how many bytes went out this call. */
+  drain(dt: number): number {
     let budget = Math.max(1, Math.round(this.cps * dt))
+    let sent = 0
     while (budget > 0 && this.chunks.length) {
       const head = this.chunks[0]
       const take = Math.min(budget, head.length - this.offset)
       this.out(head.subarray(this.offset, this.offset + take))
       this.offset += take
       budget -= take
+      sent += take
       if (this.offset >= head.length) {
         this.chunks.shift()
         this.offset = 0
       }
     }
+    return sent
   }
 }

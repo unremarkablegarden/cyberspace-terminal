@@ -1,0 +1,5 @@
+Cherry MX Red ABS keyboard sounds
+Source: mechvibes (https://github.com/hainguyents13/mechvibes)
+Distributed via thock-soundpacks (https://github.com/kamillobinski/thock-soundpacks)
+License: MIT
+Files: key1-5 = default keypress variants; space/enter/del + arrup/down/left/right = special keys.

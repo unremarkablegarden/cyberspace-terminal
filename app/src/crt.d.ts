@@ -1,7 +1,12 @@
-// @cyberspace/crt is plain JS; typings cover what the app uses.
+// @cyberspace/crt's JS half; typings cover what the app uses.
 
 declare module '@cyberspace/crt' {
-  export function mount(canvas: HTMLCanvasElement, program: unknown): Promise<unknown>
+  export interface CrtScreen {
+    term: any
+    crt: any
+    canvas: HTMLCanvasElement
+  }
+  export function mount(canvas: HTMLCanvasElement, program: unknown): Promise<CrtScreen>
 }
 
 declare module '@cyberspace/crt/term' {
@@ -18,5 +23,8 @@ declare module '@cyberspace/crt/term' {
 
 declare module '@cyberspace/crt/config' {
   export const RENDER: { cursor: boolean; blinkMs: number; superSample: number; pixelBudget: number }
+  export const GRID: { cols: number; rows: number; padX: number; padY: number }
+  export const PRESETS: Record<string, Record<string, number>>
   export const PHOSPHORS: Record<string, [number, number, number]>
+  export const PHOSPHOR: string
 }

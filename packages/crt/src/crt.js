@@ -300,6 +300,11 @@ export class CRT {
     if (tint) this.phosphor = tint
   }
 
+  /** Overlay uniform values onto the current tuning. See PRESETS in config.js. */
+  setParams(params) {
+    Object.assign(this.params, params)
+  }
+
   /** Allocate the buffers sized from the source. */
   build() {
     const gl = this.gl

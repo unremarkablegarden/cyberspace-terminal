@@ -68,6 +68,33 @@ export const SCREEN = {
   rollSpeed: 0.33,
 }
 
+/** The `soft` preset: wider spot, no peaking, gentle grille. A monitor, not a prop. */
+export const SOFT = {
+  decay: 0.62, beam: 0.62, sharpen: 0, scanMin: 0.26, scanMax: 0.48,
+  threshold: 0.22, bloomAmt: 0.85, fill: 0.84, curve: 0.022, glass: 0.035,
+  vignette: 0.24, brightness: 1.06, bg: 0.06, ambient: 0.020,
+  maskAmt: 0.30, maskPitch: 3.0, chroma: 0.55,
+  noise: 0.075, noiseStreak: 2.5, snow: 0.0004, flicker: 0.030,
+  roll: 0.045, rollSpeed: 0.11,
+}
+
+/** The `bright` preset: a tube that has been on for fifteen years, being filmed. */
+export const BRIGHT_TUBE = {
+  decay: 0.56, beam: 0.62, sharpen: 0, scanMin: 0.37, scanMax: 0.76,
+  threshold: 0.29, bloomAmt: 1.28, fill: 0.84, curve: 0.015, glass: 0.016,
+  vignette: 0.22, brightness: 1.13, bg: 0.06, ambient: 0.088,
+  maskAmt: 0.4, maskPitch: 2.5, chroma: 0.51,
+  noise: 0.105, noiseStreak: 2.5, snow: 0.0054, flicker: 0.04,
+  roll: 0.16, rollSpeed: 0.11,
+}
+
+/** Named tunings, in the order a config UI cycles them. SCREEN is `sharp`. */
+export const PRESETS = {
+  sharp: SCREEN,
+  soft: SOFT,
+  bright: BRIGHT_TUBE,
+}
+
 /**
  * Tints, as vec3 multipliers on the beam. The brightest channel is 1.00 in each.
  * Luminances are kept close (matrix .78, vt320 .67, brutalist .72, bubblegum

@@ -9,6 +9,11 @@
     "./crt": "./src/crt.js",
     "./bdf": "./src/bdf.js",
     "./vector": "./src/vector.js",
+    "./audio": "./src/audio.ts",
+    "./effects": "./src/effects.ts",
+    "./fonts": "./src/fonts.ts",
+    "./settings": "./src/settings.ts",
+    "./softkeys": "./src/softkeys.ts",
     "./config": "./config.js",
     "./fonts/*": "./fonts/*"
   }

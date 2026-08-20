@@ -1,4 +1,4 @@
-// KeyboardEvent -> terminal input bytes. Minimal set for the spike.
+// Key names -> terminal input bytes. Minimal set for now.
 
 const NAMED: Record<string, string> = {
   Enter: '\r',
@@ -14,14 +14,19 @@ const NAMED: Record<string, string> = {
   Delete: '\x1b[3~',
 }
 
-export function encodeKey(e: KeyboardEvent): string | null {
-  if (e.metaKey || e.altKey) return null
-  if (e.ctrlKey) {
-    if (e.key.length !== 1) return null
-    const c = e.key.toUpperCase().charCodeAt(0)
+/** Encode by key name — shared by physical keys and the soft keyboard. */
+export function encodeKeyName(key: string, ctrl = false): string | null {
+  if (ctrl) {
+    if (key.length !== 1) return null
+    const c = key.toUpperCase().charCodeAt(0)
     return c >= 64 && c <= 95 ? String.fromCharCode(c - 64) : null
   }
-  const named = NAMED[e.key]
+  const named = NAMED[key]
   if (named) return named
-  return e.key.length === 1 ? e.key : null
+  return key.length === 1 ? key : null
+}
+
+export function encodeKey(e: KeyboardEvent): string | null {
+  if (e.metaKey || e.altKey) return null
+  return encodeKeyName(e.key, e.ctrlKey)
 }
