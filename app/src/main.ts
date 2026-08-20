@@ -11,7 +11,7 @@ import { WebAccess } from '@zenfs/dom'
 import { Kernel, Tty, mountAll, bytes, type Proc } from '@cyberspace/kernel'
 import { coreutils } from '@cyberspace/coreutils'
 import { shellMain } from '@cyberspace/shell'
-import { ApiClient, cyberspacePrograms } from '@cyberspace/apps'
+import { ApiClient, circProgram, cyberspacePrograms } from '@cyberspace/apps'
 import { compatFileHandler } from '@cyberspace/compat'
 import { syncTerm } from './vt'
 import { encodeKey, encodeKeyName } from './keys'
@@ -80,6 +80,10 @@ const snd = new Sound({
   bootupUrl: '/sounds/bootup.mp3',
 })
 
+// Public client config, same values any web client ships. Live chat reads
+// stream straight from RTDB with the caller's idToken; writes go via the API.
+const RTDB_URL = 'https://cyberspace-cyberspace-default-rtdb.europe-west1.firebasedatabase.app'
+
 const api = new ApiClient('https://api.cyberspace.online', {
   get: () => localStorage.getItem('csterm.auth'),
   set: v => (v ? localStorage.setItem('csterm.auth', v) : localStorage.removeItem('csterm.auth')),
@@ -131,6 +135,7 @@ async function bootMachine(): Promise<Kernel> {
   kernel.register('reboot', rebootProgram)
   // After coreutils: the network whoami (answers with the login) wins.
   kernel.registerAll(cyberspacePrograms(api))
+  kernel.register('circ', circProgram(api, RTDB_URL))
 
   // Programs from the original /terminal, recognised by their export.
   kernel.fileHandlers.push(compatFileHandler({

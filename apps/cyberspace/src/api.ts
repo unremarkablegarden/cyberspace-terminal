@@ -63,8 +63,23 @@ export class ApiClient {
     this.onAuthChange?.(null)
   }
 
+  /**
+   * idToken for direct RTDB reads (live streams use it as ?auth=). renew=true
+   * forces a refresh — call it when the database reports the token expired.
+   */
+  async token(renew = false): Promise<string | null> {
+    if ((renew || !this.idToken) && this.refreshToken) {
+      await this.refresh().catch(() => { this.logout() })
+    }
+    return this.idToken
+  }
+
   get<T>(path: string): Promise<T> {
     return this.request<T>('GET', path)
+  }
+
+  delete<T>(path: string): Promise<T> {
+    return this.request<T>('DELETE', path)
   }
 
   post<T>(path: string, body: unknown): Promise<T> {

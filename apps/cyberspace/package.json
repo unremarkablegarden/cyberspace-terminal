@@ -1,12 +1,13 @@
 {
   "name": "@cyberspace/apps",
   "version": "0.1.0",
-  "description": "Cyberspace network programs: login, finger, feed.",
+  "description": "Cyberspace network programs: login, finger, feed, circ.",
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@cyberspace/kernel": "workspace:*"
+    "@cyberspace/kernel": "workspace:*",
+    "@cyberspace/tui": "workspace:*"
   }
 }
