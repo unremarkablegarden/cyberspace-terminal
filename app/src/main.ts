@@ -1,3 +1,4 @@
+import { registerSW } from 'virtual:pwa-register'
 import { Terminal } from '@xterm/headless'
 import { mount, type CrtScreen } from '@cyberspace/crt'
 import { RENDER, GRID, PRESETS } from '@cyberspace/crt/config'
@@ -16,6 +17,10 @@ import { compatFileHandler } from '@cyberspace/compat'
 import { syncTerm } from './vt'
 import { encodeKey, encodeKeyName } from './keys'
 import { Baud } from './baud'
+
+// Offline shell. A new worker downloads in the background and WAITS — it
+// takes over on the next fresh visit, never under a live session.
+registerSW({ immediate: true })
 
 // Phones get the narrow grid; the soft keyboard is wired below.
 const MOBILE = /mobi|android/i.test(navigator.userAgent)
