@@ -12,7 +12,7 @@ import { WebAccess } from '@zenfs/dom'
 import { Kernel, Tty, mountAll, bytes, type Proc } from '@cyberspace/kernel'
 import { coreutils } from '@cyberspace/coreutils'
 import { shellMain } from '@cyberspace/shell'
-import { ApiClient, circProgram, cmailProgram, cyberspacePrograms } from '@cyberspace/apps'
+import { ApiClient, circProgram, cmailProgram, cyberspacePrograms, registryPrograms } from '@cyberspace/apps'
 import { compatFileHandler } from '@cyberspace/compat'
 import { syncTerm } from './vt'
 import { encodeKey, encodeKeyName } from './keys'
@@ -142,6 +142,7 @@ async function bootMachine(): Promise<Kernel> {
   kernel.registerAll(cyberspacePrograms(api))
   kernel.register('circ', circProgram(api, RTDB_URL))
   kernel.register('cmail', cmailProgram(api, RTDB_URL))
+  kernel.registerAll(registryPrograms(api))
 
   // Programs from the original /terminal, recognised by their export.
   kernel.fileHandlers.push(compatFileHandler({
