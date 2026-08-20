@@ -65,7 +65,7 @@ export const trueCmd: Program = () => 0
 export const falseCmd: Program = () => 1
 
 export const help: Program = async p => {
-  p.out('programs:\n')
+  p.out('Programs:\n')
   const names = p.kernel.names()
   const cols = p.tty?.cols ?? 80
   const w = Math.max(...names.map(n => n.length)) + 2
@@ -73,8 +73,8 @@ export const help: Program = async p => {
   for (let i = 0; i < names.length; i += per) {
     p.out('  ' + names.slice(i, i + per).map(s => s.padEnd(w)).join('').trimEnd() + '\n')
   }
-  p.out('shell:\n  cd  pwd  export  unset  exit  history\n')
-  p.out('pipes and redirects work: ls | grep txt > out.txt\n')
+  p.out('Shell builtins:\n  cd  pwd  export  unset  exit  history\n')
+  p.out('Pipelines, redirection and globs as in sh(1).\n')
   return 0
 }
 

@@ -11,6 +11,7 @@ import { WebAccess } from '@zenfs/dom'
 import { Kernel, Tty, mountAll, bytes, type Proc } from '@cyberspace/kernel'
 import { coreutils } from '@cyberspace/coreutils'
 import { shellMain } from '@cyberspace/shell'
+import { ApiClient, cyberspacePrograms } from '@cyberspace/apps'
 import { syncTerm } from './vt'
 import { encodeKey, encodeKeyName } from './keys'
 import { Baud } from './baud'
@@ -32,17 +33,20 @@ const ENV = {
   LINES: String(ROWS),
 }
 
-const MOTD = `\x1b[1mCYBERSPACE TERMINAL\x1b[0m 0.1
-\x1b[2m${COLS}x${ROWS} TEXT  TUBE OK  HOME MOUNTED\x1b[0m
+const motdText = (user: string | null) => `\x1b[1mCYBERSPACE TERMINAL\x1b[0m 0.1
+\x1b[2m${COLS}x${ROWS} TEXT  TUBE OK  HOME MOUNTED${user ? '  LINK UP' : '  NO CARRIER'}\x1b[0m
 
-type \x1b[1mhelp\x1b[0m for programs.${MOBILE ? '' : '  \x1b[2mF1 config.\x1b[0m'}
+${user
+    ? `Connected to Cyberspace as \x1b[1m${user}\x1b[0m.`
+    : `Not connected.  Type "login" to connect to Cyberspace.`}
+Type "help" for the command list.${MOBILE ? '' : '  F1 opens terminal configuration.'}
 
 `
 
-const README = `This is your home directory. It lives in this browser and survives reloads.
-Nothing here touches the network.
+const README = `Home directory. Contents persist in this browser across reloads.
+No file in this directory leaves the machine.
 
-Try:
+Examples:
   echo hello > hi.txt
   cat hi.txt
   ls -l
@@ -78,6 +82,15 @@ const snd = new Sound({
   },
   bootupUrl: '/sounds/bootup.mp3',
 })
+
+const api = new ApiClient('https://api.cyberspace.online', {
+  get: () => localStorage.getItem('csterm.auth'),
+  set: v => (v ? localStorage.setItem('csterm.auth', v) : localStorage.removeItem('csterm.auth')),
+})
+api.onAuthChange = user => {
+  ENV.USER = user ?? 'guest'
+  void writeMotd()
+}
 
 const xt = new Terminal({ cols: COLS, rows: ROWS, scrollback: 1000, allowProposedApi: true })
 const tx = new Baud(data => xt.write(data), BAUDS[store.get('baud', '9600')] ?? 9600)
@@ -118,6 +131,8 @@ async function bootMachine(): Promise<Kernel> {
   kernel.register('sh', shellMain)
   kernel.register('shutdown', shutdownProgram)
   kernel.register('reboot', rebootProgram)
+  // After coreutils: the network whoami (answers with the login) wins.
+  kernel.registerAll(cyberspacePrograms(api))
 
   const opfs = await navigator.storage.getDirectory()
   await mountAll({
@@ -128,7 +143,7 @@ async function bootMachine(): Promise<Kernel> {
   })
   await kernel.seed()
 
-  await fs.promises.writeFile('/etc/motd', MOTD.replace(/\r?\n/g, '\n'))
+  await writeMotd()
   const readme = `${HOME}/README.txt`
   if (!(await fs.promises.stat(readme).catch(() => null))) {
     await fs.promises.writeFile(readme, README)
@@ -140,8 +155,15 @@ async function bootMachine(): Promise<Kernel> {
     .then(buf => fs.promises.writeFile('/bin/cowsay', new Uint8Array(buf), { mode: 0o755 }))
     .catch(() => {})
 
-  ;(globalThis as Record<string, unknown>).cs = { kernel, fs, tty, snd, screen }
+  ;(globalThis as Record<string, unknown>).cs = {
+    kernel, fs, tty, snd, screen, api, tx, xt,
+    dbg: { get lock() { return gridLock }, get halted() { return halted } },
+  }
   return kernel
+}
+
+async function writeMotd(): Promise<void> {
+  await fs.promises.writeFile('/etc/motd', motdText(api.username)).catch(() => {})
 }
 
 async function shutdownProgram(p: Proc): Promise<number> {
@@ -154,7 +176,7 @@ async function shutdownProgram(p: Proc): Promise<number> {
 }
 
 async function rebootProgram(p: Proc): Promise<number> {
-  p.out('\nrebooting...\n')
+  p.out('\nThe system is going down for reboot NOW.\n')
   await waitForDrain()
   halted = true
   await withGrid(() => implode(screen.term, snd))
@@ -359,9 +381,15 @@ const program = {
 
     snd.powerOn()
     void snd.bootup()
+    // The saved session resumes under the strike; a dead network never blocks boot.
+    const resumed = api.hasSavedSession
+      ? Promise.race([api.resume(), new Promise<null>(res => setTimeout(() => res(null), 5000))])
+      : Promise.resolve(null)
     await withGrid(() => strike(s.term, snd))
 
     const kernel = await bootMachine()
+    await resumed
+    await writeMotd()
     void session(kernel)
   },
 
@@ -396,6 +424,24 @@ const program = {
     tty.input(bytes(str))
   },
 }
+
+// rAF suspends in hidden tabs (and xterm parses writes asynchronously, so the
+// grid always trails the parser by one tick). A slow interval keeps the
+// machine advancing while nobody is looking.
+setInterval(() => {
+  if (!document.hidden || gridLock !== 0 || halted || !screen) return
+  tx.drain(1)
+  syncTerm(xt, screen.term)
+}, 1000)
+
+window.addEventListener('paste', e => {
+  const text = e.clipboardData?.getData('text')
+  if (!text) return
+  e.preventDefault()
+  wake()
+  if (overlay?.open) return
+  tty.input(bytes(text.replace(/\r\n?/g, '\r')))
+})
 
 const canvas = document.getElementById('tube') as HTMLCanvasElement
 

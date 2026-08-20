@@ -8,6 +8,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@cyberspace/apps": "workspace:*",
     "@cyberspace/coreutils": "workspace:*",
     "@cyberspace/crt": "workspace:*",
     "@cyberspace/kernel": "workspace:*",
