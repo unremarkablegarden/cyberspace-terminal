@@ -10,6 +10,30 @@ declare module '@cyberspace/crt' {
 }
 
 declare module '@cyberspace/crt/term' {
+  export class CellGrid {
+    constructor(font: { cellW: number; cellH: number }, cols?: number, rows?: number)
+    cols: number
+    rows: number
+    dirty: boolean
+    chars: Uint16Array
+    attrs: Uint8Array
+    inverse: Uint8Array
+    gfx: (number[] | undefined)[]
+    font: { cellW: number; cellH: number }
+    advance: number
+    cx: number
+    cy: number
+    cursorVisible: boolean
+    showCursor: boolean
+    clear(): void
+    put(x: number, y: number, ch: string | number, attr?: number, inv?: number): void
+    putGlyph(x: number, y: number, bits: number[], attr?: number, inv?: number): void
+    text(x: number, y: number, str: string, attr?: number, inv?: number): number
+    write(str: string, attr?: number): void
+    writeln(str?: string, attr?: number): void
+    newline(): void
+    scrollView(delta: number): boolean
+  }
   export const NORMAL: number
   export const BRIGHT: number
   export const BOLD: number

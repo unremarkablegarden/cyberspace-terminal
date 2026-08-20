@@ -12,6 +12,7 @@ import { Kernel, Tty, mountAll, bytes, type Proc } from '@cyberspace/kernel'
 import { coreutils } from '@cyberspace/coreutils'
 import { shellMain } from '@cyberspace/shell'
 import { ApiClient, cyberspacePrograms } from '@cyberspace/apps'
+import { compatFileHandler } from '@cyberspace/compat'
 import { syncTerm } from './vt'
 import { encodeKey, encodeKeyName } from './keys'
 import { Baud } from './baud'
@@ -130,6 +131,31 @@ async function bootMachine(): Promise<Kernel> {
   // After coreutils: the network whoami (answers with the login) wins.
   kernel.registerAll(cyberspacePrograms(api))
 
+  // Programs from the original /terminal, recognised by their export.
+  kernel.fileHandlers.push(compatFileHandler({
+    username: () => api.username ?? ENV.USER,
+    version: '0.1',
+    snd: {
+      blip: (hz, dur, jitter) => snd.blip(hz, dur, jitter),
+      beep: (freq, dur) => snd.beep(freq, dur),
+      tick: () => snd.tick(),
+      seek: n => snd.seek(n),
+      hiss: (dur, gain) => snd.hiss(dur, gain),
+    },
+    feed: {
+      page: async (limit = 10) => {
+        const posts = await api.get<Record<string, unknown>[]>(`/v1/posts?limit=${Math.min(50, limit)}`)
+        return posts.map(post => ({
+          username: post.authorUsername ?? '?',
+          title: post.title ?? '',
+          words: typeof post.content === 'string' ? post.content.split(/\s+/).filter(Boolean).length : 0,
+          replies: post.replyCount ?? post.repliesCount ?? 0,
+          at: post.createdAt,
+        }))
+      },
+    },
+  }))
+
   const opfs = await navigator.storage.getDirectory()
   await mountAll({
     '/': InMemory,
@@ -143,6 +169,15 @@ async function bootMachine(): Promise<Kernel> {
   const readme = `${HOME}/README.txt`
   if (!(await fs.promises.stat(readme).catch(() => null))) {
     await fs.promises.writeFile(readme, README)
+  }
+
+  // Example programs from the original machine.
+  await fs.promises.mkdir('/bin/examples').catch(() => {})
+  for (const name of ['hello', 'roll', 'clock', 'river', 'news']) {
+    void fetch(`/examples/${name}.js`)
+      .then(r => (r.ok ? r.text() : Promise.reject(new Error(String(r.status)))))
+      .then(text => fs.promises.writeFile(`/bin/examples/${name}`, text, { mode: 0o755 }))
+      .catch(() => {})
   }
 
   // Demo wasm cargo, installed in the background once fetched.

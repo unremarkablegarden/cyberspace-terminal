@@ -11,12 +11,16 @@ export const ATTR_MASK: number
 export const SCROLLBACK_MAX: number
 
 export class CellGrid {
+  constructor(font: { cellW: number; cellH: number }, cols?: number, rows?: number)
   cols: number
   rows: number
   dirty: boolean
   chars: Uint16Array
   attrs: Uint8Array
   inverse: Uint8Array
+  gfx: (number[] | undefined)[]
+  font: { cellW: number; cellH: number }
+  advance: number
   cx: number
   cy: number
   cursorVisible: boolean

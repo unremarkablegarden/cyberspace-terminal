@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@cyberspace/apps": "workspace:*",
+    "@cyberspace/compat": "workspace:*",
     "@cyberspace/coreutils": "workspace:*",
     "@cyberspace/crt": "workspace:*",
     "@cyberspace/kernel": "workspace:*",

@@ -8,6 +8,8 @@ import { isWasm, runWasi } from './wasi.js'
 
 export class Kernel {
   readonly fs = fs.promises
+  /** Extra executable-file formats, tried after wasm and shebangs. */
+  fileHandlers: ((path: string, data: Uint8Array) => Program | null)[] = []
   private programs = new Map<string, Program>()
   private nextPid = 1
 
@@ -61,6 +63,11 @@ export class Kernel {
       const interpProg = this.programs.get(basename(interp))
       if (!interpProg) return null
       return p => interpProg({ ...p, argv: [interp, ...iargs, path, ...p.argv.slice(1)] })
+    }
+
+    for (const handler of this.fileHandlers) {
+      const prog = handler(path, data)
+      if (prog) return prog
     }
     return null
   }

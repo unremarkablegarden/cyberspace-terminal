@@ -9,6 +9,7 @@
       "name": "app",
       "dependencies": {
         "@cyberspace/apps": "workspace:*",
+        "@cyberspace/compat": "workspace:*",
         "@cyberspace/coreutils": "workspace:*",
         "@cyberspace/crt": "workspace:*",
         "@cyberspace/kernel": "workspace:*",
@@ -27,6 +28,15 @@
       "version": "0.1.0",
       "dependencies": {
         "@cyberspace/kernel": "workspace:*",
+      },
+    },
+    "packages/compat": {
+      "name": "@cyberspace/compat",
+      "version": "0.1.0",
+      "dependencies": {
+        "@cyberspace/crt": "workspace:*",
+        "@cyberspace/kernel": "workspace:*",
+        "@cyberspace/tui": "workspace:*",
       },
     },
     "packages/coreutils": {
@@ -65,6 +75,8 @@
     "@bjorn3/browser_wasi_shim": ["@bjorn3/browser_wasi_shim@0.4.2", "", {}, "sha512-/iHkCVUG3VbcbmEHn5iIUpIrh7a7WPiwZ3sHy4HZKZzBdSadwdddYDZAII2zBvQYV0Lfi8naZngPCN7WPHI/hA=="],
 
     "@cyberspace/apps": ["@cyberspace/apps@workspace:apps/cyberspace"],
+
+    "@cyberspace/compat": ["@cyberspace/compat@workspace:packages/compat"],
 
     "@cyberspace/coreutils": ["@cyberspace/coreutils@workspace:packages/coreutils"],
 

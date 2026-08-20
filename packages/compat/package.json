@@ -1,0 +1,14 @@
+{
+  "name": "@cyberspace/compat",
+  "version": "0.1.0",
+  "description": "Runs grid-native programs from the original /terminal over the pty.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@cyberspace/crt": "workspace:*",
+    "@cyberspace/kernel": "workspace:*",
+    "@cyberspace/tui": "workspace:*"
+  }
+}
