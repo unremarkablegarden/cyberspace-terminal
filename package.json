@@ -1,0 +1,9 @@
+{
+  "name": "cyberspace-terminal",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "app"
+  ]
+}

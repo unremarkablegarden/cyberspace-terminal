@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.trash/
+.DS_Store
+.vercel/
+*.log
+spikes/**/*.wasm
+spikes/**/*.wasm.gz
+
+# local-only
+.claude/
+CLAUDE.local.md

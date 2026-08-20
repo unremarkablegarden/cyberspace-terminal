@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cyberspace Terminal</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+    #tube { width: 100vw; height: 100vh; display: block; }
+    #fault {
+      display: none; color: #9f9; background: #000; font: 14px/1.5 monospace;
+      padding: 2em; white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="tube"></canvas>
+  <pre id="fault"></pre>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

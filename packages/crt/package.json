@@ -1,0 +1,15 @@
+{
+  "name": "@cyberspace/crt",
+  "version": "0.1.0",
+  "description": "WebGL2 CRT with a text grid behind it.",
+  "type": "module",
+  "exports": {
+    ".": "./src/screen.js",
+    "./term": "./src/term.js",
+    "./crt": "./src/crt.js",
+    "./bdf": "./src/bdf.js",
+    "./vector": "./src/vector.js",
+    "./config": "./config.js",
+    "./fonts/*": "./fonts/*"
+  }
+}

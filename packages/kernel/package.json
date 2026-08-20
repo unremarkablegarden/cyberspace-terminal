@@ -1,0 +1,12 @@
+{
+  "name": "@cyberspace/kernel",
+  "version": "0.1.0",
+  "description": "Virtual machine core: VFS, processes, pipes, tty.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@zenfs/core": "^2.6.3"
+  }
+}

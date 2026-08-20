@@ -1,0 +1,12 @@
+{
+  "name": "@cyberspace/coreutils",
+  "version": "0.1.0",
+  "description": "Core tools: ls, cat, grep and friends.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@cyberspace/kernel": "workspace:*"
+  }
+}
