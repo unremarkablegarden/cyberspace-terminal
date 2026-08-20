@@ -15,6 +15,9 @@ Cyberspace API.
 - Display: beam-intensity CRT simulation, phosphor and screen presets,
   BDF bitmap fonts, machine audio
 - Network: `login`, `logout`, `whoami`, `finger`, `feed`
+- Chat: `circ` (rooms), `cmail` (1:1) — sends through the API, live
+  reads streamed from the realtime database
+- Offline: installable PWA; the machine boots with no network
 
 ## Layout
 
