@@ -36,15 +36,11 @@ const ENV = {
 const motdText = (user: string | null) => `\x1b[1mCYBERSPACE TERMINAL\x1b[0m 0.1
 \x1b[2m${COLS}x${ROWS} TEXT  TUBE OK  HOME MOUNTED${user ? '  LINK UP' : '  NO CARRIER'}\x1b[0m
 
-${user
-    ? `Connected to Cyberspace as \x1b[1m${user}\x1b[0m.`
-    : `Not connected.  Type "login" to connect to Cyberspace.`}
-Type "help" for the command list.${MOBILE ? '' : '  F1 opens terminal configuration.'}
+Type \x1b[1mhelp\x1b[0m for commands.${user ? '' : '  Type \x1b[1mlogin\x1b[0m to connect.'}${MOBILE ? '' : '\n\x1b[1mF1\x1b[0m Config'}
 
 `
 
-const README = `Home directory. Contents persist in this browser across reloads.
-No file in this directory leaves the machine.
+const README = `Home directory. Persists in this browser. Files stay local.
 
 Examples:
   echo hello > hi.txt

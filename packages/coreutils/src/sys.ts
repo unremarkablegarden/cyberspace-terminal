@@ -74,7 +74,6 @@ export const help: Program = async p => {
     p.out('  ' + names.slice(i, i + per).map(s => s.padEnd(w)).join('').trimEnd() + '\n')
   }
   p.out('Shell builtins:\n  cd  pwd  export  unset  exit  history\n')
-  p.out('Pipelines, redirection and globs as in sh(1).\n')
   return 0
 }
 
