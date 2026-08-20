@@ -90,6 +90,7 @@ export class Tty implements TtyControl {
   get stdin(): Source {
     const tty = this
     return {
+      isInteractive: true,
       async read() {
         const c = await tty.readers.read()
         if (c && c.length === 1 && c[0] === 4) return null

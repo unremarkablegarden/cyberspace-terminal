@@ -31,7 +31,16 @@ export const env: Program = p => {
 export const which: Program = async p => {
   let code = 0
   for (const name of p.argv.slice(1)) {
-    if (p.kernel.resolveProgram(name)) p.out(`/bin/${name}\n`)
+    if (p.kernel.resolveProgram(name)) {
+      p.out(`/bin/${name}\n`)
+      continue
+    }
+    let found = ''
+    for (const dir of (p.env.PATH ?? '/bin').split(':')) {
+      const path = dir + '/' + name
+      if (await fsp.stat(path).catch(() => null)) { found = path; break }
+    }
+    if (found) p.out(found + '\n')
     else code = 1
   }
   return code

@@ -73,7 +73,7 @@ async function runPipeline(sh: ShellState, cmds: Cmd[]): Promise<number> {
     const builtin = BUILTINS[argv[0]]
     const program = builtin
       ? (p: Proc) => builtin(sh, p)
-      : sh.proc.kernel.resolveProgram(argv[0])
+      : await sh.proc.kernel.resolveExec(argv[0], sh.cwd, env)
     if (!program) {
       sh.proc.err(`sh: ${argv[0]}: command not found\n`)
       return 127

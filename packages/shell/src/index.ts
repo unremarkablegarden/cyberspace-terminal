@@ -8,16 +8,21 @@ const HISTFILE = '.sh_history'
 const HISTMAX = 500
 
 export const shellMain: Program = async (p: Proc) => {
-  if (!p.tty) {
-    p.err('sh: interactive shell needs a tty\n')
-    return 1
-  }
-
   const sh: ShellState = {
     proc: p,
     vars: {},
     cwd: p.cwd,
     status: 0,
+  }
+
+  // Non-interactive: `sh script` (also where #!/bin/sh shebangs land).
+  if (p.argv[1]) {
+    return runScript(sh, p, p.argv[1])
+  }
+
+  if (!p.tty) {
+    p.err('sh: interactive shell needs a tty\n')
+    return 1
   }
 
   const rl = new Readline(p.tty, p.stdin, s => p.stdout.write(s), (line, cursor) =>
@@ -60,6 +65,28 @@ export const shellMain: Program = async (p: Proc) => {
       sh.status = 1
     }
   }
+}
+
+async function runScript(sh: ShellState, p: Proc, path: string): Promise<number> {
+  const full = paths.resolve(p.cwd, path)
+  let text: string
+  try {
+    text = String(await fs.promises.readFile(full, 'utf8'))
+  } catch {
+    p.err(`sh: ${path}: no such file or directory\n`)
+    return 127
+  }
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) continue
+    try {
+      await runLine(sh, trimmed)
+    } catch (e) {
+      if (e instanceof ShellExit) return e.code
+      throw e
+    }
+  }
+  return sh.status
 }
 
 function prompt(sh: ShellState): string {

@@ -4,6 +4,8 @@ export interface Source {
   read(): Promise<Uint8Array | null>
   /** Resolve pending and future reads with EOF. Used to kill blocked readers. */
   interrupt?(): void
+  /** True when this is a terminal a person is typing at. */
+  isInteractive?: boolean
 }
 
 export interface Sink {
@@ -50,8 +52,8 @@ export class Pipe implements Source, Sink {
   }
 }
 
-/** Read a whole source as text. */
-export async function readAll(src: Source): Promise<string> {
+/** Read a whole source as bytes. */
+export async function readAllBytes(src: Source): Promise<Uint8Array> {
   const parts: Uint8Array[] = []
   for (;;) {
     const c = await src.read()
@@ -63,7 +65,12 @@ export async function readAll(src: Source): Promise<string> {
   const buf = new Uint8Array(len)
   let o = 0
   for (const p of parts) { buf.set(p, o); o += p.length }
-  return dec.decode(buf)
+  return buf
+}
+
+/** Read a whole source as text. */
+export async function readAll(src: Source): Promise<string> {
+  return dec.decode(await readAllBytes(src))
 }
 
 /** A Sink that discards everything. */

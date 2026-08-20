@@ -36,6 +36,7 @@
       "name": "@cyberspace/kernel",
       "version": "0.1.0",
       "dependencies": {
+        "@bjorn3/browser_wasi_shim": "^0.4.2",
         "@zenfs/core": "^2.6.3",
       },
     },
@@ -48,6 +49,8 @@
     },
   },
   "packages": {
+    "@bjorn3/browser_wasi_shim": ["@bjorn3/browser_wasi_shim@0.4.2", "", {}, "sha512-/iHkCVUG3VbcbmEHn5iIUpIrh7a7WPiwZ3sHy4HZKZzBdSadwdddYDZAII2zBvQYV0Lfi8naZngPCN7WPHI/hA=="],
+
     "@cyberspace/coreutils": ["@cyberspace/coreutils@workspace:packages/coreutils"],
 
     "@cyberspace/crt": ["@cyberspace/crt@workspace:packages/crt"],

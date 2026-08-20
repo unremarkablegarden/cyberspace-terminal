@@ -134,6 +134,12 @@ async function bootMachine(): Promise<Kernel> {
     await fs.promises.writeFile(readme, README)
   }
 
+  // Demo wasm cargo, installed in the background once fetched.
+  void fetch('/wasm/cowsay.wasm')
+    .then(r => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))))
+    .then(buf => fs.promises.writeFile('/bin/cowsay', new Uint8Array(buf), { mode: 0o755 }))
+    .catch(() => {})
+
   ;(globalThis as Record<string, unknown>).cs = { kernel, fs, tty, snd, screen }
   return kernel
 }

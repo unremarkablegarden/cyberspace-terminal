@@ -2,7 +2,9 @@
 
 import { fs } from '@zenfs/core'
 import type { Program, Proc, SpawnOptions, Task } from './proc.js'
-import { basename } from './paths.js'
+import { basename, join, resolve } from './paths.js'
+import { dec } from './pipe.js'
+import { isWasm, runWasi } from './wasi.js'
 
 export class Kernel {
   readonly fs = fs.promises
@@ -24,6 +26,43 @@ export class Kernel {
   /** Program for a command word. Path forms resolve by basename. */
   resolveProgram(word: string): Program | null {
     return this.programs.get(word.includes('/') ? basename(word) : word) ?? null
+  }
+
+  /**
+   * Resolve a command word to something runnable: builtins by name, then real
+   * files — wasm binaries and shebang scripts — by path or $PATH search.
+   */
+  async resolveExec(word: string, cwd: string, env: Record<string, string>): Promise<Program | null> {
+    if (!word.includes('/')) {
+      const builtin = this.programs.get(word)
+      if (builtin) return builtin
+      for (const dir of (env.PATH ?? '/bin').split(':')) {
+        const prog = await this.fileProgram(join(dir, word))
+        if (prog) return prog
+      }
+      return null
+    }
+    return this.fileProgram(resolve(cwd, word))
+  }
+
+  private async fileProgram(path: string): Promise<Program | null> {
+    const data: Uint8Array | null = await this.fs.readFile(path).catch(() => null)
+    if (!data) return null
+
+    if (isWasm(data)) {
+      return p => runWasi(p, data)
+    }
+
+    // Shebang. `#!builtin` marks the /bin stubs for the registry programs.
+    if (data[0] === 0x23 && data[1] === 0x21) {
+      const line = dec.decode(data.subarray(2, Math.min(data.length, 256))).split('\n')[0].trim()
+      if (line === 'builtin') return this.programs.get(basename(path)) ?? null
+      const [interp, ...iargs] = line.split(/\s+/)
+      const interpProg = this.programs.get(basename(interp))
+      if (!interpProg) return null
+      return p => interpProg({ ...p, argv: [interp, ...iargs, path, ...p.argv.slice(1)] })
+    }
+    return null
   }
 
   spawn(program: Program, opts: SpawnOptions): Task {

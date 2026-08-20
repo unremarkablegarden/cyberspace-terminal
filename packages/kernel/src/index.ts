@@ -1,4 +1,5 @@
 export { Kernel } from './kernel.js'
+export { runWasi, isWasm } from './wasi.js'
 export type { Proc, Program, SpawnOptions, Task } from './proc.js'
 export { Pipe, readAll, bytes, dec, nullSink, nullSource } from './pipe.js'
 export type { Source, Sink } from './pipe.js'
