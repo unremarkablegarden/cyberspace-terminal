@@ -1,31 +1,35 @@
 # Cyberspace Terminal
 
-A virtual computer behind a CRT. Boots in the browser, runs a unix-shaped
-shell over a local filesystem, and speaks plain ANSI over a pty — the tube is
-one faceplate for it, a real terminal is another.
+A virtual computer in the browser. WebGL2 CRT display, unix-style shell,
+persistent local filesystem, wasm programs. Part of
+[Cyberspace](https://cyberspace.online). Runs at
+[terminal.cyberspace.online](https://terminal.cyberspace.online).
 
-Part of [Cyberspace](https://cyberspace.online). Works without an account;
-signing in connects the machine to the network.
+No account required. Guest machines are fully local; `login` connects to the
+Cyberspace API.
 
-## Status
-
-Early, but the machine boots: a shell with pipelines, redirects, globs,
-history and tab completion over a persistent local filesystem (OPFS). No
-account needed; nothing leaves the browser.
+- Shell: pipelines, redirection, globs, `$?`, history, tab completion
+- Filesystem: ZenFS on OPFS; the home directory persists in the browser
+- Programs: wasm32-wasi binaries and `#!` scripts run as processes
+- Editor: `edit` (nano key bindings), full-screen over ANSI
+- Display: beam-intensity CRT simulation, phosphor and screen presets,
+  BDF bitmap fonts, machine audio
+- Network: `login`, `logout`, `whoami`, `finger`, `feed`
 
 ## Layout
 
-| Path | What |
+| Path | Contents |
 | --- | --- |
-| `packages/crt` | The tube: WebGL2 CRT, beam-intensity rasteriser, BDF fonts |
-| `packages/kernel` | VFS (ZenFS), processes, pipes, tty |
-| `packages/shell` | POSIX-subset shell and line editor |
-| `packages/coreutils` | ls, cat, grep and friends |
-| `app` | The site: boots the machine, mounts the CRT |
-| `spikes` | Throwaway feasibility probes |
+| `packages/crt` | CRT renderer, fonts, audio, effects, config UI |
+| `packages/kernel` | VFS, processes, pipes, tty, WASI host |
+| `packages/shell` | Shell and line editor |
+| `packages/coreutils` | File, text and system tools; `edit` |
+| `packages/tui` | Full-screen program toolkit |
+| `apps/cyberspace` | Network programs and API client |
+| `app` | Site entry: boots the machine, drives the display |
+| `tools` | Sources for bundled wasm programs |
+| `spikes` | Feasibility probes |
 | `docs/design` | Engineering notes |
-
-Planned: `packages/tui`, a wasm (WASI) program runner, `apps/`.
 
 ## Development
 
@@ -35,4 +39,8 @@ cd app
 bunx vite
 ```
 
-Requires a browser with WebGL2.
+Requires WebGL2.
+
+## License
+
+MIT.
