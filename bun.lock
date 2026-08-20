@@ -34,6 +34,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@cyberspace/kernel": "workspace:*",
+        "@cyberspace/tui": "workspace:*",
       },
     },
     "packages/crt": {
@@ -55,6 +56,10 @@
         "@cyberspace/kernel": "workspace:*",
       },
     },
+    "packages/tui": {
+      "name": "@cyberspace/tui",
+      "version": "0.1.0",
+    },
   },
   "packages": {
     "@bjorn3/browser_wasi_shim": ["@bjorn3/browser_wasi_shim@0.4.2", "", {}, "sha512-/iHkCVUG3VbcbmEHn5iIUpIrh7a7WPiwZ3sHy4HZKZzBdSadwdddYDZAII2zBvQYV0Lfi8naZngPCN7WPHI/hA=="],
@@ -68,6 +73,8 @@
     "@cyberspace/kernel": ["@cyberspace/kernel@workspace:packages/kernel"],
 
     "@cyberspace/shell": ["@cyberspace/shell@workspace:packages/shell"],
+
+    "@cyberspace/tui": ["@cyberspace/tui@workspace:packages/tui"],
 
     "@esbuild/aix-ppc64": ["@esbuild/aix-ppc64@0.28.2", "", { "os": "aix", "cpu": "ppc64" }, "sha512-XExcO+dvLKvVtNTibSTBej1NCAbaGhWn9Ww1ZPx80qsahhPFe/8jgWP0IchNe0F3HwkU7n8ejhH8bjonqht8mQ=="],
 

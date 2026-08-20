@@ -1,0 +1,6 @@
+export { Surface, NORMAL, BOLD, DIM, INVERSE } from './surface.js'
+export type { Rect } from './surface.js'
+export { parseKeys } from './keys.js'
+export type { KeyInput } from './keys.js'
+export { TextBuffer, fold, drawBuffer } from './buffer.js'
+export type { Fold, BufferOptions } from './buffer.js'
