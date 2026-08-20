@@ -34,7 +34,7 @@ export const ls: Program = async p => {
     try {
       st = await fsp.stat(target)
     } catch {
-      p.err(`ls: ${targets[t]}: no such file or directory\n`)
+      p.err(`ls: ${targets[t]}: No such file or directory\n`)
       code = 1
       continue
     }
@@ -104,8 +104,8 @@ export const cp: Program = async p => {
   for (const arg of args.slice(0, -1)) {
     const src = resolve(p, arg)
     const st = await fsp.stat(src).catch(() => null)
-    if (!st) { p.err(`cp: ${arg}: no such file or directory\n`); return 1 }
-    if (st.isDirectory() && !f.has('r')) { p.err(`cp: ${arg}: is a directory (use -r)\n`); return 1 }
+    if (!st) { p.err(`cp: ${arg}: No such file or directory\n`); return 1 }
+    if (st.isDirectory() && !f.has('r')) { p.err(`cp: ${arg}: Is a directory\n`); return 1 }
     await copyTree(src, await destFor(p, src, dst))
   }
   return 0
@@ -149,11 +149,11 @@ export const rm: Program = async p => {
     const target = resolve(p, arg)
     const st = await fsp.stat(target).catch(() => null)
     if (!st) {
-      if (!f.has('f')) { p.err(`rm: ${arg}: no such file or directory\n`); code = 1 }
+      if (!f.has('f')) { p.err(`rm: ${arg}: No such file or directory\n`); code = 1 }
       continue
     }
     if (st.isDirectory() && !f.has('r')) {
-      p.err(`rm: ${arg}: is a directory (use -r)\n`)
+      p.err(`rm: ${arg}: Is a directory\n`)
       code = 1
       continue
     }
@@ -177,7 +177,7 @@ export const mkdir: Program = async p => {
       try {
         await fsp.mkdir(target)
       } catch {
-        p.err(`mkdir: ${arg}: cannot create\n`)
+        p.err(`mkdir: cannot create directory '${arg}'\n`)
         return 1
       }
     }
@@ -191,7 +191,7 @@ export const rmdir: Program = async p => {
     try {
       await fsp.rmdir(resolve(p, arg))
     } catch {
-      p.err(`rmdir: ${arg}: not an empty directory\n`)
+      p.err(`rmdir: ${arg}: Directory not empty\n`)
       return 1
     }
   }

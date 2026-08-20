@@ -107,7 +107,7 @@ export class ApiClient {
         body: body !== undefined ? JSON.stringify(body) : undefined,
       })
     } catch {
-      throw new ApiError('NO_CARRIER', 'no carrier (network unreachable)', 0)
+      throw new ApiError('NO_CARRIER', 'NO CARRIER', 0)
     }
 
     if (res.status === 401 && auth && retry && this.refreshToken) {

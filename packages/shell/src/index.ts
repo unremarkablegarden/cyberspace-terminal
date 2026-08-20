@@ -21,7 +21,7 @@ export const shellMain: Program = async (p: Proc) => {
   }
 
   if (!p.tty) {
-    p.err('sh: interactive shell needs a tty\n')
+    p.err('sh: no tty\n')
     return 1
   }
 
@@ -73,7 +73,7 @@ async function runScript(sh: ShellState, p: Proc, path: string): Promise<number>
   try {
     text = String(await fs.promises.readFile(full, 'utf8'))
   } catch {
-    p.err(`sh: ${path}: no such file or directory\n`)
+    p.err(`sh: ${path}: No such file or directory\n`)
     return 127
   }
   for (const line of text.split('\n')) {

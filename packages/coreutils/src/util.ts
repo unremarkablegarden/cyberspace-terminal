@@ -36,7 +36,7 @@ export async function inputText(p: Proc, files: string[]): Promise<string> {
     try {
       out += String(await fsp.readFile(resolve(p, file), 'utf8'))
     } catch {
-      throw new Error(`${file}: no such file or directory`)
+      throw new Error(`${file}: No such file or directory`)
     }
   }
   return out

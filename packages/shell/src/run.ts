@@ -164,9 +164,9 @@ const BUILTINS: Record<string, Builtin> = {
     const target = p.argv[1] ? paths.resolve(sh.cwd, p.argv[1].replace(/^~(?=\/|$)/, p.env.HOME ?? '/')) : (p.env.HOME ?? '/')
     try {
       const st = await fs.promises.stat(target)
-      if (!st.isDirectory()) { p.err(`cd: ${p.argv[1]}: not a directory\n`); return 1 }
+      if (!st.isDirectory()) { p.err(`cd: ${p.argv[1]}: Not a directory\n`); return 1 }
     } catch {
-      p.err(`cd: ${p.argv[1]}: no such directory\n`)
+      p.err(`cd: ${p.argv[1]}: No such file or directory\n`)
       return 1
     }
     sh.cwd = target

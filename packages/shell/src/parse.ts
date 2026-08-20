@@ -69,7 +69,7 @@ function tokenize(src: string): Token[] {
       if (c === '&' && src[i + 1] === '&') { i += 2; tokens.push({ kind: 'op', op: '&&' }); continue }
       if (c === '|' && src[i + 1] === '|') { i += 2; tokens.push({ kind: 'op', op: '||' }); continue }
       if (c === '>' && src[i + 1] === '>') { i += 2; tokens.push({ kind: 'op', op: '>>' }); continue }
-      if (c === '&') throw new ParseError('& is not supported')
+      if (c === '&') throw new ParseError('syntax error: & not supported')
       i++
       tokens.push({ kind: 'op', op: c as '|' | ';' | '>' | '<' })
       continue
@@ -88,7 +88,7 @@ function tokenize(src: string): Token[] {
         flush('none')
         i++
         const end = src.indexOf("'", i)
-        if (end < 0) throw new ParseError('unterminated single quote')
+        if (end < 0) throw new ParseError('syntax error: unterminated quoted string')
         cur = src.slice(i, end)
         i = end + 1
         flush('single')
@@ -101,13 +101,13 @@ function tokenize(src: string): Token[] {
           if (src[i] === '\\' && '"\\$'.includes(src[i + 1] ?? '')) { cur += src[++i]; continue }
           cur += src[i]
         }
-        if (i >= n) throw new ParseError('unterminated double quote')
+        if (i >= n) throw new ParseError('syntax error: unterminated quoted string')
         i++
         flush('double')
         continue
       }
       if (c === '\\') {
-        if (i + 1 >= n) throw new ParseError('trailing backslash')
+        if (i + 1 >= n) throw new ParseError('syntax error: trailing backslash')
         // Escaped char is literal: park it in a single-quoted segment.
         flush('none')
         cur = src[i + 1]
@@ -160,7 +160,7 @@ export function parse(src: string): List {
         if (tok.op === '>' || tok.op === '>>' || tok.op === '<' || tok.op === '2>' || tok.op === '2>>') {
           t++
           const target = tokens[t]
-          if (!target || target.kind !== 'word') throw new ParseError(`redirect needs a file`)
+          if (!target || target.kind !== 'word') throw new ParseError('syntax error: redirect requires a word')
           t++
           const fd = tok.op.startsWith('2') ? 2 : tok.op === '<' ? 0 : 1
           const op2 = tok.op.replace('2', '') as '>' | '>>' | '<'
@@ -170,7 +170,7 @@ export function parse(src: string): List {
         break
       }
       if (!cmd.words.length && !cmd.assigns.length && !cmd.redirs.length) {
-        throw new ParseError('missing command')
+        throw new ParseError('syntax error: missing command')
       }
       cmds.push(cmd)
       const tok = tokens[t]
@@ -183,10 +183,10 @@ export function parse(src: string): List {
     if (tok.kind === 'op' && (tok.op === ';' || tok.op === '&&' || tok.op === '||')) {
       op = tok.op
       t++
-      if (t >= tokens.length && op !== ';') throw new ParseError(`unexpected end after ${op}`)
+      if (t >= tokens.length && op !== ';') throw new ParseError('syntax error: unexpected end of input')
       continue
     }
-    throw new ParseError('unexpected token')
+    throw new ParseError('syntax error: unexpected token')
   }
   return { items }
 }
