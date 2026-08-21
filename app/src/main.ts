@@ -148,6 +148,11 @@ async function bootMachine(): Promise<Kernel> {
   kernel.fileHandlers.push(compatFileHandler({
     username: () => api.username ?? ENV.USER,
     version: '0.1',
+    api: {
+      get: path => api.get(path),
+      post: (path, body) => api.post(path, body),
+      del: path => api.delete(path),
+    },
     snd: {
       blip: (hz, dur, jitter) => snd.blip(hz, dur, jitter),
       beep: (freq, dur) => snd.beep(freq, dur),

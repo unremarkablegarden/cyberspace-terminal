@@ -63,6 +63,16 @@ function surfaceAttr(attr: number, inv: number): number {
 
 export interface CompatDeps {
   username?: () => string
+  /**
+   * Authenticated access to the Cyberspace API, scoped to /v1/ paths. The
+   * caller's identity and rate limits are enforced server-side, so this is
+   * safe to hand to arbitrary published programs.
+   */
+  api?: {
+    get(path: string): Promise<unknown>
+    post(path: string, body?: unknown): Promise<unknown>
+    del(path: string): Promise<unknown>
+  }
   snd?: {
     blip(hz?: number, dur?: number, jitter?: number): void
     beep(freq?: number, dur?: number): void
@@ -175,6 +185,20 @@ export function runGridProgram(deps: CompatDeps): (p: Proc, source: string) => P
 
     const snd = deps.snd ?? SILENT_SND
 
+    // The API capability: /v1/ paths only, dead when the host provides none.
+    const apiPath = (path: unknown): string => {
+      if (typeof path !== 'string' || !path.startsWith('/v1/')) {
+        throw new Error('api: path must start with /v1/')
+      }
+      return path
+    }
+    const noApi = (): never => { throw new Error('NO CARRIER') }
+    const apiCap = {
+      get: (path: string) => deps.api ? deps.api.get(apiPath(path)) : noApi(),
+      post: (path: string, body?: unknown) => deps.api ? deps.api.post(apiPath(path), body) : noApi(),
+      del: (path: string) => deps.api ? deps.api.del(apiPath(path)) : noApi(),
+    }
+
     const ctx = {
       tui: { ...box, DotCanvas, drawEdges, teapot },
       attr: ATTR,
@@ -206,6 +230,8 @@ export function runGridProgram(deps: CompatDeps): (p: Proc, source: string) => P
         screens.pop()
         if (!screens.length) leaveScreen()
       },
+
+      api: apiCap,
 
       get username() { return deps.username?.() ?? p.env.USER ?? 'guest' },
       version: deps.version ?? '0.1',
