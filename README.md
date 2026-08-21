@@ -10,13 +10,16 @@ Cyberspace API.
 
 - Shell: pipelines, redirection, globs, `$?`, history, tab completion
 - Filesystem: ZenFS on OPFS; the home directory persists in the browser
-- Programs: wasm32-wasi binaries and `#!` scripts run as processes
+- Programs: wasm32-wasi binaries and `#!` scripts run as processes. Each
+  wasm program gets its own worker and reads the keyboard while it runs
 - Editor: `edit` (nano key bindings), full-screen over ANSI
 - Display: beam-intensity CRT simulation, phosphor and screen presets,
   BDF bitmap fonts, machine audio
 - Network: `login`, `logout`, `whoami`, `finger`, `feed`
 - Chat: `circ` (rooms), `cmail` (1:1) — sends through the API, live
   reads streamed from the realtime database
+- Registry: `browse`, `install`, `publish`, `recall` — write a program here,
+  publish it from the machine, run what others published
 - Offline: installable PWA; the machine boots with no network
 
 ## Layout
