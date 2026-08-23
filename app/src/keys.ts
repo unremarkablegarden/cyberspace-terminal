@@ -19,7 +19,10 @@ export function encodeKeyName(key: string, ctrl = false): string | null {
   if (ctrl) {
     if (key.length !== 1) return null
     const c = key.toUpperCase().charCodeAt(0)
-    return c >= 64 && c <= 95 ? String.fromCharCode(c - 64) : null
+    if (c < 64 || c > 95) return null
+    // ^H and ^J collide with BS and LF; CSI u keeps them distinguishable.
+    if (c === 72 || c === 74) return `\x1b[${c + 32};5u`
+    return String.fromCharCode(c - 64)
   }
   const named = NAMED[key]
   if (named) return named

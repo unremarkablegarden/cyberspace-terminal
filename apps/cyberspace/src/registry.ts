@@ -1,7 +1,7 @@
 // The program registry: publish, browse, install, recall. All of it speaks
 // /v1/programs on the API — the same registry the website terminal serves.
 
-import { fs, paths, type Proc, type Program } from '@cyberspace/kernel'
+import { fs, paths, type Proc, type Program, readText } from '@cyberspace/kernel'
 import { ApiClient, ApiError } from './api.js'
 
 interface Listing {
@@ -122,7 +122,7 @@ export function registryPrograms(api: ApiClient): Record<string, Program> {
     const path = paths.resolve(p.cwd, p.argv[1])
     let source: string
     try {
-      source = String(await fs.promises.readFile(path, 'utf8'))
+      source = await readText(path)
     } catch {
       p.err(`publish: ${p.argv[1]}: No such file or directory\n`)
       return 1

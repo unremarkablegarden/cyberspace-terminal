@@ -1,10 +1,26 @@
 // xterm buffer -> Term cell planes. Runs every frame; writes only changed cells.
+//
+// Two kinds of program write here. One draws on a Surface and encodes the exact
+// attribute byte (@cyberspace/tui attrs.ts): the palette index it sets is the
+// marker, and the byte comes back whole. Everything else — a shell, a wasm
+// binary, anything printing plain SGR — is read the way a terminal reads it.
 
 import type { Terminal, IBufferCell } from '@xterm/headless'
-import { NORMAL, BRIGHT, BOLD, DIM, ITALIC } from '@cyberspace/crt/term'
+import { NORMAL, BRIGHT, BOLD, DIM, ITALIC, BG } from '@cyberspace/crt/term'
+import { INDEX_LEVEL, BG_INDEX } from '@cyberspace/tui'
 
 function attrFor(cell: IBufferCell): number {
   let attr = NORMAL
+
+  const level = cell.isFgPalette() ? INDEX_LEVEL[cell.getFgColor()] : undefined
+  if (level !== undefined) {
+    attr = level
+    if (cell.isBold()) attr |= BOLD
+    if (cell.isItalic()) attr |= ITALIC
+    if (cell.isBgPalette() && cell.getBgColor() === BG_INDEX) attr |= BG
+    return attr
+  }
+
   if (cell.isBold()) attr |= BOLD | BRIGHT
   if (cell.isDim()) attr |= DIM
   if (cell.isItalic()) attr |= ITALIC

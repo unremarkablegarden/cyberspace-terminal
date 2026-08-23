@@ -12,9 +12,10 @@
 //
 // Both faces carry all 128 of U+2500..257F — single AND double — so every
 // combination resolves in either. Checked, not assumed: a codepoint missing
-// from one face renders as `?` and nothing warns you (see AGENTS.md).
+// from one face renders as `?` and nothing warns you.
 
-import { CellGrid as Term, NORMAL, FAINT, BG } from '@cyberspace/crt/term'
+import { NORMAL, BOLD, FAINT, BG } from './attrs.js'
+import type { Grid } from './surface.js'
 
 export interface Rect { x: number; y: number; w: number; h: number }
 
@@ -97,18 +98,22 @@ export function inside(clip: Rect | undefined, x: number, y: number): boolean {
 }
 
 function plot(
-  term: Term, x: number, y: number, bits: number, attr: number,
+  term: Grid, x: number, y: number, bits: number, attr: number,
   weight: Weight, clip?: Rect,
 ) {
   if (x < 0 || y < 0 || x >= term.cols || y >= term.rows) return
   if (!inside(clip, x, y)) return
-  const existing = BITS[weight].get(term.chars[y * term.cols + x]!) ?? 0
+  // The tube stores code points and a Surface stores characters; a junction
+  // has to read back either.
+  const cell = term.chars[y * term.cols + x]
+  const code = typeof cell === 'string' ? cell.codePointAt(0) ?? 32 : cell ?? 32
+  const existing = BITS[weight].get(code) ?? 0
   const glyph = SETS[weight][existing | bits]
   if (glyph) term.put(x, y, glyph, attr)
 }
 
 export function hline(
-  term: Term, y: number, x0: number, x1: number, attr = NORMAL,
+  term: Grid, y: number, x0: number, x1: number, attr = NORMAL,
   weight: Weight = 'single', clip?: Rect,
 ) {
   for (let x = x0; x <= x1; x++) {
@@ -117,7 +122,7 @@ export function hline(
 }
 
 export function vline(
-  term: Term, x: number, y0: number, y1: number, attr = NORMAL,
+  term: Grid, x: number, y0: number, y1: number, attr = NORMAL,
   weight: Weight = 'single', clip?: Rect,
 ) {
   for (let y = y0; y <= y1; y++) {
@@ -133,7 +138,7 @@ export function vline(
  * it must clip its own rows the same way.
  */
 export function frame(
-  term: Term, r: Rect, attr = NORMAL, weight: Weight = 'single', clip?: Rect,
+  term: Grid, r: Rect, attr = NORMAL, weight: Weight = 'single', clip?: Rect,
 ): Rect {
   const x1 = r.x + r.w - 1
   const y1 = r.y + r.h - 1
@@ -158,8 +163,42 @@ export interface Span {
   inverse?: boolean
 }
 
+/**
+ * A footer of key hints: the key, then what it does, repeated.
+ *
+ * A key spelled in LETTERS is BOLD and the word beside it is not — the reader
+ * is scanning for the key, and weight is what says where it is. A key that is
+ * already a SYMBOL (‹›, ⬆⬇, ↵, ⌫) needs no help being found and takes none.
+ *
+ * This is for a box's own bottom rule, drawn as plain text. The inverse keycap
+ * is the app frame's voice, not a modal's, and carries its own weight anyway —
+ * an inverted cell is bold whatever it was drawn as.
+ */
+export function keyHint(pairs: [key: string, action: string][], gap = '  '): Span[] {
+  const out: Span[] = []
+  pairs.forEach(([key, action], i) => {
+    if (i) out.push({ text: gap })
+    out.push({ text: key, attr: /[A-Za-z]/.test(key) ? BOLD : NORMAL })
+    out.push({ text: ' ' + action })
+  })
+  return out
+}
+
 /** Grid cells a string occupies. Code points, not UTF-16 units. */
 export const cells = (s: string) => [...s].length
+
+/** Cut a run of spans to `width` cells, dropping whole spans past the end. */
+function trimSpans(spans: Span[], width: number): Span[] {
+  const out: Span[] = []
+  let left = width
+  for (const span of spans) {
+    if (left <= 0) break
+    const w = cells(span.text)
+    out.push(w <= left ? span : { ...span, text: [...span.text].slice(0, left).join('') })
+    left -= w
+  }
+  return out
+}
 
 /**
  * A label set into a rule, the way every TUI has done it. `align` is measured
@@ -169,17 +208,24 @@ export const cells = (s: string) => [...s].length
  * Spans instead of a plain string when parts of the label need their own
  * treatment — a row of key hints, where the keys are capped and the words
  * between them are not.
+ *
+ * `max` is the cells the label may occupy, blanks included. A label whose text
+ * is not fixed — a room name, a head count — shares its rule with a junction, a
+ * corner, or another label, and without a budget a long one simply writes over
+ * them and the frame comes apart.
  */
 export function label(
-  term: Term,
+  term: Grid,
   r: Rect,
   text: string | Span[],
   opts: {
-    edge?: 'top' | 'bottom'; align?: 'left' | 'right'; attr?: number; clip?: Rect
+    edge?: 'top' | 'bottom'; align?: 'left' | 'right'; attr?: number
+    clip?: Rect; max?: number
   } = {}
 ) {
-  const { edge = 'top', align = 'left', attr = NORMAL, clip } = opts
-  const spans = typeof text === 'string' ? [{ text }] : text
+  const { edge = 'top', align = 'left', attr = NORMAL, clip, max } = opts
+  let spans = typeof text === 'string' ? [{ text }] : text
+  if (max !== undefined) spans = trimSpans(spans, Math.max(0, max - 2))
   // A blank either side, so the label sits in a gap in the rule rather than
   // running straight into it. Never inverted — that gap is the point.
   const width = spans.reduce((n, s) => n + cells(s.text), 2)
@@ -200,7 +246,7 @@ export function label(
 }
 
 /** Fill a region with blanks. Cheaper than clearing and redrawing the frame. */
-export function clear(term: Term, r: Rect) {
+export function clear(term: Grid, r: Rect) {
   for (let y = r.y; y < r.y + r.h; y++) {
     for (let x = r.x; x < r.x + r.w; x++) term.put(x, y, 32)
   }
@@ -231,11 +277,11 @@ export function clear(term: Term, r: Rect) {
  * photograph, and lifting them off black is not a panel behind the image, it is
  * a fog over it.
  */
-export function ground(term: Term, r: Rect) {
+export function ground(term: Grid, r: Rect) {
   for (let y = Math.max(0, r.y); y < Math.min(term.rows, r.y + r.h); y++) {
     for (let x = Math.max(0, r.x); x < Math.min(term.cols, r.x + r.w); x++) {
       const i = y * term.cols + x
-      if (term.gfx[i]) continue
+      if (term.gfx?.[i]) continue
       term.attrs[i]! |= BG
     }
   }
@@ -268,7 +314,7 @@ export function ground(term: Term, r: Rect) {
  * program hands over as the part of the screen it will have covered, and a
  * shadow is still covering.
  */
-export function shadow(term: Term, r: Rect, clip?: Rect) {
+export function shadow(term: Grid, r: Rect, clip?: Rect) {
   const b = clip ?? { x: 0, y: 0, w: term.cols, h: term.rows }
   const fits = (x: number, y: number) =>
     x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h

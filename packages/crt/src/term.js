@@ -117,13 +117,19 @@ export class Term extends CellGrid {
         // Per-cell bitmap, if any. Never for a scrollback row: the history
         // planes are text only.
         const pic = hc ? undefined : this.gfx[i]
+        const inv = hi ? hi[gx] : this.inverse[i]
+        // An inverted cell is always bold. The glyph there is the HOLE in a lit
+        // field, and a roman stroke leaves too little of one to read; the
+        // weight widens it. Costs nothing on a face with a bold cut and smears
+        // by a pixel on one without, which is the same trade BOLD already made.
+        const bold = (attr & BOLD) || inv
         // Which table this cell draws from. Precedence: bitmap, ALT, italic,
         // bold, roman. Null means roman, and is also what an unloaded cut is,
         // so no caller checks whether a face has one.
         let face = pic ? null
           : (attr & ALT) ? this.alt
           : (attr & ITALIC) ? this.italic
-          : (attr & BOLD) ? this.bold
+          : bold ? this.bold
           : null
 
         // Fallback is per glyph, not per face. A cut is drawn for text and is
@@ -147,7 +153,6 @@ export class Term extends CellGrid {
           : attr & DIM ? DIM_LEVEL
           : attr & MUTED ? MUTED_LEVEL
           : LEVELS[attr & BRIGHT]
-        const inv = hi ? hi[gx] : this.inverse[i]
         // Background level. Zero unless BG is set.
         const gnd = attr & BG ? BG_LEVEL : 0
         const adv = this.advance
@@ -168,7 +173,7 @@ export class Term extends CellGrid {
         const shift = face ? adv - face.cellW : 1
         const dy = face ? (cellH - face.cellH) >> 1 : 0
         // Smear only when the bold is synthetic.
-        const smear = (attr & BOLD) && !(face && face === this.bold)
+        const smear = bold && !(face && face === this.bold)
 
         for (let y = 0; y < cellH; y++) {
           // Zero, not skip, where a foreign face is shorter than the cell:

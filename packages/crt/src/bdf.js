@@ -132,6 +132,7 @@ function synth(glyphs, w, h) {
     [0x2b07, vArrow(w, h, top, bot, false)],
     [0x2b62, rArrow(w, h, ruleRows(glyphs, h))],
     [0x21b5, ret(w, h, top, bot)],
+    [0x232b, erase(w, h, top, bot)],
     // Block elements. One correct drawing per cell size, so these are exact.
     [0x2588, rows(() => full)],
     [0x2580, rows(y => (y < half ? full : 0))],
@@ -207,6 +208,41 @@ function vArrow(w, h, top, bot, up) {
       ? centred(w, Math.max(1, Math.round(w * (i + 1) / head)))
       : centred(w, stem)
   }
+  return rows
+}
+
+/**
+ * U+232B, erase to the left: a leftwards arrow inside a keycap outline.
+ *
+ * Synthesised for the same reason the vertical arrows are — no face on offer
+ * carries it, and a missing codepoint renders as `?` with nothing to warn you.
+ * The CONFIG box hints with it, which is the one screen where getting a glyph
+ * wrong shows in front of the person switching faces.
+ */
+function erase(w, h, top, bot) {
+  const rows = new Array(h).fill(0)
+  const mid = (top + bot) >> 1
+  const tip = Math.max(1, Math.round(w / 4))
+  const right = w - 1
+  for (let y = top; y <= bot && y < h; y++) {
+    if (y < 0) continue
+    const dy = Math.abs(y - mid)
+    // The wedge: its point at the left, opening to the body of the key.
+    const from = Math.max(0, tip - dy)
+    if (dy <= tip) {
+      let v = 0
+      for (let x = from; x <= right; x++) v |= 1 << (w - 1 - x)
+      rows[y] = v
+    }
+  }
+  // Top and bottom edges of the key, so the wedge reads as being inside one.
+  const edge = x0 => {
+    let v = 0
+    for (let x = x0; x <= right; x++) v |= 1 << (w - 1 - x)
+    return v
+  }
+  if (top >= 0 && top < h) rows[top] = edge(tip)
+  if (bot >= 0 && bot < h) rows[bot] = edge(tip)
   return rows
 }
 

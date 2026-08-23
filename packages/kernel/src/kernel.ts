@@ -3,7 +3,7 @@
 import { fs } from '@zenfs/core'
 import type { Program, Proc, SpawnOptions, Task } from './proc.js'
 import { basename, join, resolve } from './paths.js'
-import { dec } from './pipe.js'
+import { dec, type Sink } from './pipe.js'
 import { isWasm, runWasi } from './wasi.js'
 
 export class Kernel {
@@ -76,29 +76,47 @@ export class Kernel {
     const pid = this.nextPid++
     const ac = new AbortController()
 
+    let killed = false
+
+    /**
+     * A killed process no longer owns the terminal.
+     *
+     * Nothing here can stop a JS function that ignores its abort signal from
+     * running to the end of its loop — but it can stop it WRITING. Without this
+     * a program killed mid-enumeration goes on printing over the prompt that
+     * replaced it, which is the reader pressing Ctrl-C and watching it not
+     * work. The sinks are gated rather than the loop, because the loop is the
+     * program's business and the glass is not.
+     */
+    const gate = (sink: Sink): Sink => ({
+      write(data) { if (!killed) sink.write(data) },
+      end() { if (!killed) return sink.end() },
+    })
+
+    const stdout = gate(opts.stdout)
+    const stderr = gate(opts.stderr)
+
     const proc: Proc = {
       pid,
       argv: opts.argv,
       env: { ...opts.env },
       cwd: opts.cwd,
       stdin: opts.stdin,
-      stdout: opts.stdout,
-      stderr: opts.stderr,
+      stdout,
+      stderr,
       signal: ac.signal,
       kernel: this,
       tty: opts.tty,
-      out: s => opts.stdout.write(s),
-      err: s => opts.stderr.write(s),
+      out: s => stdout.write(s),
+      err: s => stderr.write(s),
     }
-
-    let killed = false
     const run = (async () => {
       try {
         const code = await program(proc)
         return typeof code === 'number' ? code : 0
       } catch (e) {
         if (killed) return 130
-        opts.stderr.write(`${opts.argv[0] ?? '?'}: ${(e as Error)?.message ?? e}\n`)
+        stderr.write(`${opts.argv[0] ?? '?'}: ${(e as Error)?.message ?? e}\n`)
         return 1
       }
     })()

@@ -1,7 +1,7 @@
 // edit — full-screen text editor, nano keys: ^O write, ^X exit, ^K cut line.
 
-import { dec, type Proc, type Program } from '@cyberspace/kernel'
-import { Surface, TextBuffer, drawBuffer, parseKeys, DIM, INVERSE, BOLD } from '@cyberspace/tui'
+import { dec, type Proc, type Program, readText } from '@cyberspace/kernel'
+import { Surface, TextBuffer, drawBuffer, parseKeys, DIM, BOLD, NORMAL } from '@cyberspace/tui'
 import { fsp, resolve } from './util.js'
 
 export const edit: Program = async p => {
@@ -18,7 +18,7 @@ export const edit: Program = async p => {
   const path = resolve(p, name)
   let initial = ''
   try {
-    initial = String(await fsp.readFile(path, 'utf8'))
+    initial = await readText(path)
   } catch {
     // New file.
   }
@@ -37,15 +37,15 @@ export const edit: Program = async p => {
     drawBuffer(s, buf, { x: 0, y: 0, w: cols, h: rows - 2 })
     const modified = buf.text !== saved
     const status = ` ${name}${modified ? '  [Modified]' : ''}`
-    s.text(0, rows - 2, status.padEnd(cols), INVERSE)
+    s.text(0, rows - 2, status.padEnd(cols), DIM | BOLD, 1)
     if (asking === 'exit') {
       s.text(0, rows - 1, 'Save modified buffer?  Y Yes  N No  ^C Cancel', BOLD)
-      s.cursorVisible = false
+      s.showCursor = false
     } else {
       s.text(0, rows - 1, notice || '^O Write  ^X Exit  ^K Cut Line', DIM)
-      s.cursorVisible = true
+      s.showCursor = true
     }
-    p.out(s.render())
+    p.tty!.paint(s.render())
   }
 
   const write = async (): Promise<boolean> => {

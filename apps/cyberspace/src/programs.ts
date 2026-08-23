@@ -4,7 +4,7 @@
 // Output register is old unix: login(1) prompts, "Login incorrect", finger(1)
 // layout with the bio as Plan, silence on success.
 
-import { dec, fs, type Proc, type Program } from '@cyberspace/kernel'
+import { dec, fs, type Proc, type Program, readText } from '@cyberspace/kernel'
 import { ApiClient, ApiError } from './api.js'
 
 export interface CsHooks {
@@ -14,9 +14,10 @@ export interface CsHooks {
 
 /** Read one line in raw mode. Empty mask hides input entirely. Null on ^C. */
 async function readLine(p: Proc, prompt: string, mask?: string): Promise<string | null> {
-  if (!p.tty) return null
+  const tty = p.tty
+  if (!tty) return null
   p.out(prompt)
-  p.tty.setRaw()
+  tty.setRaw()
   let line = ''
   try {
     for (;;) {
@@ -24,28 +25,29 @@ async function readLine(p: Proc, prompt: string, mask?: string): Promise<string 
       if (chunk === null) return line
       for (const ch of dec.decode(chunk)) {
         if (ch === '\x03') {
-          p.out('\n')
+          tty.echo('\n')
           return null
         }
         if (ch === '\r' || ch === '\n') {
-          p.out('\n')
+          tty.echo('\n')
           return line
         }
         if (ch === '\x7f' || ch === '\b') {
           if (line) {
             line = line.slice(0, -1)
-            if (mask === undefined) p.out('\b \b')
+            if (mask !== '') tty.echo('\b \b')
           }
           continue
         }
         if (ch >= ' ') {
           line += ch
-          p.out(mask ?? ch)
+          // Keystroke echo, not program output: unpaced and silent.
+          tty.echo(mask ?? ch)
         }
       }
     }
   } finally {
-    p.tty.setCooked()
+    tty.setCooked()
   }
 }
 
@@ -85,7 +87,7 @@ export function cyberspacePrograms(api: ApiClient, hooks?: CsHooks): Record<stri
     }
     const email = p.argv[1] ?? await readLine(p, 'login: ')
     if (!email) return 1
-    const password = await readLine(p, 'Password: ', '')
+    const password = await readLine(p, 'Password: ', '*')
     if (password === null) return 1
     let username: string
     try {
@@ -101,7 +103,7 @@ export function cyberspacePrograms(api: ApiClient, hooks?: CsHooks): Record<stri
 
     // As login(1): print the motd, then run a shell as the user. Exiting it
     // returns to the shell that ran login.
-    const motd = await fs.promises.readFile('/etc/motd', 'utf8').catch(() => '')
+    const motd = await readText('/etc/motd').catch(() => '')
     if (motd) p.out(String(motd))
     const sh = p.kernel.resolveProgram('sh')
     if (sh && p.tty) {

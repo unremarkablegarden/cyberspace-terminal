@@ -18,16 +18,27 @@ interface TermLike {
   put(x: number, y: number, ch: string | number, attr?: number, inv?: number): void
 }
 
-const sleep = (ms: number) => new Promise<void>(res => setTimeout(res, ms))
+/** A skipped effect. The caller owns the end state. */
+export class Aborted extends Error {}
+
+const sleep = (ms: number, signal?: AbortSignal): Promise<void> => {
+  if (signal?.aborted) return Promise.reject(new Aborted())
+  return new Promise<void>((res, rej) => {
+    const timer = setTimeout(() => { cleanup(); res() }, ms)
+    const onAbort = () => { clearTimeout(timer); cleanup(); rej(new Aborted()) }
+    const cleanup = () => signal?.removeEventListener('abort', onAbort)
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
 
 /** Run draw(progress 0..1) until dur elapses. Always ends exactly at 1. */
-async function anim(dur: number, draw: (p: number) => void): Promise<void> {
+async function anim(dur: number, draw: (p: number) => void, signal?: AbortSignal): Promise<void> {
   const t0 = performance.now()
   for (;;) {
     const p = Math.min(1, (performance.now() - t0) / dur)
     draw(p)
     if (p >= 1) return
-    await sleep(16)
+    await sleep(16, signal)
   }
 }
 
@@ -44,21 +55,21 @@ function line(term: TermLike, midX: number, midY: number, half: number): void {
  * properly, so the picture arrives as a dot, springs out into a line, and only
  * then opens into a raster.
  */
-export async function strike(term: TermLike, snd?: Sound): Promise<void> {
+export async function strike(term: TermLike, snd?: Sound, signal?: AbortSignal): Promise<void> {
   const { cols, rows } = term
   const midX = cols >> 1
   const midY = rows >> 1
 
   // Contact, then the transformer taking load. Nothing on screen yet.
-  await sleep(420)
+  await sleep(420, signal)
 
   term.put(midX, midY, '●', BRIGHT | BOLD)
   term.dirty = true
   snd?.degauss()
-  await sleep(280)
+  await sleep(280, signal)
 
   // Out into a line.
-  await anim(300, p => line(term, midX, midY, Math.max(2, Math.round(p * midX))))
+  await anim(300, p => line(term, midX, midY, Math.max(2, Math.round(p * midX))), signal)
 
   // Open into a raster. Faint — a warming tube is a dim wash, not a flash.
   await anim(420, p => {
@@ -72,14 +83,14 @@ export async function strike(term: TermLike, snd?: Sound): Promise<void> {
       }
     }
     term.dirty = true
-  })
+  }, signal)
 
   snd?.hiss(0.30, 0.10)
-  await sleep(120)
+  await sleep(120, signal)
   // Settled. The phosphor lets go of the wash on its own.
   term.clear()
   term.dirty = true
-  await sleep(420)
+  await sleep(420, signal)
 }
 
 /**

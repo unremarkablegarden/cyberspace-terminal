@@ -27,7 +27,7 @@ export class CellGrid {
   showCursor: boolean
   clear(): void
   put(x: number, y: number, ch: string | number, attr?: number, inv?: number): void
-  putGlyph(x: number, y: number, bits: number[], attr?: number, inv?: number): void
+  putGlyph(x: number, y: number, bits: ArrayLike<number>, attr?: number, inv?: number): void
   text(x: number, y: number, str: string, attr?: number, inv?: number): number
   write(str: string, attr?: number): void
   writeln(str?: string, attr?: number): void

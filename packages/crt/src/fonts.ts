@@ -61,13 +61,6 @@ export function familyOf(name: string): FontFamily {
   return FAMILIES.find(f => f.name === name) ?? FAMILIES[0]
 }
 
-/** What a config row shows: the family plus the cuts it has, e.g. `6x13 B+O`. */
-export function fontLabel(name: string): string {
-  const f = familyOf(name)
-  const mark = [f.bold ? 'B' : '', f.italic ? 'O' : ''].filter(Boolean).join('+')
-  return mark ? `${f.name} ${mark}` : f.name
-}
-
 async function fetchFont(url: string) {
   const res = await fetch(url)
   if (!res.ok) throw new Error(`font ${url}: ${res.status}`)
@@ -104,3 +97,30 @@ export async function loadFallback(term: TermFontSlots): Promise<void> {
     term.dirty = true
   } catch {}
 }
+
+/** What the list shows: the family, plus the cuts it actually has. */
+export interface FontEntry {
+  name: string
+  label: string
+}
+
+/**
+ * The FONT list.
+ *
+ * A family wears what it has — `6x13 B+O` — so the row says both what you are
+ * picking and what picking it buys you. A face with neither is just its name,
+ * which is the honest thing for it to be.
+ */
+export const FONT_ENTRIES: FontEntry[] = FAMILIES.map((f) => {
+  const mark = [f.bold ? 'B' : '', f.italic ? 'O' : ''].filter(Boolean).join('+')
+  return { name: f.name, label: mark ? `${f.name} ${mark}` : f.name }
+})
+
+const LABEL_OF = new Map(FONT_ENTRIES.map(e => [e.name, e.label]))
+const NAME_OF = new Map(FONT_ENTRIES.map(e => [e.label, e.name]))
+
+/** What the config box calls a loaded family. */
+export const fontLabel = (name: string): string => LABEL_OF.get(name) ?? name
+
+/** The family a row of the config box loads. */
+export const fontFace = (label: string): string => NAME_OF.get(label) ?? label

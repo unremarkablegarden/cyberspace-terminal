@@ -1,0 +1,6 @@
+Alps SKCM Blue keyboard sounds
+Author: tplai
+Distributed via thock-soundpacks (https://github.com/kamillobinski/thock-soundpacks)
+License: MIT
+https://github.com/tplai/kbsim/blob/master/LICENSE.md
+Files: key1-5 = default keypress variants; the rest are the named special keys.

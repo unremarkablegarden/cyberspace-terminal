@@ -141,10 +141,25 @@ async function runPipeline(sh: ShellState, cmds: Cmd[]): Promise<number> {
     prevOut = nextIn ?? prevOut
   }
 
-  // ^C kills the whole foreground pipeline.
-  const tty = sh.proc.tty as { onSigint?: (() => void) | null } | undefined
+  // ^C kills the whole foreground pipeline, and puts the terminal back.
+  //
+  // The kill alone is not enough for a full-screen program: killed mid-paint it
+  // never reaches its own `finally`, and the alt screen and the raw mode would
+  // outlive it — leaving the reader at a prompt they cannot see. Both are
+  // idempotent, so saying it here costs nothing when the program does tidy up.
+  const tty = sh.proc.tty as {
+    onSigint?: (() => void) | null
+    setCooked?: () => void
+    paint?: (s: string) => void
+  } | undefined
   const prevSigint = tty?.onSigint
-  if (tty) tty.onSigint = () => { for (const t of tasks) t.kill() }
+  if (tty) {
+    tty.onSigint = () => {
+      for (const t of tasks) t.kill()
+      tty.paint?.('\x1b[?1049l\x1b[?25h')
+      tty.setCooked?.()
+    }
+  }
 
   try {
     const codes = await Promise.all(tasks.map(t => t.wait))

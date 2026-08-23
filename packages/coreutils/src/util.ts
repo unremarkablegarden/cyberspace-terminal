@@ -1,6 +1,6 @@
 // Shared helpers for the tools.
 
-import { fs, paths, readAll, type Proc } from '@cyberspace/kernel'
+import { fs, paths, readAll, type Proc, readText } from '@cyberspace/kernel'
 
 export const fsp = fs.promises
 
@@ -28,15 +28,30 @@ export function flags(p: Proc, spec: string): { f: Set<string>; args: string[]; 
   return { f, args, n }
 }
 
+const ERRNO: Record<string, string> = {
+  ENOENT: 'No such file or directory',
+  ENOTDIR: 'Not a directory',
+  EISDIR: 'Is a directory',
+  EACCES: 'Permission denied',
+  EIO: 'Input/output error',
+}
+
+/** The usual message for an errno. Anything else reports itself. */
+export function strerror(e: unknown): string {
+  const { code, message } = e as { code?: string; message?: string }
+  if (code) return ERRNO[code] ?? code
+  return message || 'Error'
+}
+
 /** Concatenated text of the given files, or stdin when none. */
 export async function inputText(p: Proc, files: string[]): Promise<string> {
   if (!files.length) return readAll(p.stdin)
   let out = ''
   for (const file of files) {
     try {
-      out += String(await fsp.readFile(resolve(p, file), 'utf8'))
-    } catch {
-      throw new Error(`${file}: No such file or directory`)
+      out += await readText(resolve(p, file))
+    } catch (e) {
+      throw new Error(`${file}: ${strerror(e)}`)
     }
   }
   return out

@@ -1,11 +1,14 @@
 // The shell program: prompt loop, history, tab completion.
 
-import { fs, paths, type Proc, type Program } from '@cyberspace/kernel'
+import { fs, paths, type Proc, type Program, readText } from '@cyberspace/kernel'
 import { Readline, type Completion } from './readline.js'
 import { runLine, ShellExit, setHistoryBuiltin, builtinNames, type ShellState } from './run.js'
 
 const HISTFILE = '.sh_history'
 const HISTMAX = 500
+// Lines tolerated on disk before the file is compacted. Compaction truncates,
+// so it happens rarely and through a temp file; ordinary commands append.
+const HISTFILEMAX = 2 * HISTMAX
 
 export const shellMain: Program = async (p: Proc) => {
   const sh: ShellState = {
@@ -25,14 +28,36 @@ export const shellMain: Program = async (p: Proc) => {
     return 1
   }
 
-  const rl = new Readline(p.tty, p.stdin, s => p.stdout.write(s), (line, cursor) =>
-    complete(sh, line, cursor))
+  const rl = new Readline(p.tty, p.stdin, (line, cursor) => complete(sh, line, cursor))
 
   const histPath = paths.join(p.env.HOME ?? '/', HISTFILE)
+  let histLines = 0
   try {
-    const text = await fs.promises.readFile(histPath, 'utf8')
-    rl.history = String(text).split('\n').filter(Boolean).slice(-HISTMAX)
+    const lines = (await readText(histPath)).split('\n').filter(Boolean)
+    rl.history = lines.slice(-HISTMAX)
+    histLines = lines.length
   } catch {}
+
+  // Appended, never rewritten in place: writeFile opens O_TRUNC, and a command
+  // that reads the file while that is in flight sees it empty. `cat
+  // .sh_history` reads it on every invocation. Writes are chained so they keep
+  // their order, and compaction swaps a temp file in rather than truncating.
+  let histWrite: Promise<void> = Promise.resolve()
+  const saveHistory = (line: string) => {
+    histWrite = histWrite
+      .then(async () => {
+        if (histLines < HISTFILEMAX) {
+          await fs.promises.appendFile(histPath, line + '\n')
+          histLines++
+          return
+        }
+        const tmp = histPath + '.tmp'
+        await fs.promises.writeFile(tmp, rl.history.join('\n') + '\n')
+        await fs.promises.rename(tmp, histPath)
+        histLines = rl.history.length
+      })
+      .catch(() => {})
+  }
 
   setHistoryBuiltin((s, proc) => {
     rl.history.forEach((h, i) => proc.out(`${String(i + 1).padStart(5)}  ${h}\n`))
@@ -52,7 +77,7 @@ export const shellMain: Program = async (p: Proc) => {
     if (rl.history[rl.history.length - 1] !== trimmed) {
       rl.history.push(trimmed)
       if (rl.history.length > HISTMAX) rl.history.shift()
-      void fs.promises.writeFile(histPath, rl.history.join('\n') + '\n').catch(() => {})
+      saveHistory(trimmed)
     }
 
     try {
@@ -71,7 +96,7 @@ async function runScript(sh: ShellState, p: Proc, path: string): Promise<number>
   const full = paths.resolve(p.cwd, path)
   let text: string
   try {
-    text = String(await fs.promises.readFile(full, 'utf8'))
+    text = await readText(full)
   } catch {
     p.err(`sh: ${path}: No such file or directory\n`)
     return 127

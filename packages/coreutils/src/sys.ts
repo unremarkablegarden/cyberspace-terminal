@@ -1,6 +1,6 @@
 // System tools: date uname whoami hostname env which clear sleep true false help.
 
-import type { Program } from '@cyberspace/kernel'
+import { readText, type Program } from '@cyberspace/kernel'
 import { fsp } from './util.js'
 
 export const date: Program = p => {
@@ -79,7 +79,7 @@ export const help: Program = async p => {
 
 export const motd: Program = async p => {
   try {
-    p.out(String(await fsp.readFile('/etc/motd', 'utf8')))
+    p.out(await readText('/etc/motd'))
   } catch {}
   return 0
 }

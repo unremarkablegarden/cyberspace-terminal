@@ -1,0 +1,6 @@
+Topre Purple Hybrid PBT keyboard sounds
+Author: mechvibes
+Distributed via thock-soundpacks (https://github.com/kamillobinski/thock-soundpacks)
+License: MIT
+https://github.com/hainguyents13/mechvibes/blob/main/LICENSE
+Files: key1-5 = default keypress variants; the rest are the named special keys.

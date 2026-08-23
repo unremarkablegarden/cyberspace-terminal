@@ -3,7 +3,7 @@
 
 import { configure, fs } from '@zenfs/core'
 import type { Source, Sink } from './pipe.js'
-import { bytes } from './pipe.js'
+import { bytes, dec } from './pipe.js'
 
 // The mounts object is host-defined; zenfs infers backend options from the
 // literal, which the kernel cannot know. Hence the cast.
@@ -42,4 +42,9 @@ export async function fileSink(path: string, append: boolean): Promise<Sink> {
       return fs.promises.appendFile(path, buf)
     },
   }
+}
+
+/** A file as text. */
+export async function readText(path: string): Promise<string> {
+  return dec.decode(await fs.promises.readFile(path))
 }

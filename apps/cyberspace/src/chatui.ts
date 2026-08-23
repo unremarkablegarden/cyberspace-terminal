@@ -1,7 +1,7 @@
 // Shared furniture for the chat programs: span wrapping, timestamps,
 // attachment placeholders, and the RTDB REST live stream.
 
-import { NORMAL } from '@cyberspace/tui'
+import { NORMAL, plain } from '@cyberspace/tui'
 import type { ApiClient } from './api.js'
 
 export type Span = [text: string, attr: number]
@@ -18,22 +18,34 @@ export interface MsgBody {
   fortuneText?: string
   gifUrl?: string
   imageUrl?: string
-  audioAttachment?: { artist?: string; title?: string }
+  audioAttachment?: { artist?: string; title?: string; genre?: string }
   style?: string | string[]
 }
 
-/** One message's tail: text plus any attachment placeholders. */
+/** Styles arrive as one name or a chain. */
+export const hasStyle = (style: string | string[] | undefined, name: string): boolean =>
+  Array.isArray(style) ? style.includes(name) : style === name
+
+/**
+ * One message's tail: text plus any attachment placeholders.
+ *
+ * Folded to one cell per character on the way out — an emoji is two cells here
+ * and one on the parser's side, and the difference costs the row a column for
+ * good. See plain.ts.
+ */
 export function bodyOf(m: MsgBody): string {
-  let text = m.style === 'art' ? '[ART]' : (m.content ?? '')
-  if (m.eightballAnswer) text += ` ${m.eightballAnswer}`
-  if (m.fortuneText) text += ` ${m.fortuneText}`
+  let text = hasStyle(m.style, 'art') ? '[ART]' : (m.content ?? '')
+  // The API writes these into the content as well as the field.
+  if (m.eightballAnswer && !text.includes(m.eightballAnswer)) text += ` ${m.eightballAnswer}`
+  if (m.fortuneText && !text.includes(m.fortuneText)) text += ` ${m.fortuneText}`
   if (m.audioAttachment) {
     const a = m.audioAttachment
-    text += ` [song: ${[a.artist, a.title].filter(Boolean).join(' - ')}]`
+    const name = [a.artist, a.title].filter(Boolean).join(' - ')
+    text += ` [SONG: ${name}${a.genre ? ` (${a.genre})` : ''}]`
   }
   if (m.gifUrl) text += ' [GIF]'
   if (m.imageUrl) text += ' [IMG]'
-  return text.trim()
+  return plain(text.trim())
 }
 
 /** Wrap spans to width; continuation lines get a hanging indent. */

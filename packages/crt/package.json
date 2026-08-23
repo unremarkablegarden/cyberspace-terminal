@@ -11,10 +11,18 @@
     "./vector": "./src/vector.js",
     "./audio": "./src/audio.ts",
     "./effects": "./src/effects.ts",
+    "./boot": "./src/boot.ts",
     "./fonts": "./src/fonts.ts",
     "./settings": "./src/settings.ts",
     "./softkeys": "./src/softkeys.ts",
     "./config": "./config.js",
-    "./fonts/*": "./fonts/*"
+    "./fonts/*": "./fonts/*",
+    "./keypacks": "./src/keypacks.ts",
+    "./controls": "./src/controls.ts",
+    "./saver": "./src/saver.ts",
+    "./saverdefs": "./src/saverdefs.ts"
+  },
+  "dependencies": {
+    "@cyberspace/tui": "workspace:*"
   }
 }

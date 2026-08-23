@@ -1,5 +1,9 @@
 // Line editor over a raw tty: cursor movement, history, tab completion.
 // Renders on one screen row with horizontal scrolling for long lines.
+//
+// What it draws is echo, not program output: it goes to the tty unpaced, and a
+// keystroke repaints only what changed. Reprinting the whole line on every key
+// would send the line back out at the configured baud.
 
 import { dec, type Source } from '@cyberspace/kernel'
 import type { TtyControl } from '@cyberspace/kernel'
@@ -24,12 +28,22 @@ export class Readline {
   private draft = ''
   private prompt = ''
 
+  // What is on the row now, for the incremental repaint.
+  private drawnStart = 0
+  private drawnView = ''
+  private drawnCol = 0
+
   constructor(
     private tty: TtyControl,
     private stdin: Source,
-    private out: (s: string) => void,
     private complete?: Completer,
   ) {}
+
+  private drawn(start: number, view: string, col: number): void {
+    this.drawnStart = start
+    this.drawnView = view
+    this.drawnCol = col
+  }
 
   /** Read one line. Returns null on EOF (^D at an empty line). */
   async read(prompt: string): Promise<string | null> {
@@ -39,7 +53,8 @@ export class Readline {
     this.cursor = 0
     this.histIndex = this.history.length
     this.draft = ''
-    this.out(prompt)
+    this.tty.echo(prompt)
+    this.drawn(0, '', 0)
 
     let pending = ''
     for (;;) {
@@ -57,20 +72,21 @@ export class Readline {
   }
 
   private finish(): string {
-    this.out('\r\n')
+    this.tty.echo('\r\n')
     return this.buf
   }
 
   private async key(k: string): Promise<'line' | 'eof' | void> {
     switch (k) {
-      case '\r': case '\n': return 'line'
+      case '\r': case '\n': case '\x1b[106;5u': return 'line'
       case '\x04': return this.buf ? undefined : 'eof'
       case '\x03': // ^C: abandon the line
-        this.out('^C\r\n' + this.prompt)
+        this.tty.echo('^C\r\n' + this.prompt)
         this.buf = ''
         this.cursor = 0
+        this.drawn(0, '', 0)
         return
-      case '\x7f': case '\b':
+      case '\x7f': case '\b': case '\x1b[104;5u':
         if (this.cursor > 0) {
           this.buf = this.buf.slice(0, this.cursor - 1) + this.buf.slice(this.cursor)
           this.cursor--
@@ -106,8 +122,8 @@ export class Readline {
         return
       }
       case '\x0c': // ^L
-        this.out('\x1b[2J\x1b[H')
-        this.redraw()
+        this.tty.echo('\x1b[2J\x1b[H')
+        this.redraw(true)
         return
       case '\t': {
         if (!this.complete) return
@@ -117,8 +133,8 @@ export class Readline {
           this.cursor += r.insert.length
           this.redraw()
         } else if (r.list?.length) {
-          this.out('\r\n' + columns(r.list, this.tty.cols) + '\r\n')
-          this.redraw()
+          this.tty.echo('\r\n' + columns(r.list, this.tty.cols) + '\r\n')
+          this.redraw(true)
         }
         return
       }
@@ -140,16 +156,39 @@ export class Readline {
     this.redraw()
   }
 
-  private redraw(): void {
+  private redraw(force = false): void {
     const width = this.tty.cols - visibleLen(this.prompt) - 1
     // Keep the cursor inside the visible window.
     let start = 0
     if (this.cursor > width) start = this.cursor - width
     const view = this.buf.slice(start, start + width)
     const col = this.cursor - start
-    this.out('\r\x1b[K' + this.prompt + view)
+
+    // Same window: send the difference rather than the row.
+    if (!force && start === this.drawnStart) {
+      const atEnd = col === view.length && this.drawnCol === this.drawnView.length
+      if (atEnd && view.length > this.drawnView.length && view.startsWith(this.drawnView)) {
+        this.tty.echo(view.slice(this.drawnView.length))
+        this.drawn(start, view, col)
+        return
+      }
+      if (atEnd && view.length < this.drawnView.length && this.drawnView.startsWith(view)) {
+        this.tty.echo('\b'.repeat(this.drawnView.length - view.length) + '\x1b[K')
+        this.drawn(start, view, col)
+        return
+      }
+      if (view === this.drawnView && col !== this.drawnCol) {
+        const d = col - this.drawnCol
+        this.tty.echo(d > 0 ? `\x1b[${d}C` : `\x1b[${-d}D`)
+        this.drawn(start, view, col)
+        return
+      }
+    }
+
+    this.tty.echo('\r\x1b[K' + this.prompt + view)
     const back = view.length - col
-    if (back > 0) this.out(`\x1b[${back}D`)
+    if (back > 0) this.tty.echo(`\x1b[${back}D`)
+    this.drawn(start, view, col)
   }
 }
 

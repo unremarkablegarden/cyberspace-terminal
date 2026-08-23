@@ -7,11 +7,18 @@
 // an empty stack returns to line mode.
 
 import { dec, type Proc, type Program } from '@cyberspace/kernel'
-import { Surface, BOLD as S_BOLD, DIM as S_DIM, parseKeys } from '@cyberspace/tui'
+import { Surface, parseKeys } from '@cyberspace/tui'
 import {
   CellGrid, NORMAL, BRIGHT, BOLD, DIM, MUTED, FAINT, ALT, ITALIC, BG,
 } from '@cyberspace/crt/term'
-import * as box from './box.js'
+import {
+  frame, label, hline, vline, clear, shadow, ground, inside, cells,
+} from '@cyberspace/tui'
+
+// What a compat program's ctx.tui has always been: the box helpers, nothing
+// else. The module they come from now carries widgets too, which are not on
+// offer here.
+const box = { frame, label, hline, vline, clear, shadow, ground, inside, cells }
 import { DotCanvas, drawEdges, teapot } from './vector.js'
 import { roll } from './roll.js'
 
@@ -51,14 +58,6 @@ function sgrOf(attr: number): string {
   if (attr & (BRIGHT | BOLD)) parts.push('1')
   if (attr & (DIM | MUTED | FAINT)) parts.push('2')
   return parts.length ? `\x1b[${parts.join(';')}m` : ''
-}
-
-function surfaceAttr(attr: number, inv: number): number {
-  let a = 0
-  if (attr & (BRIGHT | BOLD)) a |= S_BOLD
-  if (attr & (DIM | MUTED | FAINT)) a |= S_DIM
-  if (inv) a |= 4
-  return a
 }
 
 export interface CompatDeps {
@@ -127,12 +126,14 @@ export function runGridProgram(deps: CompatDeps): (p: Proc, source: string) => P
       for (let i = 0; i < cols * rows; i++) {
         const code = grid.chars[i]
         surface.chars[i] = code === 0 ? ' ' : String.fromCodePoint(code || 32)
-        surface.attrs[i] = surfaceAttr(grid.attrs[i], grid.inverse[i])
+        // Same attribute byte either side; the Surface is the grid's own model.
+        surface.attrs[i] = grid.attrs[i]
+        surface.inv[i] = grid.inverse[i]
       }
       surface.cx = grid.cx
       surface.cy = grid.cy
-      surface.cursorVisible = false
-      p.out(surface.render())
+      surface.showCursor = false
+      p.tty?.paint(surface.render()) ?? p.out(surface.render())
     }
 
     const ticker = setInterval(render, 33)

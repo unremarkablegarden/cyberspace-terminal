@@ -53,6 +53,9 @@
     "packages/crt": {
       "name": "@cyberspace/crt",
       "version": "0.1.0",
+      "dependencies": {
+        "@cyberspace/tui": "workspace:*",
+      },
     },
     "packages/kernel": {
       "name": "@cyberspace/kernel",

@@ -6,7 +6,8 @@
 // caret can never disagree about where a character is. Hard newlines are in
 // the string like any other character; they are what Enter inserts.
 
-import { Surface, NORMAL, type Rect } from './surface.js'
+import { Surface, type Rect } from './surface.js'
+import { NORMAL } from './attrs.js'
 import type { KeyInput } from './keys.js'
 
 /** One drawn row of the folded text: where it starts, and how long it is. */

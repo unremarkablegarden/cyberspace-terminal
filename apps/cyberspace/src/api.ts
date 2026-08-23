@@ -15,6 +15,7 @@ export class ApiError extends Error {
 
 export class ApiClient {
   username: string | null = null
+  userId: string | null = null
   onAuthChange: ((username: string | null) => void) | null = null
 
   private idToken: string | null = null
@@ -59,6 +60,7 @@ export class ApiClient {
     this.idToken = null
     this.refreshToken = null
     this.username = null
+    this.userId = null
     this.storage.set(null)
     this.onAuthChange?.(null)
   }
@@ -98,8 +100,9 @@ export class ApiClient {
   }
 
   private async loadMe(): Promise<void> {
-    const me = await this.get<{ username?: string }>('/v1/users/me')
+    const me = await this.get<{ username?: string; userId?: string }>('/v1/users/me')
     this.username = me.username ?? null
+    this.userId = me.userId ?? null
     this.onAuthChange?.(this.username)
   }
 
@@ -141,4 +144,15 @@ export class ApiClient {
     }
     return json?.data as T
   }
+  /**
+   * Names for an @-fragment, for the autocompletes. Answers with usernames
+   * only — the boxes that call this are lists of names, not of people.
+   */
+  async searchUsers(q: string): Promise<string[]> {
+    if (q.length < 2) return []
+    const rows = await this.get<{ username?: string }[]>(
+      `/v1/search?type=users&limit=8&q=${encodeURIComponent(q)}`)
+    return rows.map(r => r.username ?? '').filter(Boolean)
+  }
+
 }

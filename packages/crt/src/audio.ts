@@ -20,14 +20,17 @@ const MASTER_GAIN = 0.45
 const KEY_GAIN = 0.8
 const BOOTUP_GAIN = 0.5
 
+import { KEY_PACKS, DEFAULT_KEY_PACK } from './keypacks.js'
+
 export type SoundChannel = 'background' | 'keys' | 'beeps'
 const CHANNELS: SoundChannel[] = ['background', 'keys', 'beeps']
 
 const CHANNEL_FADE = 0.02
 
 export interface SoundAssets {
-  /** Key sample URLs by group: `default` (variants) plus space/enter/del/arr*. */
-  keys: Record<string, string[]>
+  /** Key sample URLs by group: `default` (variants) plus space/enter/del/arr*.
+   *  Omitted to take the default board; see setKeyPack. */
+  keys?: Record<string, string[]>
   /** The startup chime, scored under a cold boot. */
   bootupUrl?: string
 }
@@ -38,6 +41,7 @@ export class Sound {
   loaded = false
 
   private assets: SoundAssets
+  private pack = DEFAULT_KEY_PACK
   private buffers = new Map<string, AudioBuffer>()
   private lastTick = 0
   private running = false
@@ -80,12 +84,41 @@ export class Sound {
 
     this.noise = this.makeNoise()
 
-    const urls = [...new Set(Object.values(this.assets.keys).flat())]
+    await this.loadPack(this.pack)
+    this.loaded = true
+  }
+
+  /** The sample table in play: an explicit one from the host, or the pack. */
+  private keys(): Record<string, string[]> {
+    return this.assets.keys ?? KEY_PACKS[this.pack]?.urls ?? {}
+  }
+
+  /** Which board is on. */
+  get keyPackName(): string {
+    return this.pack
+  }
+
+  /**
+   * Wear another board. Returns immediately and fetches behind itself, so the
+   * first few keys after a switch are silent rather than late — a keyclick that
+   * arrives after the letter is worse than one that never came.
+   */
+  setKeyPack(name: string): string {
+    if (!KEY_PACKS[name] || this.assets.keys) return this.pack
+    this.pack = name
+    if (this.ctx) void this.loadPack(name)
+    return this.pack
+  }
+
+  private async loadPack(name: string): Promise<void> {
+    const urls = this.assets.keys
+      ? [...new Set(Object.values(this.assets.keys).flat())]
+      : [...new Set(Object.values(KEY_PACKS[name]?.urls ?? {}).flat() as string[])]
     await Promise.all(urls.map(async url => {
+      if (this.buffers.has(url)) return
       const buf = await this.decode(url)
       if (buf) this.buffers.set(url, buf)
     }))
-    this.loaded = true
   }
 
   private async decode(url: string): Promise<AudioBuffer | null> {
@@ -217,7 +250,7 @@ export class Sound {
   private sample(group: string, gain = KEY_GAIN): void {
     if (!this.enabled || !this.levels.keys || !this.loaded || this.disposed || !this.ctx) return
     if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {})
-    const urls = this.assets.keys
+    const urls = this.keys()
     const choices = urls[group] || urls.default!
     const buf = this.buffers.get(choices[(Math.random() * choices.length) | 0]!)
     if (!buf) return

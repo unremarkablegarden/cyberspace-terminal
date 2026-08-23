@@ -10,3 +10,4 @@ spikes/**/*.wasm.gz
 # local-only
 .claude/
 CLAUDE.local.md
+*.tsbuildinfo

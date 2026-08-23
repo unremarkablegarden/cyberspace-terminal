@@ -3,17 +3,23 @@ import { Terminal } from '@xterm/headless'
 import { mount, type CrtScreen } from '@cyberspace/crt'
 import { RENDER, GRID, PRESETS } from '@cyberspace/crt/config'
 import { Sound } from '@cyberspace/crt/audio'
-import { strike, implode } from '@cyberspace/crt/effects'
-import { FONT_NAMES, familyOf, loadFamily, loadFallback } from '@cyberspace/crt/fonts'
-import { SettingsOverlay, type SettingDef } from '@cyberspace/crt/settings'
+import { strike, implode, Aborted } from '@cyberspace/crt/effects'
+import { bootSequence } from '@cyberspace/crt/boot'
+import {
+  FONT_ENTRIES, fontFace, fontLabel, familyOf, loadFamily, loadFallback,
+} from '@cyberspace/crt/fonts'
+import { SettingsOverlay, type Setting } from '@cyberspace/crt/settings'
+import { KEY_PACK_NAMES, DEFAULT_KEY_PACK } from '@cyberspace/crt/keypacks'
+import { CRT_CONTROLS } from '@cyberspace/crt/controls'
+import { SAVER_NAMES, type ScreensaverPrefs } from '@cyberspace/crt/saverdefs'
 import { softKeydownWanted, softInputKeys, SENTINEL } from '@cyberspace/crt/softkeys'
 import { InMemory, fs } from '@zenfs/core'
-import { WebAccess } from '@zenfs/dom'
-import { Kernel, Tty, mountAll, bytes, type Proc } from '@cyberspace/kernel'
+import { Kernel, Tty, mountAll, bytes, type Proc, readText } from '@cyberspace/kernel'
 import { coreutils } from '@cyberspace/coreutils'
 import { shellMain } from '@cyberspace/shell'
 import { ApiClient, circProgram, cmailProgram, cyberspacePrograms, registryPrograms } from '@cyberspace/apps'
 import { compatFileHandler } from '@cyberspace/compat'
+import { OpfsHome } from './opfs'
 import { syncTerm } from './vt'
 import { encodeKey, encodeKeyName } from './keys'
 import { Baud } from './baud'
@@ -62,7 +68,18 @@ const store = {
   set: (k: string, v: string) => localStorage.setItem('csterm.' + k, v),
 }
 
-const BAUDS: Record<string, number> = { '2400': 2400, '9600': 9600, '38400': 38400, full: 1e7 }
+/**
+ * The line, fixed. 2400 baud is ten bits a character, so 240 a second — the
+ * rate the machine has always run at and no longer a thing to be told about.
+ */
+const CPS = 240
+
+/** Levels the AUDIO rows offer, and what each is worth on the bus. */
+const AUDIO_LEVELS: [string, number][] = [['off', 0], ['25%', 0.25], ['50%', 0.5], ['100%', 1]]
+const levelLabel = (v: number): string =>
+  AUDIO_LEVELS.reduce((best, [label, level]) =>
+    Math.abs(level - v) < Math.abs(AUDIO_LEVELS.find(l => l[0] === best)![1] - v) ? label : best,
+  AUDIO_LEVELS[0][0])
 
 // --- machinery --------------------------------------------------------------
 
@@ -70,20 +87,7 @@ RENDER.cursor = true
 GRID.cols = COLS
 GRID.rows = ROWS
 
-const KEYS_BASE = '/sounds/cherry-mx-red-abs'
-const snd = new Sound({
-  keys: {
-    default: [1, 2, 3, 4, 5].map(i => `${KEYS_BASE}/key${i}.wav`),
-    space: [`${KEYS_BASE}/space.wav`],
-    enter: [`${KEYS_BASE}/enter.wav`],
-    del: [`${KEYS_BASE}/del.wav`],
-    arrup: [`${KEYS_BASE}/arrup.wav`],
-    arrdown: [`${KEYS_BASE}/arrdown.wav`],
-    arrleft: [`${KEYS_BASE}/arrleft.wav`],
-    arrright: [`${KEYS_BASE}/arrright.wav`],
-  },
-  bootupUrl: '/sounds/bootup.mp3',
-})
+const snd = new Sound({ bootupUrl: '/sounds/bootup.mp3' })
 
 // Public client config, same values any web client ships. Live chat reads
 // stream straight from RTDB with the caller's idToken; writes go via the API.
@@ -99,8 +103,9 @@ api.onAuthChange = user => {
 }
 
 const xt = new Terminal({ cols: COLS, rows: ROWS, scrollback: 1000, allowProposedApi: true })
-const tx = new Baud(data => xt.write(data), BAUDS[store.get('baud', '9600')] ?? 9600)
-const tty = new Tty(data => tx.write(data.slice()), COLS, ROWS)
+const tx = new Baud(data => xt.write(data), CPS, 'char')
+// Echo is urgent: the operator's own keystrokes never queue behind output.
+const tty = new Tty((data, urgent) => (urgent ? tx.now(data.slice()) : tx.write(data.slice())), COLS, ROWS)
 
 xt.onBell(() => snd.beep(880, 0.09))
 
@@ -109,7 +114,8 @@ xt.onBell(() => snd.beep(880, 0.09))
 let gridLock = 0
 let halted = false
 let killSession: (() => void) | null = null
-let lastKeyAt = 0
+// Live only while the cold-boot sequence plays; ^C aborts it.
+let bootAbort: AbortController | null = null
 
 async function withGrid(fn: () => Promise<void>): Promise<void> {
   gridLock++
@@ -140,8 +146,14 @@ async function bootMachine(): Promise<Kernel> {
   kernel.register('reboot', rebootProgram)
   // After coreutils: the network whoami (answers with the login) wins.
   kernel.registerAll(cyberspacePrograms(api))
-  kernel.register('circ', circProgram(api, RTDB_URL))
-  kernel.register('cmail', cmailProgram(api, RTDB_URL))
+  // The chat screens have opinions about sounds and make none of their own.
+  const chatSnd = {
+    tick: () => snd.tick(),
+    beep: (hz?: number, dur?: number) => snd.beep(hz, dur),
+    blip: (hz?: number, dur?: number, jitter?: number) => snd.blip(hz, dur, jitter),
+  }
+  kernel.register('circ', circProgram(api, RTDB_URL, chatSnd))
+  kernel.register('cmail', cmailProgram(api, RTDB_URL, chatSnd))
   kernel.registerAll(registryPrograms(api))
 
   // Programs from the original /terminal, recognised by their export.
@@ -179,7 +191,7 @@ async function bootMachine(): Promise<Kernel> {
     '/': InMemory,
     '/bin': InMemory,
     '/tmp': InMemory,
-    '/home': { backend: WebAccess, handle: opfs },
+    '/home': { backend: OpfsHome, handle: opfs },
   })
   await kernel.seed()
 
@@ -233,20 +245,11 @@ async function rebootProgram(p: Proc): Promise<number> {
   return 0
 }
 
-const MOTD_CPS = 240
-
 async function session(kernel: Kernel): Promise<void> {
   while (!halted) {
-    const motd = await fs.promises.readFile('/etc/motd', 'utf8').catch(() => '')
-    const cps = tx.cps
-    if (cps <= 38400) {
-      tx.cps = Math.min(cps, MOTD_CPS)
-      tty.stdout.write(String(motd))
-      await waitForDrain()
-      tx.cps = cps
-    } else {
-      tty.stdout.write(String(motd))
-    }
+    const motd = await readText('/etc/motd').catch(() => '')
+    tty.stdout.write(String(motd))
+    await waitForDrain()
     const task = kernel.spawn(shellMain, {
       argv: ['sh'],
       env: { ...ENV },
@@ -267,78 +270,252 @@ async function session(kernel: Kernel): Promise<void> {
 
 let overlay: SettingsOverlay | null = null
 
-function buildSettings(screen: CrtScreen): SettingDef[] {
-  let screenName = store.get('screen', 'sharp')
-  let phosphor = store.get('phosphor', 'matrix')
-  let fontName = store.get('font', 'terminus-8x16')
-  let sound = store.get('sound', 'on')
-  let baud = store.get('baud', '9600')
+/** What the mixer is on, and the board under the keys. */
+interface Audio { background: number; keys: number; beeps: number; pack: string }
+
+function readAudio(): Audio {
+  const fallback: Audio = { background: 1, keys: 1, beeps: 1, pack: DEFAULT_KEY_PACK }
+  try {
+    const saved = JSON.parse(store.get('sound', '')) as Partial<Audio>
+    return { ...fallback, ...saved }
+  } catch {
+    return fallback
+  }
+}
+
+function writeAudio(a: Audio): void {
+  store.set('sound', JSON.stringify(a))
+}
+
+/**
+ * The settings, rebuilt on every open rather than held.
+ *
+ * `current` is a getter throughout for the same reason: the truth is not the
+ * screen's. A saved tube preset grows the SCREEN list, and the shell can move
+ * any of this from underneath the box.
+ */
+function settings(screen: CrtScreen): Setting[] {
+  const audio = readAudio()
+
+  const channel = (name: 'background' | 'keys' | 'beeps'): Setting => ({
+    label: name,
+    values: AUDIO_LEVELS.map(([label]) => label),
+    current: () => levelLabel(snd.channel(name)),
+    select: (value) => {
+      const level = AUDIO_LEVELS.find(([label]) => label === value)?.[1] ?? 0
+      snd.setChannel(name, level)
+      const next = readAudio()
+      next[name] = level
+      writeAudio(next)
+      return value
+    },
+  })
 
   return [
     {
-      name: 'SCREEN',
-      values: () => Object.keys(PRESETS),
-      current: () => screenName,
-      apply: v => {
-        screenName = v
-        store.set('screen', v)
-        screen.crt.setParams(PRESETS[v as keyof typeof PRESETS])
-      },
-    },
-    {
-      name: 'PHOSPHOR',
-      values: () => ['matrix', 'vt320', 'brutalist', 'bubblegum', 'white'],
-      current: () => phosphor,
-      apply: v => {
-        phosphor = v
-        store.set('phosphor', v)
-        screen.crt.setPhosphor(v)
-      },
-    },
-    {
-      name: 'FONT',
-      values: () => FONT_NAMES,
-      current: () => fontName,
-      apply: v => {
-        fontName = v
-        store.set('font', v)
-        void loadFamily(screen.term, familyOf(v)).then(() => {
+      // Labels, not names: a family and its bold and oblique cuts are one face
+      // in three, and three rows saying 6x13 would be three rows saying the
+      // same thing.
+      label: 'FONT',
+      values: FONT_ENTRIES.map(e => e.label),
+      current: () => fontLabel(store.get('font', 'terminus-8x16')),
+      // The one async setting — a face is fetched and parsed, and one that
+      // fails to load answers with the face that is still up.
+      select: async (label) => {
+        const name = fontFace(label)
+        try {
+          await loadFamily(screen.term, familyOf(name))
           screen.crt.setSource(screen.term.w, screen.term.h)
-          overlay?.draw()
-        })
+          store.set('font', name)
+          return label
+        } catch {
+          return fontLabel(store.get('font', 'terminus-8x16'))
+        }
       },
     },
     {
-      name: 'SOUND',
-      values: () => ['on', 'half', 'off'],
-      current: () => sound,
-      apply: v => {
-        sound = v
-        store.set('sound', v)
-        const level = v === 'on' ? 1 : v === 'half' ? 0.5 : 0
-        snd.setChannel('background', level)
-        snd.setChannel('keys', level)
-        snd.setChannel('beeps', level)
+      label: 'SCREEN',
+      values: [...Object.keys(PRESETS), USER_PRESET],
+      current: () => store.get('screen', 'sharp'),
+      select: (value) => {
+        store.set('screen', value)
+        screen.crt.setParams(value === USER_PRESET ? userParams() : PRESETS[value as keyof typeof PRESETS])
+        return value
+      },
+      // Only the member's own tube opens further. The other three are presets —
+      // fixed alternatives with nothing inside them.
+      tune: value => value !== USER_PRESET ? null : {
+        title: USER_PRESET.toUpperCase(),
+        groups: CRT_CONTROLS,
+        get: key => userParams()[key] ?? 0,
+        set: (key, v) => setUserParam(screen, key, v),
+        reset: key => resetUserParam(screen, key),
       },
     },
     {
-      name: 'BAUD',
-      values: () => Object.keys(BAUDS),
-      current: () => baud,
-      apply: v => {
-        baud = v
-        store.set('baud', v)
-        tx.cps = BAUDS[v]
+      label: 'PHOSPHOR',
+      values: ['matrix', 'vt320', 'brutalist', 'bubblegum', 'white'],
+      current: () => store.get('phosphor', 'matrix'),
+      select: (value) => {
+        store.set('phosphor', value)
+        screen.crt.setPhosphor(value)
+        return value
       },
+    },
+    {
+      label: 'AUDIO',
+      values: [],
+      // A group has no single value, so the left pane reports the shape of the
+      // three underneath it: their level where they agree, "mixed" where they
+      // do not. Which one is where is the right pane's business.
+      current: () => {
+        const labels = (['background', 'keys', 'beeps'] as const).map(c => levelLabel(snd.channel(c)))
+        return labels.every(l => l === labels[0]) ? labels[0] : 'mixed'
+      },
+      select: v => v,
+      children: [
+        channel('background'),
+        channel('keys'),
+        channel('beeps'),
+        // Which board, not how loud — the odd row out in a group of three
+        // levels. It sits under `keys` deliberately: that row is its volume.
+        {
+          label: 'keyboard',
+          values: KEY_PACK_NAMES,
+          current: () => snd.keyPackName,
+          select: (value) => {
+            const name = snd.setKeyPack(value)
+            const next = readAudio()
+            next.pack = name
+            writeAudio(next)
+            return name
+          },
+        },
+      ],
+    },
+    {
+      label: 'SCREENSAVER',
+      values: [],
+      // The left pane answers "is it on, and how patient" in one word; which
+      // saver is the right pane's business.
+      current: () => saverPrefs().enabled ? `${saverPrefs().minutes}min` : 'off',
+      select: v => v,
+      children: [
+        {
+          label: 'enabled',
+          values: ['on', 'off'],
+          current: () => saverPrefs().enabled ? 'on' : 'off',
+          select: (v) => { setSaverPrefs({ enabled: v === 'on' }); return v },
+        },
+        {
+          label: 'after',
+          values: SAVER_MINUTES,
+          current: () => String(saverPrefs().minutes),
+          select: (v) => { setSaverPrefs({ minutes: Number(v) || 10 }); return v },
+        },
+        {
+          label: 'saver',
+          values: [...SAVER_NAMES],
+          current: () => saverPrefs().saver,
+          select: (v) => { setSaverPrefs({ saver: v }); return v },
+        },
+      ],
     },
   ]
 }
 
-function restoreSettings(defs: SettingDef[]): void {
-  for (const def of defs) {
-    const v = def.current()
-    if (def.values().includes(v)) def.apply(v)
+// --- the screensaver ---------------------------------------------------------
+
+const SAVER_MINUTES = ['1', '2', '5', '10', '15', '30']
+
+function saverPrefs(): ScreensaverPrefs {
+  const fallback: ScreensaverPrefs = { enabled: true, minutes: 10, saver: SAVER_NAMES[0] }
+  try {
+    return { ...fallback, ...JSON.parse(store.get('screensaver', '')) as Partial<ScreensaverPrefs> }
+  } catch {
+    return fallback
   }
+}
+
+function setSaverPrefs(patch: Partial<ScreensaverPrefs>): void {
+  store.set('screensaver', JSON.stringify({ ...saverPrefs(), ...patch }))
+}
+
+/** The saver on the glass, and the clock that puts it there. */
+let saverUp: { dispose(): void } | null = null
+let saverStack: import('@cyberspace/tui').ScreenStack | null = null
+
+async function startSaver(s: CrtScreen): Promise<void> {
+  if (saverUp || overlay?.open || halted || gridLock !== 0) return
+  const { SaverScreen, pickSaver } = await import('@cyberspace/crt/saver')
+  const { ScreenStack } = await import('@cyberspace/tui')
+  if (saverUp || overlay?.open || halted) return
+
+  saverStack ??= new ScreenStack(s.term as never)
+  gridLock++
+  const decayWas = null as number | null
+  const screen = new SaverScreen(
+    s.term as never,
+    pickSaver(saverPrefs().saver),
+    {
+      setDecay: value => s.crt.setParams({ decay: value ?? decayWas ?? 0.6 }),
+      // No cookie jar on this machine yet; the saver says so for itself.
+      fortune: async () => null,
+    },
+    () => stopSaver(),
+  )
+  saverUp = screen
+  saverStack.push(screen as never)
+}
+
+function stopSaver(): void {
+  if (!saverUp) return
+  saverUp = null
+  saverStack?.pop()
+  gridLock--
+  // Whatever the saver was holding the tube at, the prompt is not it.
+  const preset = store.get('screen', 'sharp')
+  screen?.crt.setParams(preset === USER_PRESET ? userParams() : PRESETS[preset as keyof typeof PRESETS] ?? PRESETS.sharp)
+}
+
+/** The member's own tube: the same twenty-odd numbers with them holding them. */
+const USER_PRESET = 'user'
+
+function userParams(): Record<string, number> {
+  try {
+    return JSON.parse(store.get('crt.user', '')) as Record<string, number>
+  } catch {
+    return { ...PRESETS.sharp }
+  }
+}
+
+function setUserParam(screen: CrtScreen, key: string, value: number): void {
+  const params = { ...userParams(), [key]: value }
+  store.set('crt.user', JSON.stringify(params))
+  // Turning a knob selects the tube it belongs to; anything else would be a
+  // knob that moves nothing until you go and pick `user` yourself.
+  store.set('screen', USER_PRESET)
+  screen.crt.setParams(params)
+}
+
+function resetUserParam(screen: CrtScreen, key?: string): void {
+  const base = PRESETS.sharp as Record<string, number>
+  const params = key ? { ...userParams(), [key]: base[key] ?? 0 } : { ...base }
+  store.set('crt.user', JSON.stringify(params))
+  screen.crt.setParams(params)
+}
+
+/** Put the saved preferences on the machine at boot. */
+function restoreSettings(screen: CrtScreen): void {
+  const audio = readAudio()
+  snd.setChannel('background', audio.background)
+  snd.setChannel('keys', audio.keys)
+  snd.setChannel('beeps', audio.beeps)
+  snd.setKeyPack(audio.pack)
+
+  const preset = store.get('screen', 'sharp')
+  screen.crt.setParams(preset === USER_PRESET ? userParams() : PRESETS[preset as keyof typeof PRESETS] ?? PRESETS.sharp)
+  screen.crt.setPhosphor(store.get('phosphor', 'matrix'))
 }
 
 // --- input -------------------------------------------------------------------
@@ -352,26 +529,75 @@ function wake(): void {
   }
 }
 
-function handleKeyName(name: string, ctrl = false): void {
-  lastKeyAt = performance.now()
+/**
+ * Every key clicks, once, here — before anything decides what it means.
+ *
+ * Escape, Shift on its way to a capital, a chord's Ctrl, an F-key, whatever the
+ * browser takes for itself: it is a keyboard, and a key you press makes a noise
+ * whether or not the machine does anything with it. Said once rather than at
+ * each branch that handles a key, because a rule that cannot be forgotten beats
+ * a dozen call sites that can — the old arrangement was silent wherever
+ * somebody forgot, which is how Escape and the F-keys ended up mute.
+ *
+ * One exception: a key the thing on screen answers with a sound of its own. The
+ * config box ticks as it moves and a chat log ticks as it scrolls; a clack on
+ * top of that is one keypress making two noises.
+ *
+ * Auto-repeat is not exempted here — Sound.key drops it, because a switch
+ * clicks going down and the characters after that are the controller's doing.
+ */
+function click(e: { key: string; repeat?: boolean; ctrlKey?: boolean; shiftKey?: boolean }): void {
   if (overlay?.open) {
-    overlay.key(name)
-    if (!overlay.open) gridLock--
+    const k = {
+      key: e.key, ctrlKey: !!e.ctrlKey, shiftKey: !!e.shiftKey, metaKey: false, altKey: false,
+    }
+    if (!overlay.silentKey(k)) snd.key(e)
+    return
+  }
+  if (tty.isSilent(e.key)) return
+  snd.key(e)
+}
+
+function handleKeyName(name: string, ctrl = false, shift = false): void {
+  if (overlay?.open) {
+    const k = { key: name, ctrlKey: ctrl, shiftKey: shift, metaKey: false, altKey: false }
+    overlay.key(k)
+    if (!overlay.open) closeOverlay()
     return
   }
   const s = encodeKeyName(name, ctrl)
-  if (s !== null) tty.input(bytes(s))
+  if (s === null) return
+  if (bootAbort && s === '\x03') {
+    bootAbort.abort()
+    return
+  }
+  if (s === '\x03') tx.flush()
+  tty.input(bytes(s))
+}
+
+/** What the caret was doing before the box covered it. */
+let cursorWas = true
+
+function closeOverlay(): void {
+  gridLock--
+  RENDER.cursor = cursorWas
 }
 
 function toggleOverlay(): void {
   if (!overlay) return
   if (overlay.open) {
     overlay.hide()
-    gridLock--
-  } else {
-    gridLock++
-    overlay.toggle()
+    closeOverlay()
+    return
   }
+  gridLock++
+  // Nothing in the box is typed into. The render loop writes showCursor from
+  // RENDER.cursor on EVERY frame, so a screen that turns the caret off for
+  // itself has it turned back on a frame later — this is the only switch that
+  // holds.
+  cursorWas = RENDER.cursor
+  RENDER.cursor = false
+  overlay.toggle()
 }
 
 function wireSoftKeyboard(canvas: HTMLCanvasElement): void {
@@ -400,15 +626,15 @@ function wireSoftKeyboard(canvas: HTMLCanvasElement): void {
   field.addEventListener('keydown', e => {
     if (!softKeydownWanted(e)) return
     e.preventDefault()
-    snd.key(e)
-    handleKeyName(e.key, e.ctrlKey)
+    click(e)
+    handleKeyName(e.key, e.ctrlKey, e.shiftKey)
   })
   field.addEventListener('beforeinput', e => {
     e.preventDefault()
     const r = softInputKeys(e.inputType, (e as InputEvent).data)
     if (r.kind === 'keys') {
       for (const k of r.keys) {
-        snd.key({ key: k })
+        click({ key: k })
         handleKeyName(k)
       }
     }
@@ -428,9 +654,14 @@ const program = {
     void snd.load()
     void loadFallback(s.term)
 
-    const defs = buildSettings(s)
-    restoreSettings(defs)
-    overlay = new SettingsOverlay(s.term, defs)
+    restoreSettings(s)
+    overlay = new SettingsOverlay(s.term, () => settings(s))
+    overlay.onFeedback = kind => {
+      if (kind === 'edge') snd.beep(220, 0.04)
+      // The same voice a screen closing has everywhere else here.
+      else if (kind === 'cancel') snd.blip(420, 0.09, 0)
+      else snd.tick()
+    }
 
     // Restore a saved face before anything is on the glass.
     const savedFont = store.get('font', 'terminus-8x16')
@@ -440,33 +671,67 @@ const program = {
     }
 
     snd.powerOn()
-    void snd.bootup()
+    // Cold start: first visit, or long enough away that the machine was off.
+    const cold = Date.now() - Number(store.get('lastSeen', '0')) > 10 * 60 * 1000
+    // The machine boots under the animation; it never touches the grid.
+    const kernelP = bootMachine()
     // The saved session resumes under the strike; a dead network never blocks boot.
     const resumed = api.hasSavedSession
       ? Promise.race([api.resume(), new Promise<null>(res => setTimeout(() => res(null), 5000))])
       : Promise.resolve(null)
-    await withGrid(() => strike(s.term, snd))
 
-    const kernel = await bootMachine()
+    if (cold) {
+      // The chime scores the boot; the fetch/decode runs under the strike.
+      void snd.bootup()
+      const abort = new AbortController()
+      bootAbort = abort
+      await withGrid(async () => {
+        try {
+          await strike(s.term, snd, abort.signal)
+          await bootSequence(s.term, snd, abort.signal, { version: '0.1' })
+        } catch (err) {
+          if (!(err instanceof Aborted)) throw err
+          // A skip, not a failure: kill the chime and land on the prompt.
+          snd.stopBootup()
+          s.term.clear()
+        }
+      })
+      bootAbort = null
+    } else {
+      await withGrid(() => strike(s.term, snd))
+    }
+    store.set('lastSeen', String(Date.now()))
+
+    const kernel = await kernelP
     await resumed
     await writeMotd()
     void session(kernel)
   },
 
   frame(s: CrtScreen, t: number): void {
-    const dt = last ? t - last : 0
+    // The screen counts seconds since boot; the pacer counts milliseconds.
+    const dt = last ? (t - last) * 1000 : 0
     last = t
     if (gridLock === 0 && !halted) {
-      const sent = tx.drain(dt)
-      // Machine output chatters; the echo of a keystroke does not.
-      if (sent > 0 && performance.now() - lastKeyAt > 90) snd.blip(1400)
+      // What the machine said, which is the only thing that bleeps: drain()
+      // does not count the echo under the operator's fingers.
+      if (tx.drain(dt) > 0) snd.blip(1400)
       syncTerm(xt, s.term)
+      // The loop above this wrote showCursor from RENDER.cursor; a full-screen
+      // program that turned the caret off gets the last word.
+      s.term.showCursor = RENDER.cursor && tty.caret
     }
   },
 
   key(_s: unknown, e: KeyboardEvent): void {
     wake()
-    lastKeyAt = performance.now()
+    click(e)
+    // ^C skips the cold boot. Kept out of the tty — no shell exists yet.
+    if (bootAbort && e.ctrlKey && e.key === 'c') {
+      e.preventDefault()
+      bootAbort.abort()
+      return
+    }
     if (e.key === 'F1') {
       e.preventDefault()
       toggleOverlay()
@@ -474,14 +739,14 @@ const program = {
     }
     if (overlay?.open) {
       e.preventDefault()
-      snd.key(e)
-      handleKeyName(e.key, e.ctrlKey)
+      handleKeyName(e.key, e.ctrlKey, e.shiftKey)
       return
     }
     const str = encodeKey(e)
     if (str === null) return
     e.preventDefault()
-    snd.key(e)
+    // Stop means stop: whatever the line was still typing out goes with it.
+    if (str === '\x03') tx.flush()
     tty.input(bytes(str))
   },
 }
