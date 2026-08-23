@@ -2,7 +2,6 @@
 // the rate limiter and the keyboard to a kernel booted in this page, then
 // drives the whole thing from the render loop.
 
-import { registerSW } from 'virtual:pwa-register'
 import { Terminal } from '@xterm/headless'
 import { SerializeAddon } from '@xterm/addon-serialize'
 import { mount, type CrtScreen } from '@cyberspace/crt'
@@ -28,10 +27,9 @@ import { Screensaver } from './saver'
 import { Scrollback } from './scrollback'
 import { Keyboard } from './input'
 import { parseSession, runSession, SESSION_VERSION, type TerminalSession } from './session'
+import { armUpdates, rebootOnto, updateWaiting } from './update'
 
-// A new service worker downloads in the background and waits. It activates on
-// the next fresh visit, never under a live session.
-registerSW({ immediate: true })
+armUpdates()
 
 RENDER.cursor = true
 GRID.cols = COLS
@@ -111,7 +109,7 @@ async function rebootProgram(p: Proc): Promise<number> {
   await withGrid(() => implode(screen.term, snd))
   // Drop the mark that would make the reload a warm boot.
   store.remove('lastSeen')
-  location.reload()
+  rebootOnto()
   return 0
 }
 
@@ -237,7 +235,11 @@ const program = {
 
     ;(globalThis as Record<string, unknown>).cs = {
       kernel, fs, tty, snd, screen, api, tx, xt, saver,
-      dbg: { get lock() { return grid.locked }, get halted() { return halted } },
+      dbg: {
+        get lock() { return grid.locked },
+        get halted() { return halted },
+        get update() { return updateWaiting() },
+      },
     }
 
     const saved = loadSession()

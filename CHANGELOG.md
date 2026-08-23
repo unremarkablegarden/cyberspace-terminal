@@ -97,4 +97,5 @@
     - `publish` picks from your own programs and names the consequence before it happens — publish, recall or restore, whichever the program's state allows
     - Versions are assigned by the registry; republishing unchanged source changes nothing and says so
     - Programs are read before they run: one that reaches for the session token is refused, with the line and column
-
+- A new build is picked up on the next visit, with no force refresh
+- `reboot` takes a waiting build
