@@ -118,10 +118,10 @@ export class Term extends CellGrid {
         // planes are text only.
         const pic = hc ? undefined : this.gfx[i]
         const inv = hi ? hi[gx] : this.inverse[i]
-        // An inverted cell is always bold. The glyph there is the HOLE in a lit
-        // field, and a roman stroke leaves too little of one to read; the
-        // weight widens it. Costs nothing on a face with a bold cut and smears
-        // by a pixel on one without, which is the same trade BOLD already made.
+        // An inverted cell is always drawn bold. The glyph is the unlit part of
+        // a filled cell, and a roman stroke leaves too little of it to read, so
+        // the extra weight widens it. Free on a face with a real bold cut, and a
+        // one-pixel smear on one without, as BOLD already accepts.
         const bold = (attr & BOLD) || inv
         // Which table this cell draws from. Precedence: bitmap, ALT, italic,
         // bold, roman. Null means roman, and is also what an unloaded cut is,

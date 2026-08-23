@@ -49,8 +49,8 @@ export async function inputText(p: Proc, files: string[]): Promise<string> {
   let out = ''
   for (const file of files) {
     try {
-      // ZenFS hands back a directory's raw bytes rather than EISDIR, so the
-      // read would pour the index onto the glass.
+      // ZenFS returns a directory's raw bytes instead of EISDIR, so without this
+      // the read would print the directory index.
       const path = resolve(p, file)
       if ((await fsp.stat(path)).isDirectory()) throw new Error(ERRNO.EISDIR)
       out += await readText(path)

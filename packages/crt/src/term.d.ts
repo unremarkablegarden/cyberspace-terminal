@@ -18,7 +18,7 @@ export class CellGrid {
   chars: Uint16Array
   attrs: Uint8Array
   inverse: Uint8Array
-  gfx: (number[] | undefined)[]
+  gfx: (ArrayLike<number> | undefined)[]
   font: { cellW: number; cellH: number }
   advance: number
   cx: number

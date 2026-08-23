@@ -1,7 +1,7 @@
 // A plain list of items, top-anchored, truncated with a count when it overflows.
 //
-// Separate from drawLog because the two want opposite things: a log anchors to
-// the bottom and drops the head, a list anchors to the top and drops the tail.
+// Separate from drawLog, which anchors to the bottom and drops the head; this
+// anchors to the top and drops the tail.
 
 import { NORMAL } from './attrs.js'
 import type { Grid } from './surface.js'
@@ -9,12 +9,12 @@ import type { Rect, Span } from './box.js'
 
 export interface ListItem {
   /**
-   * Spans instead of a plain string when parts of a row need their own
-   * treatment — the same escape hatch label() takes, and for the same reason.
-   * cIRC's online pane puts a DIM sleep marker in front of a NORMAL name.
+   * Spans rather than a plain string when parts of a row need their own
+   * attributes, as label() also accepts. circ's online pane uses this to draw a
+   * DIM idle marker beside a NORMAL name.
    */
   text: string | Span[]
-  /** Fallback for spans that do not carry one of their own. */
+  /** Attribute used for spans that do not carry one. */
   attr?: number
 }
 
@@ -24,17 +24,17 @@ export function drawList(term: Grid, r: Rect, items: ListItem[]) {
   }
   if (r.h <= 0) return
 
-  // If it does not fit, give up the last row to say how much is hidden —
-  // a silently truncated list reads as a complete one.
+  // When the list overflows, the last row reports how many items are hidden;
+  // a silently truncated list would read as a complete one.
   const overflow = items.length > r.h
   const shown = overflow ? items.slice(0, r.h - 1) : items
 
   for (let i = 0; i < shown.length; i++) {
     const item = shown[i]!
     const spans = typeof item.text === 'string' ? [{ text: item.text }] : item.text
-    // Truncation is per row, not per span: each span gets whatever is left of
-    // the width, so a row overruns the pane by being cut short rather than by
-    // writing past its right edge.
+    // Truncated per row rather than per span: each span takes what remains of
+    // the width, so an over-long row is cut short instead of writing past the
+    // right edge.
     let x = r.x
     for (const s of spans) {
       const room = r.x + r.w - x

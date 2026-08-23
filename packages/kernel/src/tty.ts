@@ -6,8 +6,8 @@
 // - cooked: line buffering with echo, backspace, ^C -> SIGINT, ^D -> EOF.
 // Output always maps lone \n to \r\n.
 //
-// Echo is marked urgent on the way out. A host that paces program output must
-// not pace the letters under the operator's fingers.
+// Echo is marked urgent on the way out, so a host that rate-limits program
+// output does not rate-limit keystroke echo.
 
 import { type Source, type Sink, bytes, dec, Pipe } from './pipe.js'
 
@@ -16,28 +16,27 @@ export interface TtyControl {
   setCooked(): void
   get cols(): number
   get rows(): number
-  /** Echo: display bytes that belong to the keyboard, not to a program. */
+  /** Echo: display bytes originating from the keyboard rather than a program. */
   echo(s: string): void
   /**
-   * Keys this program answers with a sound of its own, so the host does not
-   * also play the keyclick. A scrolling log already ticks, and a clack on top
-   * of a tick is one keypress making two noises.
+   * Keys for which this program plays its own sound, so the host suppresses the
+   * key click and one keypress does not make two sounds.
    *
-   * Declared by key, rather than the host guessing. Cleared on setCooked().
+   * Declared per key rather than inferred by the host. Cleared on setCooked().
    */
   silence(keys: string[]): void
   isSilent(key: string): boolean
   /**
-   * A repaint: the whole glass as a program means it to look.
+   * Write a full-screen repaint.
    *
-   * Unpaced, like echo and for the same reason. The rate models a line
-   * DELIVERING TEXT; a full-screen program handing over a frame is not that,
-   * and pacing one types its chrome on a character at a time.
+   * Not rate-limited, as with echo: the rate models text arriving over a line,
+   * which a whole frame is not. Rate-limiting one would draw its own chrome a
+   * character at a time.
    */
   paint(s: string): void
   /**
-   * The keyboard itself. A full-screen program under a pipe has a pipe for
-   * stdin, so it takes its keys from here — the tty is /dev/tty.
+   * The keyboard. A full-screen program under a pipe has a pipe for stdin, so it
+   * reads keys from here instead; equivalent to /dev/tty.
    */
   get stdin(): Source
 }
@@ -47,10 +46,10 @@ export class Tty implements TtyControl {
   rows: number
   onSigint: (() => void) | null = null
 
-  /** Whether the program on the glass wants a caret. See paint(). */
+  /** Whether the running program wants a caret shown. See paint(). */
   caret = true
 
-  /** Keys the program answers itself. See silence(). */
+  /** Keys the program handles with its own sound. See silence(). */
   private quiet = new Set<string>()
 
   private raw = false
@@ -72,7 +71,7 @@ export class Tty implements TtyControl {
   setCooked(): void {
     this.raw = false
     this.line = ''
-    // Back to the shell, which types and answers nothing itself.
+    // Back to the shell, which plays no sounds of its own.
     this.caret = true
     this.quiet.clear()
   }
@@ -88,11 +87,10 @@ export class Tty implements TtyControl {
   /** Host side: keystroke bytes arrive here. */
   input(data: Uint8Array | string): void {
     if (this.raw) {
-      // **Ctrl-C interrupts in raw mode too.** A real tty leaves it as a byte
-      // and lets the program decide — which means a program that is busy
-      // writing, enumerating or waiting on the network cannot be stopped by the
-      // one key that means stop. On this machine it always aborts, and the
-      // byte is delivered as well so a program that wants to tidy up can.
+      // Ctrl-C aborts in raw mode as well, unlike a real tty, which passes it
+      // through as a byte and lets the program decide. That would leave a
+      // program busy writing, enumerating or waiting on the network unable to
+      // be stopped. The byte is delivered too, so a program can still tidy up.
       const text = dec.decode(bytes(data))
       if (text.includes('\x03')) this.onSigint?.()
       this.readers.write(bytes(data))
@@ -137,12 +135,11 @@ export class Tty implements TtyControl {
   }
 
   /**
-   * A frame from a full-screen program. Straight to the glass.
+   * Write one frame from a full-screen program, unmodified.
    *
-   * The tty tracks DECTCEM for the host as it goes past: a program that hides
-   * the caret says so in the frame it paints, and the faceplate has no other
-   * way to know — its render loop writes the caret on every frame and would
-   * put back the one the program just turned off.
+   * DECTCEM is tracked as it passes, because a program hides the caret in the
+   * frame it paints and the host has no other way to know: its render loop
+   * writes the caret every frame and would restore the one just turned off.
    */
   paint(s: string): void {
     const hide = s.lastIndexOf('\x1b[?25l')
@@ -151,8 +148,8 @@ export class Tty implements TtyControl {
     this.out(bytes(s), true)
   }
 
-  /** Process side: stdin. Reads track the live queue, so an interrupt only
-   *  EOFs reads that were already pending. */
+  /** Process side: stdin. Reads track the live queue, so an interrupt EOFs only
+   *  reads that were already pending. */
   get stdin(): Source {
     const tty = this
     return {

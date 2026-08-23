@@ -28,6 +28,17 @@ export { PromptPopup } from './prompt.js'
 export type { PromptOptions } from './prompt.js'
 export { TunePopup } from './tune.js'
 export type { TuneOptions, TuneSpec, Knob, KnobGroup } from './tune.js'
+export { PICT_LO, PICT_HI, isPictureCell } from './pict.js'
+export {
+  fitImage, dotAspect, halftone, halftoneFit,
+  RASTERS, DEFAULT_RASTER, resample, tone, unsharp, sampleAspect,
+} from './image.js'
+export type {
+  CellMetrics, Halftone, Luma, HalftoneOptions, RasterOptions, Raster, RasterName,
+} from './image.js'
+export { Pager } from './pager.js'
+export type { PagerOptions } from './pager.js'
+export { wrap } from './wrap.js'
 export { plain, oneCell } from './plain.js'
 export { parseKeys } from './keys.js'
 export type { KeyInput } from './keys.js'

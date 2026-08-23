@@ -1,4 +1,4 @@
-// changelog(1) — the checked-in CHANGELOG.md, flattened for the tube.
+// changelog(1): prints the checked-in CHANGELOG.md as plain text.
 
 import type { Program } from '@cyberspace/kernel'
 import source from '../../CHANGELOG.md?raw'
@@ -14,7 +14,11 @@ export function renderChangelog(md: string): string {
   return lines.join('\n').replace(/^\n+/, '').replace(/\n+$/, '') + '\n'
 }
 
-/** The release. The changelog is the record, so its last heading is what runs. */
+/**
+ * The release version: the last `## vX.Y` heading in CHANGELOG.md.
+ *
+ * tools/version.ts stamps this same value into every package.json.
+ */
 export const VERSION = [...source.matchAll(/^## v(\S+)/gm)].at(-1)?.[1] ?? '0'
 
 const text = renderChangelog(source)

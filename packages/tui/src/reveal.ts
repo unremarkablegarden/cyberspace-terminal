@@ -1,46 +1,38 @@
-// A list landing a line at a time.
+// Releases a list one line at a time.
 //
-// `ls` types its listing out because the SHELL is writing it, character by
-// character at the line's baud — that is what a machine printing to a terminal
-// looks like, and a list that appears whole looks like a picture of one. A
-// full-screen program cannot type the same way: it owns the grid and repaints
-// all of it, so there is no cursor walking along a line leaving characters
-// behind. What it can do is hold lines back, which is all this is.
+// A shell types its output character by character because it writes to the
+// terminal directly. A full-screen program cannot: it holds the grid and
+// repaints all of it, so there is no cursor leaving characters behind. Holding
+// lines back is the equivalent it can do.
 //
-// A LINE is the unit, not a character. Five columns of a table typed left to
-// right would spend most of a second on the padding between NAME and
-// DESCRIPTION before the first row said anything, and there are twenty rows; a
-// line at a time reads as a listing coming down a wire, which is what it is.
+// The unit is a line rather than a character. Typing a five-column table left
+// to right would spend most of a second on padding before the first row said
+// anything, across twenty rows.
 //
-// It draws nothing and knows nothing about what is being revealed — the owner
-// asks `count` and shows that many, and what a line IS is the owner's business:
-// `browse` holds back rows of a table, `circ` and `cmail` hold back the
-// screenful of history a conversation opens with, and `feed` holds back rows of
-// the pane its records are drawn into — which prints the boxes themselves, from
-// the top down, since a record the cut lands in is simply a clipped one.
+// This draws nothing and knows nothing about the content: the owner reads
+// `count` and displays that many rows. What a line means is the owner's
+// choice - browse holds back table rows, circ and cmail hold back the opening
+// screenful of history, and feed holds back rows of the pane its records are
+// drawn into, which reveals the boxes themselves from the top down.
 
-/**
- * Lines a second. A screenful in under half a second — long enough to read as
- * the machine printing, short enough that nobody waiting on the list has to
- * think about it.
- */
+/** Lines per second: a screenful in under half a second. */
 export const REVEAL_RATE = 45
 
-/** ~60Hz, the same tick the shell's type-out and cIRC's arrival both run on. */
+/** Tick interval, about 60Hz, matching the shell's type-out and circ's arrival clock. */
 const TICK_MS = 16
 
 export interface RevealOptions {
-  /** A batch landed; repaint. */
+  /** A batch became due; repaint. */
   onTick(): void
-  /** One bleep per BATCH, as the shell's type-out does it — not per line. */
+  /** Called once per batch rather than per line, matching the shell's type-out. */
   onBlip(): void
 }
 
 export class Reveal {
   /**
-   * Lines landed so far, and `Infinity` when nothing is running — which is both
-   * where it starts and where it ends, so an owner can compare against it
-   * unconditionally and never ask whether a reveal is happening.
+   * Lines revealed so far, and Infinity when no reveal is running, both before
+   * one starts and after it ends. An owner can therefore compare against it
+   * without first checking whether a reveal is in progress.
    */
   count = Infinity
   private target = 0
@@ -52,15 +44,15 @@ export class Reveal {
   get running() { return this.timer !== null }
 
   /**
-   * Reveal `target` lines, from now.
+   * Reveal `target` lines from now.
    *
-   * The caller works the target out, and it should be what will actually be on
-   * SCREEN rather than what is in the list: a line past the bottom of the pane
-   * is not being revealed to anybody, and a two-hundred-line list would leave a
-   * clock running for four seconds after the last visible line had landed.
+   * The caller supplies the target, which should be the number of lines that
+   * will be visible rather than the length of the list: a line below the pane is
+   * revealed to nobody, and a two-hundred-line list would leave the clock
+   * running for four seconds after the last visible line appeared.
    *
-   * Fewer than two is not a reveal. Starting one would be a bleep and a frame's
-   * delay in front of something that was already there.
+   * Fewer than two lines starts no reveal, which would only add a bleep and a
+   * frame's delay to content already on screen.
    */
   start(target: number) {
     this.stop()
@@ -74,10 +66,8 @@ export class Reveal {
   /**
    * Emit whatever has come due.
    *
-   * On the clock rather than one line per tick, which is the rule everywhere in
-   * here: a tick that revealed exactly one line would run at whatever rate
-   * setInterval happened to honour that second, and that is not the rate this
-   * was tuned at.
+   * Computed from elapsed time rather than one line per tick: a tick revealing
+   * exactly one line would run at whatever rate setInterval happened to deliver.
    */
   private tick() {
     const due = Math.min(
@@ -87,17 +77,17 @@ export class Reveal {
     if (due <= this.count) return
     this.count = due
     this.opts.onBlip()
-    // `finish` repaints on its way out, so the last batch is not painted twice.
+    // finish() repaints as it returns, so the last batch is not painted twice.
     if (this.count >= this.target) this.finish()
     else this.opts.onTick()
   }
 
   /**
-   * Everything, now — the end of a reveal and also the way past one.
+   * Reveal everything immediately, ending a reveal or skipping one.
    *
-   * It repaints, and it has to: a key that only stopped the clock would leave
-   * a half-printed list sitting there until something else happened to repaint
-   * it, and in `circ` the something else is the next person to speak.
+   * Repaints as it returns. Stopping the clock alone would leave a partly
+   * revealed list on screen until something else triggered a repaint, which in
+   * circ is the next incoming message.
    */
   finish() {
     if (this.timer === null) return
@@ -105,10 +95,7 @@ export class Reveal {
     this.opts.onTick()
   }
 
-  /**
-   * The same, silently — for teardown, where there is no longer anything to
-   * paint on and `onTick` is the owner's own draw.
-   */
+  /** As finish(), without the repaint. For teardown, where there is nothing left to draw on. */
   stop() {
     if (this.timer !== null) clearInterval(this.timer)
     this.timer = null

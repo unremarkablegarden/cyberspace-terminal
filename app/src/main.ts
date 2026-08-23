@@ -1,134 +1,91 @@
+// Entry point for the web faceplate: wires the CRT canvas, the xterm parser,
+// the rate limiter and the keyboard to a kernel booted in this page, then
+// drives the whole thing from the render loop.
+
 import { registerSW } from 'virtual:pwa-register'
 import { Terminal } from '@xterm/headless'
+import { SerializeAddon } from '@xterm/addon-serialize'
 import { mount, type CrtScreen } from '@cyberspace/crt'
-import { RENDER, GRID, PRESETS } from '@cyberspace/crt/config'
+import { RENDER, GRID } from '@cyberspace/crt/config'
 import { Sound } from '@cyberspace/crt/audio'
 import { strike, implode, Aborted } from '@cyberspace/crt/effects'
 import { bootSequence } from '@cyberspace/crt/boot'
-import {
-  FONT_ENTRIES, fontFace, fontLabel, familyOf, loadFamily, loadFallback,
-} from '@cyberspace/crt/fonts'
-import { SettingsOverlay, type Setting } from '@cyberspace/crt/settings'
-import { KEY_PACK_NAMES, DEFAULT_KEY_PACK } from '@cyberspace/crt/keypacks'
-import { CRT_CONTROLS } from '@cyberspace/crt/controls'
-import { SAVER_NAMES, type ScreensaverPrefs } from '@cyberspace/crt/saverdefs'
-import { softKeydownWanted, softInputKeys, SENTINEL } from '@cyberspace/crt/softkeys'
-import { InMemory, fs } from '@zenfs/core'
-import { Kernel, Tty, mountAll, bytes, type Proc, readText } from '@cyberspace/kernel'
-import { coreutils } from '@cyberspace/coreutils'
-import { shellMain } from '@cyberspace/shell'
-import { ApiClient, circProgram, cmailProgram, cyberspacePrograms, registryPrograms } from '@cyberspace/apps'
-import { compatFileHandler } from '@cyberspace/compat'
-import { OpfsHome } from './opfs'
+import { loadFamily, loadFallback, familyOf } from '@cyberspace/crt/fonts'
+import { Tty, bytes, type Proc, type Kernel } from '@cyberspace/kernel'
+import { ApiClient } from '@cyberspace/apps'
+import { fs } from '@zenfs/core'
 import { syncTerm } from './vt'
-import { encodeKey, encodeKeyName } from './keys'
 import { Baud } from './baud'
-import { changelog, VERSION } from './changelog'
+import { VERSION } from './changelog'
+import { API_URL, COLD_AFTER, COLS, CPS, ENV, HOME, MOBILE, ROWS, SOUNDS } from './config'
+import { store } from './store'
+import { grid, withGrid } from './grid'
+import { pictureHost } from './image'
+import { bootMachine } from './machine'
+import { writeMotd } from './motd'
+import { ConfigBox, restoreSettings } from './settings'
+import { Screensaver } from './saver'
+import { Scrollback } from './scrollback'
+import { Keyboard } from './input'
+import { parseSession, runSession, SESSION_VERSION, type TerminalSession } from './session'
 
-// Offline shell. A new worker downloads in the background and WAITS — it
-// takes over on the next fresh visit, never under a live session.
+// A new service worker downloads in the background and waits. It activates on
+// the next fresh visit, never under a live session.
 registerSW({ immediate: true })
-
-// Phones get the narrow grid; the soft keyboard is wired below.
-const MOBILE = /mobi|android/i.test(navigator.userAgent)
-const COLS = MOBILE ? 44 : 80
-const ROWS = MOBILE ? 20 : 25
-const HOME = '/home/guest'
-
-const ENV = {
-  USER: 'guest',
-  HOME,
-  HOSTNAME: 'cyberspace',
-  PATH: '/bin',
-  SHELL: '/bin/sh',
-  TERM: 'xterm',
-  COLUMNS: String(COLS),
-  LINES: String(ROWS),
-}
-
-const motdText = (user: string | null) => `\x1b[1mCYBERSPACE TERMINAL\x1b[0m ${VERSION}
-
-Type \x1b[1mhelp\x1b[0m for commands.${user ? '' : '  Type \x1b[1mlogin\x1b[0m to connect.'}${MOBILE ? '' : '\n\x1b[1mF1\x1b[0m Config'}
-
-`
-
-const README = `Home directory. Persists in this browser. Files stay local.
-
-Examples:
-  echo hello > hi.txt
-  cat hi.txt
-  ls -l
-  history
-`
-
-// --- persisted faceplate preferences ---------------------------------------
-
-const store = {
-  get: (k: string, fallback: string) => localStorage.getItem('csterm.' + k) ?? fallback,
-  set: (k: string, v: string) => localStorage.setItem('csterm.' + k, v),
-}
-
-/**
- * The line, fixed. 2400 baud is ten bits a character, so 240 a second — the
- * rate the machine has always run at and no longer a thing to be told about.
- */
-const CPS = 240
-
-/** Levels the AUDIO rows offer, and what each is worth on the bus. */
-const AUDIO_LEVELS: [string, number][] = [['off', 0], ['25%', 0.25], ['50%', 0.5], ['100%', 1]]
-const levelLabel = (v: number): string =>
-  AUDIO_LEVELS.reduce((best, [label, level]) =>
-    Math.abs(level - v) < Math.abs(AUDIO_LEVELS.find(l => l[0] === best)![1] - v) ? label : best,
-  AUDIO_LEVELS[0][0])
-
-// --- machinery --------------------------------------------------------------
 
 RENDER.cursor = true
 GRID.cols = COLS
 GRID.rows = ROWS
 
-const snd = new Sound({ bootupUrl: '/sounds/bootup.mp3' })
+const snd = new Sound({ bootupUrl: SOUNDS.bootup })
 
-// Public client config, same values any web client ships. Live chat reads
-// stream straight from RTDB with the caller's idToken; writes go via the API.
-const RTDB_URL = 'https://cyberspace-cyberspace-default-rtdb.europe-west1.firebasedatabase.app'
-
-const api = new ApiClient('https://api.cyberspace.online', {
+const api = new ApiClient(API_URL, {
   get: () => localStorage.getItem('csterm.auth'),
   set: v => (v ? localStorage.setItem('csterm.auth', v) : localStorage.removeItem('csterm.auth')),
 })
 api.onAuthChange = user => {
   ENV.USER = user ?? 'guest'
-  void writeMotd()
+  void writeMotd(user)
 }
 
 const xt = new Terminal({ cols: COLS, rows: ROWS, scrollback: 1000, allowProposedApi: true })
-const tx = new Baud(data => xt.write(data), CPS, 'char')
-// Echo is urgent: the operator's own keystrokes never queue behind output.
+const ser = new SerializeAddon()
+xt.loadAddon(ser)
+
+const scroll = new Scrollback(xt, ROWS, snd)
+const tx = new Baud(data => { scroll.reset(); xt.write(data) }, CPS, 'char')
+// Echo is written urgent so keystrokes never queue behind program output.
 const tty = new Tty((data, urgent) => (urgent ? tx.now(data.slice()) : tx.write(data.slice())), COLS, ROWS)
 
 xt.onBell(() => snd.beep(880, 0.09))
 
-// While an effect or the config box owns the grid, the pty sync stays off; the
-// xterm buffer is the source of truth, so the diff repairs everything after.
-let gridLock = 0
 let halted = false
 let killSession: (() => void) | null = null
-// Live only while the cold-boot sequence plays; ^C aborts it.
+/** The running shell, for the working directory a parked session keeps. */
+let shell: Proc | null = null
+/** The kernel, once it is up. Null while it is still booting. */
+let machine: Kernel | null = null
+/** Non-null only while the cold-boot sequence plays; ^C aborts it. */
 let bootAbort: AbortController | null = null
 
-async function withGrid(fn: () => Promise<void>): Promise<void> {
-  gridLock++
-  const cursor = RENDER.cursor
-  RENDER.cursor = false
-  try {
-    await fn()
-  } finally {
-    gridLock--
-    RENDER.cursor = cursor
-  }
-}
+let screen: CrtScreen
+let config: ConfigBox | null = null
+let saver: Screensaver | null = null
 
+const keyboard = new Keyboard({
+  tty,
+  tx,
+  snd,
+  scroll,
+  config: () => config,
+  skipBoot: () => {
+    if (!bootAbort) return false
+    bootAbort.abort()
+    return true
+  },
+})
+
+/** Resolves once the rate limiter has released everything queued. */
 function waitForDrain(): Promise<void> {
   return new Promise(res => {
     const poll = () => (tx.idle ? res() : setTimeout(poll, 60))
@@ -136,98 +93,7 @@ function waitForDrain(): Promise<void> {
   })
 }
 
-// --- kernel ------------------------------------------------------------------
-
-async function bootMachine(): Promise<Kernel> {
-  const kernel = new Kernel()
-  kernel.release = VERSION
-  kernel.registerAll(coreutils)
-  kernel.register('sh', shellMain)
-  kernel.register('changelog', changelog)
-  kernel.register('shutdown', shutdownProgram)
-  kernel.register('reboot', rebootProgram)
-  // After coreutils: the network whoami (answers with the login) wins.
-  kernel.registerAll(cyberspacePrograms(api))
-  // The chat screens have opinions about sounds and make none of their own.
-  const chatSnd = {
-    tick: () => snd.tick(),
-    beep: (hz?: number, dur?: number) => snd.beep(hz, dur),
-    blip: (hz?: number, dur?: number, jitter?: number) => snd.blip(hz, dur, jitter),
-  }
-  kernel.register('circ', circProgram(api, RTDB_URL, chatSnd))
-  kernel.register('cmail', cmailProgram(api, RTDB_URL, chatSnd))
-  kernel.registerAll(registryPrograms(api))
-
-  // Programs from the original /terminal, recognised by their export.
-  kernel.fileHandlers.push(compatFileHandler({
-    username: () => api.username ?? ENV.USER,
-    version: VERSION,
-    api: {
-      get: path => api.get(path),
-      post: (path, body) => api.post(path, body),
-      del: path => api.delete(path),
-    },
-    snd: {
-      blip: (hz, dur, jitter) => snd.blip(hz, dur, jitter),
-      beep: (freq, dur) => snd.beep(freq, dur),
-      tick: () => snd.tick(),
-      seek: n => snd.seek(n),
-      hiss: (dur, gain) => snd.hiss(dur, gain),
-    },
-    feed: {
-      page: async (limit = 10) => {
-        const posts = await api.get<Record<string, unknown>[]>(`/v1/posts?limit=${Math.min(50, limit)}`)
-        return posts.map(post => ({
-          username: post.authorUsername ?? '?',
-          title: post.title ?? '',
-          words: typeof post.content === 'string' ? post.content.split(/\s+/).filter(Boolean).length : 0,
-          replies: post.replyCount ?? post.repliesCount ?? 0,
-          at: post.createdAt,
-        }))
-      },
-    },
-  }))
-
-  const opfs = await navigator.storage.getDirectory()
-  await mountAll({
-    '/': InMemory,
-    '/bin': InMemory,
-    '/tmp': InMemory,
-    '/home': { backend: OpfsHome, handle: opfs },
-  })
-  await kernel.seed()
-
-  await writeMotd()
-  const readme = `${HOME}/README.txt`
-  if (!(await fs.promises.stat(readme).catch(() => null))) {
-    await fs.promises.writeFile(readme, README)
-  }
-
-  // Example programs from the original machine.
-  await fs.promises.mkdir('/bin/examples').catch(() => {})
-  for (const name of ['hello', 'roll', 'clock', 'river', 'news']) {
-    void fetch(`/examples/${name}.js`)
-      .then(r => (r.ok ? r.text() : Promise.reject(new Error(String(r.status)))))
-      .then(text => fs.promises.writeFile(`/bin/examples/${name}`, text, { mode: 0o755 }))
-      .catch(() => {})
-  }
-
-  // Demo wasm cargo, installed in the background once fetched.
-  void fetch('/wasm/cowsay.wasm')
-    .then(r => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))))
-    .then(buf => fs.promises.writeFile('/bin/cowsay', new Uint8Array(buf), { mode: 0o755 }))
-    .catch(() => {})
-
-  ;(globalThis as Record<string, unknown>).cs = {
-    kernel, fs, tty, snd, screen, api, tx, xt,
-    dbg: { get lock() { return gridLock }, get halted() { return halted } },
-  }
-  return kernel
-}
-
-async function writeMotd(): Promise<void> {
-  await fs.promises.writeFile('/etc/motd', motdText(api.username)).catch(() => {})
-}
+// --- halt and reboot ----------------------------------------------------------
 
 async function shutdownProgram(p: Proc): Promise<number> {
   p.out('\nTHE SYSTEM IS HALTED\n')
@@ -243,411 +109,67 @@ async function rebootProgram(p: Proc): Promise<number> {
   await waitForDrain()
   halted = true
   await withGrid(() => implode(screen.term, snd))
+  // Drop the mark that would make the reload a warm boot.
+  store.remove('lastSeen')
   location.reload()
   return 0
 }
 
-async function session(kernel: Kernel): Promise<void> {
-  while (!halted) {
-    const motd = await readText('/etc/motd').catch(() => '')
-    tty.stdout.write(String(motd))
-    await waitForDrain()
-    const task = kernel.spawn(shellMain, {
-      argv: ['sh'],
-      env: { ...ENV },
-      cwd: HOME,
-      stdin: tty.stdin,
-      stdout: tty.stdout,
-      stderr: tty.stdout,
-      tty,
-    })
-    killSession = () => task.kill()
-    await task.wait
-    killSession = null
-    tty.stdout.write('\n')
-  }
-}
+// --- the parked session -------------------------------------------------------
 
-// --- faceplate settings ------------------------------------------------------
-
-let overlay: SettingsOverlay | null = null
-
-/** What the mixer is on, and the board under the keys. */
-interface Audio { background: number; keys: number; beeps: number; pack: string }
-
-function readAudio(): Audio {
-  const fallback: Audio = { background: 1, keys: 1, beeps: 1, pack: DEFAULT_KEY_PACK }
-  try {
-    const saved = JSON.parse(store.get('sound', '')) as Partial<Audio>
-    return { ...fallback, ...saved }
-  } catch {
-    return fallback
-  }
-}
-
-function writeAudio(a: Audio): void {
-  store.set('sound', JSON.stringify(a))
-}
+/** Scrollback rows stored with a parked session, out of the 1000 xterm keeps. */
+const SESSION_SCROLLBACK = 200
 
 /**
- * The settings, rebuilt on every open rather than held.
+ * Store the current screen and resume point so a refresh comes back to it.
  *
- * `current` is a getter throughout for the same reason: the truth is not the
- * screen's. A saved tube preset grows the SCREEN list, and the shell can move
- * any of this from underneath the box.
+ * Called on the way out rather than on a timer: the screen changes on every
+ * keystroke, and nothing needs saving that is not already rendered.
  */
-function settings(screen: CrtScreen): Setting[] {
-  const audio = readAudio()
-
-  const channel = (name: 'background' | 'keys' | 'beeps'): Setting => ({
-    label: name,
-    values: AUDIO_LEVELS.map(([label]) => label),
-    current: () => levelLabel(snd.channel(name)),
-    select: (value) => {
-      const level = AUDIO_LEVELS.find(([label]) => label === value)?.[1] ?? 0
-      snd.setChannel(name, level)
-      const next = readAudio()
-      next[name] = level
-      writeAudio(next)
-      return value
-    },
-  })
-
-  return [
-    {
-      // Labels, not names: a family and its bold and oblique cuts are one face
-      // in three, and three rows saying 6x13 would be three rows saying the
-      // same thing.
-      label: 'FONT',
-      values: FONT_ENTRIES.map(e => e.label),
-      current: () => fontLabel(store.get('font', 'terminus-8x16')),
-      // The one async setting — a face is fetched and parsed, and one that
-      // fails to load answers with the face that is still up.
-      select: async (label) => {
-        const name = fontFace(label)
-        try {
-          await loadFamily(screen.term, familyOf(name))
-          screen.crt.setSource(screen.term.w, screen.term.h)
-          store.set('font', name)
-          return label
-        } catch {
-          return fontLabel(store.get('font', 'terminus-8x16'))
-        }
-      },
-    },
-    {
-      label: 'SCREEN',
-      values: [...Object.keys(PRESETS), USER_PRESET],
-      current: () => store.get('screen', 'sharp'),
-      select: (value) => {
-        store.set('screen', value)
-        screen.crt.setParams(value === USER_PRESET ? userParams() : PRESETS[value as keyof typeof PRESETS])
-        return value
-      },
-      // Only the member's own tube opens further. The other three are presets —
-      // fixed alternatives with nothing inside them.
-      tune: value => value !== USER_PRESET ? null : {
-        title: USER_PRESET.toUpperCase(),
-        groups: CRT_CONTROLS,
-        get: key => userParams()[key] ?? 0,
-        set: (key, v) => setUserParam(screen, key, v),
-        reset: key => resetUserParam(screen, key),
-      },
-    },
-    {
-      label: 'PHOSPHOR',
-      values: ['matrix', 'vt320', 'brutalist', 'bubblegum', 'white'],
-      current: () => store.get('phosphor', 'matrix'),
-      select: (value) => {
-        store.set('phosphor', value)
-        screen.crt.setPhosphor(value)
-        return value
-      },
-    },
-    {
-      label: 'AUDIO',
-      values: [],
-      // A group has no single value, so the left pane reports the shape of the
-      // three underneath it: their level where they agree, "mixed" where they
-      // do not. Which one is where is the right pane's business.
-      current: () => {
-        const labels = (['background', 'keys', 'beeps'] as const).map(c => levelLabel(snd.channel(c)))
-        return labels.every(l => l === labels[0]) ? labels[0] : 'mixed'
-      },
-      select: v => v,
-      children: [
-        channel('background'),
-        channel('keys'),
-        channel('beeps'),
-        // Which board, not how loud — the odd row out in a group of three
-        // levels. It sits under `keys` deliberately: that row is its volume.
-        {
-          label: 'keyboard',
-          values: KEY_PACK_NAMES,
-          current: () => snd.keyPackName,
-          select: (value) => {
-            const name = snd.setKeyPack(value)
-            const next = readAudio()
-            next.pack = name
-            writeAudio(next)
-            return name
-          },
-        },
-      ],
-    },
-    {
-      label: 'SCREENSAVER',
-      values: [],
-      // The left pane answers "is it on, and how patient" in one word; which
-      // saver is the right pane's business.
-      current: () => saverPrefs().enabled ? `${saverPrefs().minutes}min` : 'off',
-      select: v => v,
-      children: [
-        {
-          label: 'enabled',
-          values: ['on', 'off'],
-          current: () => saverPrefs().enabled ? 'on' : 'off',
-          select: (v) => { setSaverPrefs({ enabled: v === 'on' }); return v },
-        },
-        {
-          label: 'after',
-          values: SAVER_MINUTES,
-          current: () => String(saverPrefs().minutes),
-          select: (v) => { setSaverPrefs({ minutes: Number(v) || 10 }); return v },
-        },
-        {
-          label: 'saver',
-          values: [...SAVER_NAMES],
-          current: () => saverPrefs().saver,
-          select: (v) => { setSaverPrefs({ saver: v }); return v },
-        },
-      ],
-    },
-  ]
-}
-
-// --- the screensaver ---------------------------------------------------------
-
-const SAVER_MINUTES = ['1', '2', '5', '10', '15', '30']
-
-function saverPrefs(): ScreensaverPrefs {
-  const fallback: ScreensaverPrefs = { enabled: true, minutes: 10, saver: SAVER_NAMES[0] }
+function saveSession(): void {
+  // Halted, or never booted. Removing the key stops a stale session making the
+  // next reboot look like a flicker.
+  if (halted || !machine || !shell) {
+    store.remove('session')
+    return
+  }
+  const blob: TerminalSession = {
+    v: SESSION_VERSION,
+    at: Date.now(),
+    uid: api.userId ?? '',
+    // excludeAltBuffer stores the shell scrollback underneath a full-screen
+    // program rather than the program's own painting, which comes back when
+    // the resume line runs the program again.
+    screen: ser.serialize({
+      scrollback: SESSION_SCROLLBACK,
+      excludeAltBuffer: true,
+      excludeModes: true,
+    }),
+    cwd: shell.env.PWD || HOME,
+    resume: machine.resume.line,
+    state: machine.resume.state,
+  }
   try {
-    return { ...fallback, ...JSON.parse(store.get('screensaver', '')) as Partial<ScreensaverPrefs> }
+    store.set('session', JSON.stringify(blob))
   } catch {
-    return fallback
+    // Storage quota, or private mode. A session that cannot be saved is a cold boot.
+    store.remove('session')
   }
 }
 
-function setSaverPrefs(patch: Partial<ScreensaverPrefs>): void {
-  store.set('screensaver', JSON.stringify({ ...saverPrefs(), ...patch }))
-}
-
-/** The saver on the glass, and the clock that puts it there. */
-let saverUp: { dispose(): void } | null = null
-let saverStack: import('@cyberspace/tui').ScreenStack | null = null
-
-async function startSaver(s: CrtScreen): Promise<void> {
-  if (saverUp || overlay?.open || halted || gridLock !== 0) return
-  const { SaverScreen, pickSaver } = await import('@cyberspace/crt/saver')
-  const { ScreenStack } = await import('@cyberspace/tui')
-  if (saverUp || overlay?.open || halted) return
-
-  saverStack ??= new ScreenStack(s.term as never)
-  gridLock++
-  const decayWas = null as number | null
-  const screen = new SaverScreen(
-    s.term as never,
-    pickSaver(saverPrefs().saver),
-    {
-      setDecay: value => s.crt.setParams({ decay: value ?? decayWas ?? 0.6 }),
-      // No cookie jar on this machine yet; the saver says so for itself.
-      fortune: async () => null,
-    },
-    () => stopSaver(),
-  )
-  saverUp = screen
-  saverStack.push(screen as never)
-}
-
-function stopSaver(): void {
-  if (!saverUp) return
-  saverUp = null
-  saverStack?.pop()
-  gridLock--
-  // Whatever the saver was holding the tube at, the prompt is not it.
-  const preset = store.get('screen', 'sharp')
-  screen?.crt.setParams(preset === USER_PRESET ? userParams() : PRESETS[preset as keyof typeof PRESETS] ?? PRESETS.sharp)
-}
-
-/** The member's own tube: the same twenty-odd numbers with them holding them. */
-const USER_PRESET = 'user'
-
-function userParams(): Record<string, number> {
+/** The parked session, or null to come up clean. */
+function loadSession(): TerminalSession | null {
+  let raw: unknown = null
   try {
-    return JSON.parse(store.get('crt.user', '')) as Record<string, number>
+    raw = JSON.parse(store.get('session', 'null'))
   } catch {
-    return { ...PRESETS.sharp }
+    return null
   }
-}
-
-function setUserParam(screen: CrtScreen, key: string, value: number): void {
-  const params = { ...userParams(), [key]: value }
-  store.set('crt.user', JSON.stringify(params))
-  // Turning a knob selects the tube it belongs to; anything else would be a
-  // knob that moves nothing until you go and pick `user` yourself.
-  store.set('screen', USER_PRESET)
-  screen.crt.setParams(params)
-}
-
-function resetUserParam(screen: CrtScreen, key?: string): void {
-  const base = PRESETS.sharp as Record<string, number>
-  const params = key ? { ...userParams(), [key]: base[key] ?? 0 } : { ...base }
-  store.set('crt.user', JSON.stringify(params))
-  screen.crt.setParams(params)
-}
-
-/** Put the saved preferences on the machine at boot. */
-function restoreSettings(screen: CrtScreen): void {
-  const audio = readAudio()
-  snd.setChannel('background', audio.background)
-  snd.setChannel('keys', audio.keys)
-  snd.setChannel('beeps', audio.beeps)
-  snd.setKeyPack(audio.pack)
-
-  const preset = store.get('screen', 'sharp')
-  screen.crt.setParams(preset === USER_PRESET ? userParams() : PRESETS[preset as keyof typeof PRESETS] ?? PRESETS.sharp)
-  screen.crt.setPhosphor(store.get('phosphor', 'matrix'))
-}
-
-// --- input -------------------------------------------------------------------
-
-let woken = false
-function wake(): void {
-  snd.resume()
-  if (!woken) {
-    woken = true
-    snd.start()
-  }
-}
-
-/**
- * Every key clicks, once, here — before anything decides what it means.
- *
- * Escape, Shift on its way to a capital, a chord's Ctrl, an F-key, whatever the
- * browser takes for itself: it is a keyboard, and a key you press makes a noise
- * whether or not the machine does anything with it. Said once rather than at
- * each branch that handles a key, because a rule that cannot be forgotten beats
- * a dozen call sites that can — the old arrangement was silent wherever
- * somebody forgot, which is how Escape and the F-keys ended up mute.
- *
- * One exception: a key the thing on screen answers with a sound of its own. The
- * config box ticks as it moves and a chat log ticks as it scrolls; a clack on
- * top of that is one keypress making two noises.
- *
- * Auto-repeat is not exempted here — Sound.key drops it, because a switch
- * clicks going down and the characters after that are the controller's doing.
- */
-function click(e: { key: string; repeat?: boolean; ctrlKey?: boolean; shiftKey?: boolean }): void {
-  if (overlay?.open) {
-    const k = {
-      key: e.key, ctrlKey: !!e.ctrlKey, shiftKey: !!e.shiftKey, metaKey: false, altKey: false,
-    }
-    if (!overlay.silentKey(k)) snd.key(e)
-    return
-  }
-  if (tty.isSilent(e.key)) return
-  snd.key(e)
-}
-
-function handleKeyName(name: string, ctrl = false, shift = false): void {
-  if (overlay?.open) {
-    const k = { key: name, ctrlKey: ctrl, shiftKey: shift, metaKey: false, altKey: false }
-    overlay.key(k)
-    if (!overlay.open) closeOverlay()
-    return
-  }
-  const s = encodeKeyName(name, ctrl)
-  if (s === null) return
-  if (bootAbort && s === '\x03') {
-    bootAbort.abort()
-    return
-  }
-  if (s === '\x03') tx.flush()
-  tty.input(bytes(s))
-}
-
-/** What the caret was doing before the box covered it. */
-let cursorWas = true
-
-function closeOverlay(): void {
-  gridLock--
-  RENDER.cursor = cursorWas
-}
-
-function toggleOverlay(): void {
-  if (!overlay) return
-  if (overlay.open) {
-    overlay.hide()
-    closeOverlay()
-    return
-  }
-  gridLock++
-  // Nothing in the box is typed into. The render loop writes showCursor from
-  // RENDER.cursor on EVERY frame, so a screen that turns the caret off for
-  // itself has it turned back on a frame later — this is the only switch that
-  // holds.
-  cursorWas = RENDER.cursor
-  RENDER.cursor = false
-  overlay.toggle()
-}
-
-function wireSoftKeyboard(canvas: HTMLCanvasElement): void {
-  const field = document.createElement('textarea')
-  field.setAttribute('autocapitalize', 'off')
-  field.setAttribute('autocomplete', 'off')
-  field.setAttribute('autocorrect', 'off')
-  field.setAttribute('spellcheck', 'false')
-  field.style.cssText =
-    'position:fixed;top:0;left:0;width:100%;height:100%;opacity:0;border:0;padding:0;' +
-    'background:transparent;color:transparent;caret-color:transparent;z-index:10;resize:none'
-  field.value = SENTINEL
-  document.body.appendChild(field)
-
-  const reset = () => {
-    field.value = SENTINEL
-    field.setSelectionRange(1, 1)
-  }
-
-  canvas.addEventListener('pointerdown', () => {
-    wake()
-    field.focus()
-  })
-  field.addEventListener('pointerdown', wake)
-
-  field.addEventListener('keydown', e => {
-    if (!softKeydownWanted(e)) return
-    e.preventDefault()
-    click(e)
-    handleKeyName(e.key, e.ctrlKey, e.shiftKey)
-  })
-  field.addEventListener('beforeinput', e => {
-    e.preventDefault()
-    const r = softInputKeys(e.inputType, (e as InputEvent).data)
-    if (r.kind === 'keys') {
-      for (const k of r.keys) {
-        click({ key: k })
-        handleKeyName(k)
-      }
-    }
-    reset()
-  })
-  field.addEventListener('input', reset)
+  return parseSession(raw, api.userId ?? '', Date.now())
 }
 
 // --- boot --------------------------------------------------------------------
 
-let screen: CrtScreen
 let last = 0
 
 const program = {
@@ -656,16 +178,11 @@ const program = {
     void snd.load()
     void loadFallback(s.term)
 
-    restoreSettings(s)
-    overlay = new SettingsOverlay(s.term, () => settings(s))
-    overlay.onFeedback = kind => {
-      if (kind === 'edge') snd.beep(220, 0.04)
-      // The same voice a screen closing has everywhere else here.
-      else if (kind === 'cancel') snd.blip(420, 0.09, 0)
-      else snd.tick()
-    }
+    restoreSettings(s, snd)
+    config = new ConfigBox(s, snd)
+    saver = new Screensaver(s, () => halted)
 
-    // Restore a saved face before anything is on the glass.
+    // Load the saved font before the first paint, so no frame renders in the default.
     const savedFont = store.get('font', 'terminus-8x16')
     if (savedFont !== 'terminus-8x16') {
       await loadFamily(s.term, familyOf(savedFont)).catch(() => {})
@@ -673,17 +190,24 @@ const program = {
     }
 
     snd.powerOn()
-    // Cold start: first visit, or long enough away that the machine was off.
-    const cold = Date.now() - Number(store.get('lastSeen', '0')) > 10 * 60 * 1000
-    // The machine boots under the animation; it never touches the grid.
-    const kernelP = bootMachine()
-    // The saved session resumes under the strike; a dead network never blocks boot.
+    // Cold start: first visit, or away longer than COLD_AFTER.
+    const cold = Date.now() - Number(store.get('lastSeen', '0')) > COLD_AFTER
+    // The kernel boots while the animation plays. bootMachine never touches the grid.
+    const kernelP = bootMachine({
+      api,
+      snd,
+      host: { shutdown: shutdownProgram, reboot: rebootProgram },
+      // Image decoding is faceplate-only, and the metrics depend on the font
+      // loaded right now, which F1 can change under a running program.
+      pictures: () => pictureHost(s.term),
+    })
+    // Resumed under the boot animation, capped at 5s so a dead network cannot
+    // hold up the prompt.
     const resumed = api.hasSavedSession
       ? Promise.race([api.resume(), new Promise<null>(res => setTimeout(() => res(null), 5000))])
       : Promise.resolve(null)
 
     if (cold) {
-      // The chime scores the boot; the fetch/decode runs under the strike.
       void snd.bootup()
       const abort = new AbortController()
       bootAbort = abort
@@ -693,7 +217,7 @@ const program = {
           await bootSequence(s.term, snd, abort.signal, { version: VERSION })
         } catch (err) {
           if (!(err instanceof Aborted)) throw err
-          // A skip, not a failure: kill the chime and land on the prompt.
+          // Aborted by ^C rather than failed: stop the chime and clear to the prompt.
           snd.stopBootup()
           s.term.clear()
         }
@@ -705,78 +229,83 @@ const program = {
     store.set('lastSeen', String(Date.now()))
 
     const kernel = await kernelP
+    // The identity must resolve before loadSession runs: a parked scrollback is
+    // restored only for the member it was saved by.
     await resumed
-    await writeMotd()
-    void session(kernel)
+    await writeMotd(api.username)
+    machine = kernel
+
+    ;(globalThis as Record<string, unknown>).cs = {
+      kernel, fs, tty, snd, screen, api, tx, xt, saver,
+      dbg: { get lock() { return grid.locked }, get halted() { return halted } },
+    }
+
+    const saved = loadSession()
+    if (saved) {
+      // Written straight to the parser, bypassing the rate limiter: restoring a
+      // screen is a repaint, not program output.
+      xt.write(saved.screen + '\r\x1b[2K')
+      kernel.resume.restore(saved.resume, saved.state)
+    }
+    void runSession({
+      kernel,
+      tty,
+      halted: () => halted,
+      drained: waitForDrain,
+      onShell: (p, kill) => { shell = p; killSession = kill },
+    }, saved)
   },
 
   frame(s: CrtScreen, t: number): void {
-    // The screen counts seconds since boot; the pacer counts milliseconds.
+    // `t` is seconds since boot; Baud.drain takes milliseconds.
     const dt = last ? (t - last) * 1000 : 0
     last = t
-    if (gridLock === 0 && !halted) {
-      // What the machine said, which is the only thing that bleeps: drain()
-      // does not count the echo under the operator's fingers.
+    if (!grid.locked && !halted) {
+      // drain() returns program output only, so echo does not trigger the blip.
       if (tx.drain(dt) > 0) snd.blip(1400)
-      syncTerm(xt, s.term)
-      // The loop above this wrote showCursor from RENDER.cursor; a full-screen
-      // program that turned the caret off gets the last word.
-      s.term.showCursor = RENDER.cursor && tty.caret
+      scroll.clamp()
+      syncTerm(xt, s.term, scroll.back)
+      // The render loop writes showCursor from RENDER.cursor every frame, so
+      // this assignment is what lets a full-screen program hide the caret. It is
+      // also hidden while scrolled back, where it would not mark the input point.
+      s.term.showCursor = RENDER.cursor && tty.caret && scroll.back === 0
     }
   },
 
   key(_s: unknown, e: KeyboardEvent): void {
-    wake()
-    click(e)
-    // ^C skips the cold boot. Kept out of the tty — no shell exists yet.
-    if (bootAbort && e.ctrlKey && e.key === 'c') {
-      e.preventDefault()
-      bootAbort.abort()
-      return
-    }
-    if (e.key === 'F1') {
-      e.preventDefault()
-      toggleOverlay()
-      return
-    }
-    if (overlay?.open) {
-      e.preventDefault()
-      handleKeyName(e.key, e.ctrlKey, e.shiftKey)
-      return
-    }
-    const str = encodeKey(e)
-    if (str === null) return
-    e.preventDefault()
-    // Stop means stop: whatever the line was still typing out goes with it.
-    if (str === '\x03') tx.flush()
-    tty.input(bytes(str))
+    keyboard.key(e)
   },
 }
 
-// rAF suspends in hidden tabs (and xterm parses writes asynchronously, so the
-// grid always trails the parser by one tick). A slow interval keeps the
-// machine advancing while nobody is looking.
+// rAF stops in a hidden tab, and xterm parses writes asynchronously, so the grid
+// trails the parser by a tick. This interval keeps both advancing while hidden.
 setInterval(() => {
-  if (!document.hidden || gridLock !== 0 || halted || !screen) return
+  if (!document.hidden || grid.locked || halted || !screen) return
   tx.drain(1000)
-  syncTerm(xt, screen.term)
+  syncTerm(xt, screen.term, scroll.back)
 }, 1000)
+
+// Safari and mobile do not fire beforeunload, so pagehide is the reliable exit
+// event. visibilitychange also covers a backgrounded tab discarded without
+// being shown again.
+window.addEventListener('pagehide', saveSession)
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') saveSession()
+})
 
 window.addEventListener('paste', e => {
   const text = e.clipboardData?.getData('text')
   if (!text) return
   e.preventDefault()
-  wake()
-  if (overlay?.open) return
-  tty.input(bytes(text.replace(/\r\n?/g, '\r')))
+  keyboard.paste(text)
 })
 
 const canvas = document.getElementById('tube') as HTMLCanvasElement
 
 try {
   await mount(canvas, program)
-  if (MOBILE) wireSoftKeyboard(canvas)
-  else canvas.addEventListener('pointerdown', wake)
+  if (MOBILE) keyboard.wireSoftKeyboard(canvas)
+  else canvas.addEventListener('pointerdown', () => keyboard.wake())
 } catch (err) {
   const fault = document.getElementById('fault')!
   fault.style.display = 'block'

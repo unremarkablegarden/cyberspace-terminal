@@ -5,9 +5,9 @@
 //   probe()     the real machine, read off navigator/screen — this bit is true
 //   services()  mounts and [ OK ] lines
 //
-// Draws straight onto the Term planes, wall-clock paced. The host must stop
-// feeding the grid while it runs and repaint afterwards. Ctrl-C aborts via the
-// signal; the caller owns the end state.
+// Draws directly onto the Term planes, paced by wall clock. The host must stop
+// feeding the grid while this runs and repaint afterwards. Ctrl-C aborts via the
+// signal, and the caller is responsible for the end state.
 
 import { BRIGHT, BOLD, NORMAL } from './term.js'
 import { Aborted } from './effects.js'
@@ -26,9 +26,8 @@ interface BootTerm {
   newline(): void
 }
 
-// Firmware talks in a lower register than the shell. The memory count blips
-// for itself (it overwrites in place, never through type), so the pitch has
-// a name.
+// Firmware output is pitched lower than the shell's. The memory count sounds
+// its own blip, since it overwrites in place rather than going through type().
 const FIRMWARE_BLIP_HZ = 760
 
 class BootCtx {
@@ -59,8 +58,8 @@ class BootCtx {
     })
   }
 
-  // Wall-clock pacing: emit whatever elapsed time budgets, then yield. A
-  // throttled tab batches characters instead of stretching the movement.
+  // Wall-clock pacing: emit whatever elapsed time allows, then yield. A
+  // throttled tab batches characters rather than stretching the sequence.
   async type(text: string, attr = NORMAL): Promise<void> {
     const chars = [...text]
     if (!chars.length) return
@@ -89,7 +88,7 @@ class BootCtx {
 
 // --- the banner --------------------------------------------------------------
 
-/** 5x5 face, one entry per letter of the only word it has to spell. */
+/** A 5x5 face, with one entry per letter needed to spell CYBERSPACE. */
 const GLYPHS: Record<string, string[]> = {
   C: ['█████',
       '█    ',
@@ -162,9 +161,9 @@ function boxed(lines: string[], padX = 2): string[] {
   ]
 }
 
-// Boxed, CYBERSPACE is 65 columns — hopeless on a 44-column grid, where the
-// stacked CYBER / SPACE form needs 35. The years go only with the wide strap;
-// stacked, the strap would out-width the word.
+// Boxed, CYBERSPACE is 65 columns, which does not fit a 44-column grid; the
+// stacked CYBER / SPACE form needs 35. The years appear only with the wide
+// strap, which would otherwise be wider than the stacked word.
 function bannerLines(version: string, stacked: boolean): string[] {
   const word = stacked
     ? [...bannerRows('CYBER'), '', ...bannerRows('SPACE')]
@@ -177,8 +176,8 @@ function bannerLines(version: string, stacked: boolean): string[] {
 }
 
 async function banner(ctx: BootCtx, version: string): Promise<void> {
-  // Measured, not decided: what matters is whether the box AND its shadow
-  // column fit.
+  // Measured rather than assumed: the test is whether the box and its shadow
+  // column both fit.
   let lines = bannerLines(version, false)
   if (lines[0]!.length + 1 > ctx.term.cols) lines = bannerLines(version, true)
 
@@ -189,7 +188,7 @@ async function banner(ctx: BootCtx, version: string): Promise<void> {
   ctx.clear()
   for (let i = 0; i < lines.length; i++) {
     ctx.term.text(x, y + i, lines[i]!, BRIGHT | BOLD)
-    // The shadow grows with the box rather than arriving after it.
+    // The shadow is drawn as the box grows rather than added afterwards.
     ctx.term.put(x + w, y + i + 1, '░')
     if (i === lines.length - 1) {
       for (let k = 1; k <= w; k++) ctx.term.put(x + k, y + i + 1, '░')
@@ -209,7 +208,7 @@ async function banner(ctx: BootCtx, version: string): Promise<void> {
 async function post(ctx: BootCtx): Promise<void> {
   ctx.setBlipHz(FIRMWARE_BLIP_HZ)
 
-  // The POST beep lands with the first line, ringing under the type-out.
+  // The POST beep plays with the first line, under the type-out.
   const year = new Date().getFullYear()
   ctx.snd.postBeep()
   await ctx.type('CYBERSPACE BIOS v2.11', BOLD)
@@ -229,7 +228,7 @@ async function post(ctx: BootCtx): Promise<void> {
   ctx.term.newline()
   await ctx.sleep(200)
 
-  // A pause per device: interrogation, not a list it already had.
+  // A pause per device, so the sequence reads as probing rather than printing a list.
   ctx.snd.seek(3)
   await ctx.typeln('FIXED DISK  : ST-225  20MB  OK', NORMAL)
   await ctx.sleep(220)
@@ -249,8 +248,8 @@ async function post(ctx: BootCtx): Promise<void> {
 
 // --- the real machine --------------------------------------------------------
 
-// Read locally, shown only to the person in front of it, sent nowhere. Every
-// lookup guarded: a locked-down browser costs one unknown line, not the boot.
+// Read locally, displayed only on this machine and sent nowhere. Every lookup is
+// guarded, so a restricted browser costs one unknown line rather than the boot.
 function specs(): [string, string][] {
   const out: [string, string][] = []
   const add = (label: string, read: () => string | undefined | null) => {
@@ -284,7 +283,7 @@ function specs(): [string, string][] {
   return out
 }
 
-/** The renderer string, off a throwaway context — the tube's own is not ours. */
+/** The renderer string, from a throwaway context rather than the CRT's own. */
 function gpu(): string | undefined {
   const canvas = document.createElement('canvas')
   const gl = canvas.getContext('webgl') as WebGLRenderingContext | null
@@ -301,8 +300,8 @@ async function probe(ctx: BootCtx): Promise<void> {
   await ctx.typeln('probing machine ...', NORMAL)
   await ctx.sleep(200)
 
-  // `  label     : ` is 14 columns. Cut here, at the one place that knows the
-  // width — a wrapped value puts half of itself where the next label belongs.
+  // `  label     : ` is 14 columns. Truncated here, the only place that knows
+  // the width; a wrapped value would overwrite the next label's row.
   const room = Math.max(8, ctx.term.cols - 14)
   for (const [label, value] of specs()) {
     await ctx.typeln(`  ${label.padEnd(10)}: ${value.slice(0, room)}`, NORMAL)
@@ -314,9 +313,9 @@ async function probe(ctx: BootCtx): Promise<void> {
 
 // --- userland ----------------------------------------------------------------
 
-// The [ OK ] roll, fiction with two exceptions: the tty line reports the real
-// grid, and `[ OK ] ` is 7 columns, so the two long lines have honest short
-// forms for grids where they would wrap.
+// The [ OK ] list is fabricated apart from the tty line, which reports the real
+// grid. `[ OK ] ` is 7 columns, so the two longest lines have short forms for
+// grids where they would otherwise wrap.
 function targets(ctx: BootCtx): string[] {
   const { cols, rows } = ctx.term
   const narrow = cols - 7 < 43
@@ -336,11 +335,11 @@ function targets(ctx: BootCtx): string[] {
 }
 
 async function services(ctx: BootCtx): Promise<void> {
-  // A boot log scrolls past faster than a machine talks to you.
+  // A boot log scrolls faster than the shell's own output rate.
   ctx.setBaud(9600)
 
   ctx.snd.seek(3)
-  // The dot leader runs to wherever the answer can still sit on the same row.
+  // The dot leader runs as far as leaves room for the status on the same row.
   const leader = Math.max(20, Math.min(44, ctx.term.cols - 15))
   for (const mount of ['Mounting opfs on /home ', 'Mounting tmpfs on /tmp ']) {
     await ctx.typeln(mount.padEnd(leader, '.') + ' ok')
@@ -359,8 +358,8 @@ async function services(ctx: BootCtx): Promise<void> {
 // --- entry -------------------------------------------------------------------
 
 /**
- * The movements after the strike. Throws Aborted on skip — the caller owns
- * the end state (stop the chime, clear, drop to the prompt).
+ * The boot sequence after the strike. Throws Aborted when skipped; the caller
+ * handles the end state, stopping the chime, clearing and returning to the prompt.
  */
 export async function bootSequence(
   term: BootTerm,

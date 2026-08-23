@@ -20,9 +20,9 @@ export function runWasi(p: Proc, wasm: Uint8Array): Promise<number> {
 }
 
 async function runInWorker(p: Proc, wasm: Uint8Array): Promise<number> {
-  // An interactive tty feeds the ring; a pipe or file is read in full up
-  // front. No cross-origin isolation means no SharedArrayBuffer — then the
-  // tty is handed over empty, as in the inline model.
+  // An interactive tty feeds the ring; a pipe or file is read in full up front.
+  // Without cross-origin isolation there is no SharedArrayBuffer, and the tty is
+  // handed over empty as in the inline model.
   let ring: SharedArrayBuffer | undefined
   let stdin: Uint8Array | undefined
   if (p.stdin.isInteractive) {
@@ -92,8 +92,8 @@ async function runInWorker(p: Proc, wasm: Uint8Array): Promise<number> {
 
 async function runInline(p: Proc, wasm: Uint8Array): Promise<number> {
   // Batch model: a pipe or file is read in full before the run. An interactive
-  // tty is handed over empty — blocking a synchronous program on a keyboard
-  // that cannot wake it would hang the machine.
+  // tty is handed over empty, since blocking a synchronous program on a keyboard
+  // that cannot wake it would hang the tab.
   const input = p.stdin.isInteractive ? new Uint8Array() : await readAllBytes(p.stdin)
   if (p.signal.aborted) return 130
 

@@ -28,6 +28,8 @@ export const shellMain: Program = async (p: Proc) => {
     return 1
   }
 
+  p.env.PWD = sh.cwd
+
   const rl = new Readline(p.tty, p.stdin, (line, cursor) => complete(sh, line, cursor))
 
   const histPath = paths.join(p.env.HOME ?? '/', HISTFILE)
@@ -64,6 +66,15 @@ export const shellMain: Program = async (p: Proc) => {
     void s
     return 0
   })
+
+  // A saved session resumes by running its command line again rather than being
+  // restored. The host stored the line; this is where the shell claims it.
+  const resumed = p.kernel.resume.takeLine()
+  if (resumed) {
+    p.tty.setCooked()
+    // The state blob is left in place for the spawned program to claim.
+    await runLine(sh, resumed).catch(() => {})
+  }
 
   for (;;) {
     const line = await rl.read(prompt(sh))
@@ -133,6 +144,7 @@ async function complete(sh: ShellState, line: string, cursor: number): Promise<C
   let prefix = word
 
   if (isFirst && !word.includes('/')) {
+    if (!word) return {} // no prefix: don't dump the whole command table
     candidates = [...sh.proc.kernel.names(), ...builtinNames()]
       .sort()
       .filter(n => n.startsWith(word))

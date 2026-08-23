@@ -1,19 +1,16 @@
-// A modal that asks for one line, and offers suggestions while you type.
+// A modal that asks for one line and offers suggestions while typing.
 //
-// SelectPopup's other sibling: same frame, same centring, same rule about only
-// using the `bounds` it was given. What it adds is that the list is not fixed —
-// it comes from whatever the caller does with the text so far, which is what
-// makes it a search box rather than a menu.
+// The same frame, centring and bounds handling as SelectPopup, but the list is
+// produced by the caller from the text so far, making it a search box rather
+// than a menu.
 //
-// The box does NOT resize as suggestions arrive. It is drawn at its full height
-// from the first frame with the rows below the input left blank, because a modal
-// that grows and shrinks under a typing cursor is a modal that moves the thing
-// you were about to press Enter on.
+// The box does not resize as suggestions arrive. It is drawn at full height
+// from the first frame with the rows below the input left blank, so the row
+// under the cursor does not move while typing.
 //
-// Answers are per keystroke and out of order by nature: a slow query for `jo`
-// can land after a fast one for `jon`. Every request carries a sequence number
-// and anything but the newest is dropped on arrival — without that the list
-// flickers back to a stale answer for a prefix you have already typed past.
+// Queries resolve out of order: a slow request for `jo` can arrive after a fast
+// one for `jon`. Each request carries a sequence number and anything but the
+// newest is discarded, which prevents the list reverting to a stale answer.
 
 import { NORMAL, BRIGHT, BOLD, DIM } from './attrs.js'
 import type { Grid } from './surface.js'
@@ -25,30 +22,29 @@ import { InputLine } from './input.js'
 export interface PromptOptions {
   title: string
   /**
-   * Suggestions for the text so far. Called on a debounce, never on every
-   * keystroke. Returning `[]` is normal — a prefix too short to search, or one
-   * nothing matches.
+   * Suggestions for the text so far. Called on a debounce rather than on every
+   * keystroke. Returning [] is normal: a prefix too short to search, or one
+   * that matches nothing.
    */
   suggest?: (value: string) => Promise<string[]>
   /**
-   * The chosen line, or null if dismissed. A highlighted suggestion wins over
-   * what was typed; with none highlighted the typed text is the answer, so a
-   * name the index has not heard of can still be asked for.
+   * The chosen line, or null if dismissed. A highlighted suggestion takes
+   * precedence over the typed text; with none highlighted the typed text is the
+   * answer, so a name absent from the index can still be entered.
    */
   onDone: (value: string | null) => void
-  /** As SelectPopup: the widget makes no sound of its own. */
+  /** As SelectPopup: the widget produces no sound itself. */
   onFeedback?: (kind: 'move' | 'choose' | 'cancel' | 'edge' | 'inert', e: KeyInput) => void
-  /** Drawn in front of the input, e.g. `@`. Not part of the answer. */
+  /** Drawn before the input, such as `@`. Not part of the answer. */
   prefix?: string
-  /** Shown in the bottom rule. Spans so a key can wear its cap, as the footer does. */
+  /** Shown in the bottom rule. Spans, so a key can be drawn as a cap. */
   hint?: string | Span[]
   /** Region to centre within. Defaults to the whole grid. */
   bounds?: Rect
   /**
-   * Lay a drop-shadow under the box — see `shadow` in box.ts. Off by default,
-   * because it EATS the cells it falls on: over a program still readable
-   * underneath it is what says this box is in front, and over one that is not
-   * it is a smudge. The caller knows which it has.
+   * Draw a drop shadow under the box. See shadow() in box.ts. Off by default,
+   * because it overwrites the cells it falls on: that reads as depth over a
+   * program still legible beneath, and as noise otherwise.
    */
   shadow?: boolean
   /** Suggestion rows. The box is always this tall, filled or not. */
@@ -58,7 +54,7 @@ export interface PromptOptions {
   maxLength?: number
   /** Characters before `suggest` is called at all. */
   minChars?: number
-  /** Quiet time before asking. */
+  /** Debounce interval before suggest() is called. */
   debounceMs?: number
 }
 
@@ -73,10 +69,10 @@ const DEFAULTS = {
 export class PromptPopup implements Screen {
   private input: InputLine
   private items: string[] = []
-  /** Which suggestion is highlighted, or -1 for "none — use what I typed". */
+  /** Index of the highlighted suggestion, or -1 to use the typed text. */
   private index = -1
   private timer: number | null = null
-  /** Newest request. Answers that are not this are stale, and dropped. */
+  /** Sequence number of the newest request. Older answers are discarded. */
   private seq = 0
   private closed = false
 
@@ -87,7 +83,7 @@ export class PromptPopup implements Screen {
     })
   }
 
-  /** The arrows move the list, which is a move the caller ticks for. */
+  /** The arrows move the list, which the caller sounds as a move. */
   silentKey(e: KeyInput): boolean {
     if (e.metaKey || e.altKey || e.ctrlKey) return false
     return e.key === 'ArrowUp' || e.key === 'ArrowDown'
@@ -119,9 +115,9 @@ export class PromptPopup implements Screen {
         this.opts.onFeedback?.('edge', e)
         return true
       }
-      // -1 is a real position in the ring, not a gap in it: walking off the top
-      // of the list puts you back in the text you typed, which is the only way
-      // to un-choose a suggestion without deleting a character.
+      // -1 is a position in the ring rather than a gap: moving off the top of
+      // the list returns to the typed text, which is the only way to deselect a
+      // suggestion without editing.
       const span = this.items.length + 1
       const from = this.index + 1
       const next = (from + (e.key === 'ArrowUp' ? -1 : 1) + span) % span
@@ -130,8 +126,8 @@ export class PromptPopup implements Screen {
       return true
     }
 
-    // Tab completes to the highlighted suggestion without committing to it, so
-    // you can see what you are about to ask for and keep editing.
+    // Tab completes to the highlighted suggestion without submitting, so it can
+    // be seen and edited before Enter.
     if (e.key === 'Tab') {
       const picked = this.items[Math.max(0, this.index)]
       if (picked) {
@@ -145,8 +141,8 @@ export class PromptPopup implements Screen {
     }
 
     if (this.input.onKey(e)) {
-      // Any edit invalidates the highlight: it pointed into a list built for
-      // text that no longer exists.
+      // Any edit clears the highlight, which indexed a list built for text that
+      // no longer exists.
       this.index = -1
       this.schedule()
       return true
@@ -162,7 +158,7 @@ export class PromptPopup implements Screen {
     return true
   }
 
-  /** Ask again shortly, unless another keystroke moves the goalposts first. */
+  /** Schedule another query, cancelled if a further keystroke arrives first. */
   private schedule() {
     if (!this.opts.suggest) return
     if (this.timer !== null) clearTimeout(this.timer)
@@ -179,7 +175,7 @@ export class PromptPopup implements Screen {
       this.timer = null
       void this.opts.suggest!(value)
         .then((items) => {
-          // Stale answer, or the box closed while it was in flight.
+          // A stale answer, or the box closed while the request was in flight.
           if (this.closed || mine !== this.seq) return
           this.items = items.slice(0, this.opts.rows ?? DEFAULTS.rows)
           this.index = -1
@@ -190,8 +186,8 @@ export class PromptPopup implements Screen {
   }
 
   /**
-   * Set by the stack's draw so a late answer can repaint itself. The stack only
-   * repaints on a handled key, and an arriving list is neither.
+   * Set by the stack's draw so a late answer can repaint. The stack repaints
+   * only on a handled key, and an arriving list is not one.
    */
   private redraw?: () => void
 
@@ -221,10 +217,9 @@ export class PromptPopup implements Screen {
       Math.max(16, b.w - 4),
       Math.max((this.opts.width ?? DEFAULTS.width) + 4, cells(this.opts.title) + 6, hintW + 6),
     )
-    // Input row, a rule under it, and the suggestions — unless there are no
-    // suggestions at all, in which case the box is the input and nothing else.
-    // A caller that offers no completions (a reason, a note) would otherwise
-    // get a divider dividing one thing from nothing, and a blank row under it.
+    // Input row, a rule beneath it, and the suggestions. With no suggestions at
+    // all the box is the input alone: a caller offering no completions would
+    // otherwise get a divider with a blank row under it.
     const h = rows > 0 ? Math.min(Math.max(5, b.h - 2), rows + 4) : 3
 
     return {
@@ -239,9 +234,9 @@ export class PromptPopup implements Screen {
     const r = this.rect(term)
     this.redraw = () => this.draw(term)
 
-    // Cleared before framing, as TextPopup: box drawing merges with whatever is
-    // in the cell, so a border over the program's own rule would fuse into a
-    // tee instead of covering it.
+    // Cleared before framing, as TextPopup does: box drawing merges with the
+    // existing cell, so a border over the program's own rule would merge into a
+    // tee rather than covering it.
     clear(term, r)
     if (this.opts.shadow) shadow(term, r, this.opts.bounds)
     const inner = frame(term, r)
@@ -249,22 +244,20 @@ export class PromptPopup implements Screen {
     if (this.opts.hint) label(term, r, this.opts.hint, { edge: 'bottom', align: 'right' })
 
     this.input.draw(term, { x: inner.x + 1, y: inner.y, w: inner.w - 2, h: 1 })
-    // The one widget on this stack that IS typed into, so it is the one that
-    // wants the caret. InputLine.draw has already parked it; this only says the
-    // machine is listening. The stack puts showCursor back on the way out.
+    // The only widget on this stack that takes input, so it shows the caret.
+    // InputLine.draw has already positioned it; this only makes it visible. The
+    // stack restores showCursor on pop.
     term.showCursor = true
 
-    // Nothing to divide from, so no divider. See `rect`. A branch rather than
-    // the early return this used to be, so the ground below is reached either
-    // way — a popup that came out unlit in only its one-line form would be a
-    // fiddly thing to notice and a fiddlier one to explain.
+    // Nothing to divide, so no divider. See rect(). A branch rather than an
+    // early return, so ground() below runs in both cases; otherwise the
+    // single-line form alone would render unlit.
     if ((this.opts.rows ?? DEFAULTS.rows) > 0) {
-      // A rule between what you typed and what the machine is offering, so the
-      // two are never mistaken for one list. Run into both borders rather than
-      // stopped inside them: hline merges with what is already in the cell, so
-      // the ends resolve to ├ and ┤ instead of butting against the sides.
-      // NORMAL, like the frame it joins — a dimmer rule reads as a different
-      // material, and it also dims the two border cells it lands on.
+      // A rule between the typed text and the suggestions, so the two do not
+      // read as one list. Run into both borders rather than stopping inside
+      // them: hline merges with the existing cell, so the ends resolve to
+      // junctions. NORMAL, matching the frame it joins; a dimmer rule would also
+      // dim the two border cells it merges with.
       hline(term, inner.y + 1, r.x, r.x + r.w - 1, NORMAL)
 
       const top = inner.y + 2
@@ -274,18 +267,14 @@ export class PromptPopup implements Screen {
         if (item === undefined) break
         const on = i === this.index
         const text = ` ${item} `.padEnd(inner.w - 2).slice(0, inner.w - 2)
-        // DIM inverse with BOLD text on the selected row — the same bar
-        // `SelectPopup` draws, and drawn here for the same reason. On an
-        // inverse cell the attr is the FIELD, so NORMAL made the selection a
-        // slab of lit phosphor with the words cut out of it: the brightest
-        // thing on the tube, for a row whose job is only to say where you are.
-        // Taking the field down and thickening the letters says it without
-        // shouting. This one was left behind when select.ts was changed.
+        // DIM inverse with BOLD text on the selected row, matching SelectPopup.
+        // On an inverse cell the attribute applies to the background, so NORMAL
+        // would make the selection the brightest element on screen.
         term.text(inner.x + 1, top + i, text, on ? DIM | BOLD : NORMAL, on ? 1 : 0)
       }
     }
 
-    // Last, over everything the box just drew. See `ground` in box.ts.
+    // Applied last, over everything the box drew. See ground() in box.ts.
     ground(term, r)
     term.dirty = true
   }

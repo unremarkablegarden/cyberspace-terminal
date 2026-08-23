@@ -1,22 +1,19 @@
-// cmail — C-Mail, as the machine at /terminal draws it.
+// cmail: direct messages. Two screens, a mailbox and a thread.
 //
-// Two screens. The mailbox is an INDEX — mark, name, preview, and the clock
-// anchored to the far side rather than sitting in the head, so the preview is
-// cut short of it instead of having its last words silently overwritten.
+// The mailbox is an index: mark, name, preview, and the clock anchored to the
+// right margin, so a long preview is truncated rather than overwritten.
 //
-// **A thread is two-sided, and draws no name at all.** Theirs is in the title
-// rule and never changes; ours would be the machine telling us who we are on
-// every line we wrote. Which SIDE a message is on carries the fact instead, so
-// the seventeen-column nick head disappears rather than shrinking, and the
-// clock goes into the box's own rule.
+// A thread draws no nick column. The correspondent's name is in the title rule
+// and does not change, and which side a message is drawn on identifies the
+// sender, so the seventeen-column nick head is dropped entirely and the clock
+// moves into each box's rule.
 //
-// **A box per TURN, not per message.** Somebody saying three things in a row is
-// one turn, and three boxes for it would be a stack of chrome around one
-// thought. Inside a single box the messages are divided by a rule in a
-// container the reader already has; what the box marks is the handover.
+// One box per turn rather than per message: consecutive messages from the same
+// sender are grouped, divided by a rule inside the box. The box marks the
+// handover between senders.
 //
-// Arrival is two clocks, as in circ: the backlog prints by the line, new
-// messages type at 2400 baud.
+// Two arrival clocks, as in circ: the backlog is revealed a line at a time and
+// new messages type out at 2400 baud.
 
 import { dec, type Proc, type Program } from '@cyberspace/kernel'
 import {
@@ -30,7 +27,8 @@ import { ApiClient, ApiError } from './api.js'
 import { bodyOf, followList, hasStyle, type MsgBody } from './chatui.js'
 import {
   BLIP_HZ, Blinker, SILENT, Typewriter, entryLines, entryParts, hhmm,
-  printing, systemLines, type ChatMessage, type ChatSound,
+  printing, systemLines, type ChatMessage, type ChatPictureHost, type ChatSound,
+  type Picture,
 } from './chat.js'
 import { helpLines, routeSlash, slashNames, type LocalCommand } from './slash.js'
 
@@ -51,26 +49,26 @@ interface Msg extends MsgBody {
 }
 
 const TITLE = 'C-MAIL'
-/** `N ` or two blanks. */
+/** The unread marker: `N ` or two blanks. */
 const MARK_W = 2
 const NAME_W = 16
-/** The clock down the right margin: `12:34`, `Mon`, `05/09`. */
+/** Width of the right-margin clock: `12:34`, `Mon` or `05/09`. */
 const TIME_W = 5
 const GAP = 2
 const MIN_PREVIEW = 18
 const MAX_MSGS = 200
-/** A turn's box, as a share of the pane. It is the container that moves. */
+/** Width of a turn's box as a fraction of the pane. */
 const DM_BODY = 2 / 3
-/** Pitch of the boop opening a thread makes — circ retunes rooms with it too. */
+/** Pitch of the tone played when a thread opens. circ uses the same for room changes. */
 const OPEN_HZ = 420
-/** A week, in milliseconds — the line between a weekday and a date. */
+/** A week in milliseconds: the threshold between showing a weekday and a date. */
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000
 
-/** The commands this program answers itself; the server resolves the rest. */
+/** Commands this program handles itself; the server resolves the rest. */
 const LOCAL: LocalCommand[] = [
   { name: 'quit', usage: '/quit', summary: 'leave C-Mail' },
 ]
-/** As dispatched, aliases included. Tab and the help box show only LOCAL. */
+/** Every dispatched name, aliases included. Tab and the help box show only LOCAL. */
 const LOCAL_NAMES = ['quit', 'exit']
 const SLASH = slashNames('dm', LOCAL)
 
@@ -93,6 +91,19 @@ const THREAD_HINT: Span[] = [
   { text: ' ESC ', inverse: true, attr: DIM },
   { text: ' Mailbox' },
 ]
+
+/** Bump when MailState changes. A mismatch discards the draft and nothing else. */
+const STATE_VERSION = 1
+
+/** State kept across a reload. Messages are refetched rather than stored. */
+interface MailState { v: number; draft: string }
+
+function readState(raw: unknown): MailState | null {
+  if (!raw || typeof raw !== 'object') return null
+  const s = raw as Record<string, unknown>
+  if (s.v !== STATE_VERSION || typeof s.draft !== 'string') return null
+  return { v: STATE_VERSION, draft: s.draft }
+}
 
 const INDEX_HELP = [
   'The mailbox lists everyone you have written to,',
@@ -118,7 +129,7 @@ function whenLabel(at: number): string {
   return `${String(then.getDate()).padStart(2, '0')}/${String(then.getMonth() + 1).padStart(2, '0')}`
 }
 
-/** Break text to fit inside a box. */
+/** Wrap text to fit inside a turn box. */
 function wrapBody(text: string, width: number): string[] {
   const out: string[] = []
   for (const para of text.split('\n')) {
@@ -134,7 +145,9 @@ function wrapBody(text: string, width: number): string[] {
   return out
 }
 
-export function cmailProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILENT): Program {
+export function cmailProgram(
+  api: ApiClient, rtdb: string, snd: ChatSound = SILENT, pictures?: ChatPictureHost,
+): Program {
   const base = rtdb.replace(/\/$/, '')
 
   return async (p: Proc) => {
@@ -159,7 +172,7 @@ export function cmailProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILE
     const outer: Rect = { x: 0, y: 0, w: cols, h: rows }
 
     let running = true
-    /** Which screen owns the grid. */
+    /** Which of the two screens is currently drawn. */
     let mode: 'index' | 'thread' = 'index'
 
     const paintNow = (): void => { tty.paint(s.render()) }
@@ -177,7 +190,7 @@ export function cmailProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILE
     let indexStatus = ''
     const reveal = new Reveal({ onTick: () => drawIndex(), onBlip: () => snd.blip(BLIP_HZ) })
 
-    /** Name column: what is left once the mark, clock and a preview are paid for. */
+    /** Width of the name column: the pane less the mark, clock and preview. */
     const nameWidth = (): number => {
       const spare = listRect.w - MARK_W - GAP - TIME_W - GAP - MIN_PREVIEW
       return Math.min(NAME_W, Math.max(8, spare))
@@ -189,9 +202,8 @@ export function cmailProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILE
       frame(s, outer)
       hline(s, indexSplitY, 0, cols - 1)
 
-      // BOLD and not BRIGHT|BOLD: the program's name is the one label true
-      // wherever you are in it, so it wants weight rather than beam — the full
-      // beam is spent on the correspondent beside it.
+      // BOLD rather than BRIGHT|BOLD: full brightness is reserved for the
+      // correspondent's name beside it.
       label(s, outer, TITLE, { align: 'right', attr: BOLD })
       label(s, outer, INDEX_HINT, { edge: 'bottom', align: 'right' })
       const unread = convs.filter(c => c.unreadCount > 0).length
@@ -216,12 +228,12 @@ export function cmailProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILE
           const preview = (c.lastMessage ?? '').replace(/\s+/g, ' ')
           const head = mark + name + ' '.repeat(GAP)
           const body = preview.slice(0, Math.max(0, listRect.w - head.length - TIME_W - GAP))
-          // The bar is DIM: inverted, the attribute is the FIELD, and full beam
-          // there would be a blazing patch in the middle of the row.
+          // The bar is DIM: on an inverted row the attribute applies to the
+          // background, and full brightness would be a bright patch mid-row.
           s.text(listRect.x, y, (head + body).padEnd(listRect.w), on ? DIM : NORMAL, on ? 1 : 0)
           if (c.unreadCount > 0) s.text(listRect.x, y, mark, BRIGHT, on ? 1 : 0)
-          // The name rides at BRIGHT out of the bar and drops to DIM|BOLD in
-          // it — the same trade select.ts makes.
+          // The name is BRIGHT outside the bar and DIM|BOLD inside it, as in
+          // select.ts.
           s.text(listRect.x + MARK_W, y, name, on ? DIM | BOLD : BRIGHT, on ? 1 : 0)
           const when = whenLabel(c.lastMessageAt).padStart(TIME_W)
           s.text(listRect.x + listRect.w - TIME_W, y, when, DIM, on ? 1 : 0)
@@ -233,17 +245,17 @@ export function cmailProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILE
         s.text(cols - 4 - cells(indexStatus), indexSplitY, ` ${indexStatus} `, BRIGHT)
       }
 
-      // Nothing here is typed into, so the caret has nowhere to be.
+      // Nothing on this screen takes input, so the caret is hidden.
       s.showCursor = false
       paintNow()
     }
 
     const loadIndex = async (): Promise<void> => {
-      // Hold the selection on the conversation, not the row: the sort moves.
+      // Anchor the selection to the conversation id, not the row index: the sort moves.
       const wasOn = convs[cursor]?.conversationId
       try {
-        // Folded on arrival: a name or a preview the grid cannot hold one cell
-        // to the character costs every row after it a column. See plain.ts.
+        // Folded on arrival: a name or preview with wide characters would cost
+        // every row after it a column. See plain.ts.
         convs = (await api.get<Conversation[]>('/v1/cmail')).map(c => ({
           ...c,
           otherUser: { ...c.otherUser, username: plain(c.otherUser.username) },
@@ -260,7 +272,7 @@ export function cmailProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILE
         if (moved >= 0) cursor = moved
       }
       cursor = Math.min(cursor, Math.max(0, convs.length - 1))
-      // The list prints a line at a time, as a room's backlog does — once.
+      // The list is revealed a line at a time, as a room's backlog is, and only once.
       if (opening) reveal.start(Math.min(convs.length, listRect.h))
       drawIndex()
     }
@@ -275,7 +287,7 @@ export function cmailProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILE
     let convId = ''
     let threadOther = ''
     let msgs = new Map<string, Msg>()
-    /** Local-only lines, merged into the log by time. */
+    /** Lines generated locally, merged into the log by timestamp. */
     let system: { text: string; at: number }[] = []
     let scroll = 0
     let lastLines = 0
@@ -291,14 +303,16 @@ export function cmailProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILE
       id: m.id,
       username: m.senderUsername,
       timestamp: m.timestamp,
-      content: bodyOf(m),
+      // A picture the box is about to draw is not also named in the text.
+      content: bodyOf(m, { image: Boolean(pics && m.imageUrl) }),
       action: m.isAction,
       deleted: m.deleted,
       blink: hasStyle(m.style, 'blink'),
+      imageUrl: m.imageUrl,
     })
 
-    // Speech types body only: the clock lives in a rule drawn up front.
-    // An action still counts its head.
+    // A message types out its body only; the clock is drawn in the box rule
+    // beforehand. An action still counts its prefix.
     const dmText = (m: ChatMessage): string => {
       const { head, body } = entryParts(m)
       return m.action ? head + body : body
@@ -312,6 +326,12 @@ export function cmailProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILE
     const print = new Reveal({ onTick: () => drawThread(), onBlip: () => snd.blip(BLIP_HZ) })
     const blink = new Blinker(() => drawThread())
 
+    // The picture scope is taken here and released in the finally. A picture
+    // loads long after the box holding it was drawn, so the thread repaints
+    // when one arrives.
+    const pics = pictures?.()
+    const unwatchPics = pics?.onLoad(() => drawThread())
+
     const say = (text: string, complaint = false): void => {
       system.push({ text: plain(text), at: Date.now() })
       if (system.length > 40) system = system.slice(-40)
@@ -324,9 +344,18 @@ export function cmailProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILE
     const dmInner = (): number => Math.max(1, boxW() - 4)
 
     /**
-     * A rule with the clock set into it, on the side the box is against — so
-     * times run down the outer margin of the conversation rather than through
-     * it. Too narrow for a clock and it is a plain rule instead.
+     * A picture is sized to the turn box rather than the pane, since it is drawn
+     * inside the box and one fitted to the log would be clipped by the box edge.
+     */
+    const picture = (m: ChatMessage): Picture | undefined => {
+      if (!pics || !m.imageUrl) return undefined
+      return pics.get(m.imageUrl, dmInner(), Math.max(1, logRect.h))
+    }
+
+    /**
+     * A box rule with the clock set into it, on the side the box is aligned to,
+     * so timestamps run down the outer margin. Falls back to a plain rule when
+     * the box is too narrow for a clock.
      */
     const dmRule = (kind: 'top' | 'mid' | 'bottom', at: number, mine: boolean): string => {
       const w = boxW()
@@ -340,13 +369,13 @@ export function cmailProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILE
         : l + '─' + clock + '─'.repeat(fill) + r
     }
 
-    /** One entry of a turn: the message, and how much has come off the wire. */
+    /** One entry of a turn: the message and how much of it has been revealed. */
     interface Entry { m: ChatMessage; reveal: number }
 
     /**
-     * The log, grouped rather than mapped: consecutive messages from the same
-     * side are one turn. Anything that is not one side speaking closes the box
-     * it lands in — a container drawn around a run of rows cannot have a hole.
+     * The log grouped into turns: consecutive messages from the same side share
+     * one box. Anything that is not a message from one side closes the current
+     * box, since a box cannot enclose a gap.
      */
     const threadLines = (): LogLine[] => {
       const out: LogLine[] = []
@@ -365,17 +394,29 @@ export function cmailProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILE
             text: pad + dmRule(i === 0 ? 'top' : 'mid', e.m.timestamp ?? 0, mine),
             attr: DIM,
           })
-          // Blink blanks the words; the box keeps its shape and line count.
+          // Blink blanks the text; the box keeps its shape and row count.
           const blank = e.m.blink && !blink.on
           const body = (e.m.content ?? '').slice(0, e.reveal === Infinity ? undefined : e.reveal)
+          const edges = [
+            { at: offset, len: 2, attr: DIM },
+            { at: offset + w - 2, len: 2, attr: DIM },
+          ]
           for (const line of wrapBody(body, inner)) {
             out.push({
               text: pad + '│ ' + (blank ? '' : line).padEnd(inner) + ' │',
               attr: e.m.deleted ? DIM : NORMAL,
-              spans: [
-                { at: offset, len: 2, attr: DIM },
-                { at: offset + w - 2, len: 2, attr: DIM },
-              ],
+              spans: edges,
+            })
+          }
+          // The picture is drawn inside the turn, below the text. DIM rather than
+          // NORMAL: it matches both the exposure the rasteriser used and the
+          // attribute of the box edges.
+          const pic = e.reveal === Infinity ? picture(e.m) : undefined
+          for (const line of pic?.lines ?? []) {
+            out.push({
+              text: pad + '│ ' + line.padEnd(inner) + ' │',
+              attr: DIM,
+              spans: edges,
             })
           }
         })
@@ -391,7 +432,7 @@ export function cmailProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILE
         ...system.map(n => ({ at: n.at, s: n.text })),
       ]
       items.sort((a, b) => a.at - b.at)
-      // The one still typing goes last whatever its clock says.
+      // The message still typing is always last, regardless of its timestamp.
       const head = wire.head
       if (head) items.push({ at: head.timestamp ?? 0, m: head, reveal: wire.typed })
 
@@ -401,7 +442,7 @@ export function cmailProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILE
           out.push(...systemLines(it.s, logRect.w, 2))
           continue
         }
-        // An action has no side: it stands alone, from the margin.
+        // An action has no side; it is drawn alone from the margin.
         if (it.m.action) {
           flush()
           out.push(...entryLines(it.m, logRect.w, { reveal: it.reveal, blinkOn: blink.on }))
@@ -417,14 +458,18 @@ export function cmailProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILE
     }
 
     function drawThread(): void {
-      if (!running || mode !== 'thread' || stack.active) return
+      if (!running) return
+      // Stored here because every consumed key repaints. A field assignment
+      // rather than a serialise.
+      p.setState({ v: STATE_VERSION, draft: input.value })
+      if (mode !== 'thread' || stack.active) return
       blink.sync(wire.blinking)
       s.clear()
       frame(s, outer)
       hline(s, threadSplitY, 0, cols - 1)
 
-      // Budgeted against the program's own name at the other end of the rule:
-      // a long correspondent would otherwise write over it and the corner.
+      // Budgeted against the program name at the other end of the rule, which a
+      // long correspondent name would otherwise overwrite along with the corner.
       label(s, outer, `@${threadOther}`, {
         attr: BRIGHT | BOLD,
         max: cols - 4 - (cells(TITLE) + 2),
@@ -432,7 +477,7 @@ export function cmailProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILE
       label(s, outer, TITLE, { align: 'right', attr: BOLD })
       label(s, outer, THREAD_HINT, { edge: 'bottom', align: 'right' })
 
-      // Arrivals must not drag a scrolled-back view along.
+      // Compensated so an arriving message does not move a scrolled-back view.
       const lines = threadLines()
       if (scroll > 0 && lines.length > lastLines) scroll += lines.length - lastLines
       lastLines = lines.length
@@ -458,21 +503,21 @@ export function cmailProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILE
       if (!primed) {
         primed = true
         wire.prime(list)
-        // The opening screenful prints by the line, oldest first.
+        // The opening screenful is revealed a line at a time, oldest first.
         print.start(Math.min(threadLines().length, logRect.h))
         drawThread()
         return
       }
       const fresh = wire.receive(list)
       if (fresh.length) {
-        // No mention chirp here: every line is addressed to you.
+        // No mention tone here: every message in a thread is addressed to the reader.
         snd.blip(900)
         wire.enqueue(fresh)
       }
       drawThread()
     }
 
-    /** Resolve a name and open its conversation. False means no such member. */
+    /** Resolve a name and open its conversation. Returns false if no such member. */
     const openThread = async (who: string): Promise<boolean> => {
       try {
         const r = await api.post<{ conversationId: string; otherUser: { username: string } }>(
@@ -492,6 +537,8 @@ export function cmailProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILE
       primed = false
       input.clear()
       mode = 'thread'
+      // A reload returns to the thread rather than the mailbox.
+      p.setResume(`cmail @${threadOther}`)
       s.invalidate()
       drawThread()
 
@@ -550,7 +597,7 @@ export function cmailProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILE
       drawThread()
     }
 
-    /** Tab on a `/word`: finish it, or say what it could have been. */
+    /** Tab on a /word: complete it, or list the possibilities. */
     const completeSlash = (): void => {
       const value = input.value
       if (!value.startsWith('/') || /\s/.test(value)) { snd.beep(220, 0.05); return }
@@ -589,14 +636,14 @@ export function cmailProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILE
       }))
     }
 
-    /** Resolve a name from the compose box and narrate the attempt. */
+    /** Resolve a name from the compose box, reporting progress in the status rule. */
     const write = async (who: string): Promise<void> => {
       indexStatus = 'looking up…'
       drawIndex()
       const ok = await openThread(who)
       if (!running) return
       if (!ok) {
-        // One answer for "no such member" and "not somebody you can write to".
+        // One message covers both "no such member" and "cannot be written to".
         indexStatus = `no such member: @${who}`
         snd.beep(220, 0.12)
         drawIndex()
@@ -638,7 +685,7 @@ export function cmailProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILE
     }
 
     const indexKey = (k: KeyInput): void => {
-      // Any key ends the print, then means what it always means.
+      // Any key finishes the reveal and then acts as it normally would.
       reveal.finish()
       if (k.key === 'Escape' || (k.ctrlKey && k.key === 'c')) { askExit(drawIndex); return }
       if (k.ctrlKey && k.key === 'h') { openIndexHelp(); return }
@@ -648,7 +695,7 @@ export function cmailProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILE
         if (next === cursor) snd.beep(220, 0.04)
         else {
           cursor = next
-          // Moving on clears the last complaint.
+          // Moving the selection clears the previous error.
           indexStatus = ''
           snd.tick()
         }
@@ -666,14 +713,16 @@ export function cmailProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILE
     const backToIndex = (): void => {
       leaveThread()
       mode = 'index'
+      p.setResume('cmail')
+      p.setState(null)
       s.invalidate()
       void loadIndex()
     }
 
     const threadKey = (k: KeyInput): void => {
-      // First: the scroll keys measure against the whole log.
+      // Checked first: the scroll keys measure against the whole log.
       print.finish()
-      // Ctrl-C asks; Escape goes back one level and does not.
+      // Ctrl-C asks for confirmation; Escape goes back one level without asking.
       if (k.ctrlKey && k.key === 'c') { askExit(drawThread); return }
       if (k.key === 'Escape') { backToIndex(); return }
       if (k.ctrlKey && k.key === 'h') { openThreadHelp(); return }
@@ -688,7 +737,7 @@ export function cmailProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILE
           return
         }
         if (route && 'help' in route) { openThreadHelp(); return }
-        // The only locals are /quit and /exit.
+        // The only local commands are /quit and /exit.
         if (route && 'local' in route) { running = false; return }
         void send(text)
         drawThread()
@@ -713,14 +762,17 @@ export function cmailProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILE
     // --- run -----------------------------------------------------------------
 
     tty.setRaw()
-    // These answer with a tick of their own; the host must not clack over it.
+    // These play their own tick, so the host suppresses the key click.
     tty.silence(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown'])
     p.out('\x1b[?1049h')
     s.invalidate()
 
     try {
+      const parked = readState(p.takeState())
+      p.setResume('cmail')
+
       const wanted = p.argv[1]?.replace(/^@/, '')
-      // A name that fails still lands in the mailbox, with the complaint.
+      // A name that fails to resolve still opens the mailbox, with the error shown.
       if (!wanted || !await openThread(wanted)) {
         if (wanted) {
           indexStatus = `no such member: @${wanted}`
@@ -728,6 +780,9 @@ export function cmailProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILE
         }
         drawIndex()
         await loadIndex()
+      } else if (parked?.draft) {
+        input.set(parked.draft)
+        drawThread()
       }
 
       while (running) {
@@ -745,6 +800,8 @@ export function cmailProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILE
       running = false
       reveal.stop()
       wire.close()
+      unwatchPics?.()
+      pics?.release()
       leaveThread()
       p.out('\x1b[?1049l\x1b[?25h')
       tty.setCooked()

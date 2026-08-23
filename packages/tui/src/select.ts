@@ -1,12 +1,10 @@
-// A centred modal list — pick one thing, or dismiss.
+// A centred modal list: choose one item, or dismiss.
 //
-// It is a Screen, so pushing it onto the stack snapshots the grid underneath
-// and hands it back on pop: the program behind it does not have to know it was
-// covered, and does not have to redraw to recover.
+// A Screen, so pushing it snapshots the grid beneath and restores it on pop.
+// The program behind is not notified and does not redraw.
 //
-// Selection is drawn with the grid's inverse-video bit rather than a marker
-// character, which is what a real TUI does and costs nothing — term.ts has
-// carried the `inverse` array since the beginning for exactly this.
+// Selection uses the grid's inverse-video plane rather than a marker character.
+// term.ts has carried the inverse array from the start, so this costs nothing.
 
 import { NORMAL, BRIGHT, DIM, BOLD } from './attrs.js'
 import type { Grid } from './surface.js'
@@ -19,82 +17,75 @@ export interface SelectOptions {
   items: string[]
   /** Index to open on. Clamped. */
   selected?: number
-  /** Chosen item, or null if dismissed. The caller is responsible for popping. */
+  /** Chosen item, or null if dismissed. The caller pops the screen. */
   onDone: (item: string | null, index: number) => void
   /**
-   * Hook for sounds the widget itself has an opinion about; it makes none of
-   * its own. Not the keyclick — that is played once for every key, wherever
-   * the page hands keys to the terminal, so a widget adding another would
-   * double it. What is left is `edge`: nowhere to go, which is a complaint,
-   * and only the widget knows it happened.
+   * Sounds the widget requests; it produces none itself. Not the key click,
+   * which the host already plays for every key, so a second would double it.
+   * `edge` is reported because only the widget knows a movement was refused.
    */
   onFeedback?: (
     kind: 'move' | 'choose' | 'cancel' | 'edge' | 'inert',
     e: KeyInput
   ) => void
   /**
-   * The caller answers Enter with a sound of its own, so the keyclick would be
-   * a second sound for one keypress.
+   * The caller plays its own sound for Enter, so the key click is suppressed.
    *
-   * Opt-in rather than assumed, because choosing does not always DO anything:
-   * cIRC's room switcher is silent when you pick the room you were already in,
-   * and a mute there would be a key that simply stopped responding.
+   * Opt-in rather than assumed, because choosing does not always act: circ's
+   * room switcher is silent when the current room is chosen, where suppressing
+   * the click would make the key appear unresponsive.
    */
   silentChoose?: boolean
   /**
-   * One bare key per row that picks it outright, parallel to `items`.
+   * One bare key per row that selects it directly, parallel to `items`.
    *
-   * For a list short enough to number, where the arrows are the slow way round.
-   * Compared case-insensitively and only for a key with no modifier on it, so
-   * it can never take a combo the popup already hands back to the browser. A
-   * shorter array simply leaves the remaining rows arrow-only.
+   * For a list short enough to number, where arrows are slower. Matched
+   * case-insensitively and only without modifiers, so it cannot take a
+   * combination the popup passes to the browser. A shorter array leaves the
+   * remaining rows arrow-only.
    */
   keys?: string[]
-  /** Shown in the bottom rule. Spans so a key can wear its cap, as the footer does. */
+  /** Shown in the bottom rule. Spans, so a key can be drawn as a cap. */
   hint?: string | Span[]
   /**
    * Region to centre within. Defaults to the whole grid. A program with its own
-   * furniture — a chat with an input line at the bottom — passes the area it is
-   * willing to have covered, so the modal does not sit on top of it.
+   * chrome, such as a chat screen with an input line, passes the area it is
+   * willing to have covered.
    */
   bounds?: Rect
   /**
-   * Rows to take off the top after sizing, leaving the bottom edge where the
-   * centring put it — so the box is that much shorter and sits that much
-   * lower. `bounds` cannot do this: the height comes from the item count, not
-   * from the region, so a smaller region moves the box without resizing it.
+   * Rows to remove from the top after sizing, leaving the bottom edge where
+   * centring placed it, so the box is shorter and sits lower. `bounds` cannot
+   * do this: the height comes from the item count rather than the region, so a
+   * smaller region moves the box without resizing it.
    */
   trimTop?: number
   /**
    * Re-attribute part of a row after it has been drawn.
    *
-   * A row lands as ONE padded string at ONE attribute, which is right for a list
-   * of names and wrong the moment a row carries a second fact beside the name —
-   * a count, a marker — that should not read as loudly as the name does. This is
-   * the hook for those columns, and it is exactly what `cmail`'s index does by
-   * hand for its unread mark and its clock.
+   * A row is drawn as one padded string at one attribute, which suits a list of
+   * names but not a row carrying a second column such as a count or a marker
+   * that should read less prominently. cmail's index uses this for its unread
+   * mark and clock.
    *
-   * `row` is where the ITEM was drawn, one cell high — PAD already taken off
-   * the front, so column 0 of it is character 0 of the string the caller handed
-   * over and the caller never has to know this widget indents anything.
-   * `selected` is the row's inversion: anything drawn over an inverted row must
-   * carry it too, or a re-attributed run punches a hole in the selection bar.
+   * `row` is where the item was drawn, one cell high, with PAD already removed,
+   * so its column 0 is character 0 of the caller's string. `selected` is the
+   * row's inversion, which anything drawn over an inverted row must also carry
+   * or it leaves a gap in the selection bar.
    */
   decorate?: (term: Grid, row: Rect, index: number, selected: boolean) => void
   /**
-   * Lay a drop-shadow under the box — see `shadow` in box.ts. Off by default,
-   * because it EATS the cells it falls on: over a program still readable
-   * underneath it is what says this box is in front, and over one that is not
-   * it is a smudge. The caller knows which it has.
+   * Draw a drop shadow under the box. See shadow() in box.ts. Off by default,
+   * because it overwrites the cells it falls on: that reads as depth over a
+   * program still legible beneath, and as noise otherwise.
    */
   shadow?: boolean
   /**
-   * Draw the top screen again and flush it to the terminal.
+   * Redraw the top screen and flush it to the terminal.
    *
-   * Only the chosen-row flash needs this, and it is what turns the flash on:
-   * a key repaints through the stack, but a clock does not, so a caller that
-   * cannot paint between keystrokes gets the box closing the moment Enter is
-   * pressed rather than a bar strobing at a screen nobody is updating.
+   * Required only by the selected-row flash, which it enables: the stack
+   * repaints on a key but not on a timer, so without this the box closes
+   * immediately on Enter rather than flashing.
    */
   onRepaint?: () => void
 }
@@ -104,20 +95,18 @@ const MIN_W = 18
 const PAD = 2
 
 /**
- * The chosen row lights up before the box goes.
+ * The chosen row flashes before the box closes.
  *
- * A modal that vanishes on the keypress leaves nothing to say WHICH row went
- * with it — the eye is on the bar, the bar is gone, and the only evidence is
- * whatever happened underneath. Three pulses is long enough to register as the
- * row being taken and short enough that nobody waits for it.
+ * A modal that disappears on the keypress leaves no indication of which row was
+ * taken. Three pulses is long enough to register and short enough not to delay.
  */
 const FLASH_MS = 55
-/** Odd, and lit on the odd ones: the bar is lit when the box closes over it. */
+/** Odd, and lit on odd phases, so the bar is lit when the box closes. */
 const FLASH_PHASES = 5
 
 export class SelectPopup implements Screen {
   private index: number
-  /** Flash phases left. 0 when the box is not closing. */
+  /** Flash phases remaining. 0 when the box is not closing. */
   private phase = 0
   private timer: ReturnType<typeof setInterval> | null = null
 
@@ -126,29 +115,29 @@ export class SelectPopup implements Screen {
   }
 
   /**
-   * The two keys that always come back as onFeedback('move') or ('edge'), so
-   * the row moving is the sound and the keyclick would only double it. Ties
-   * the silence to onFeedback: a caller that makes no noise for those kinds
-   * gets an arrow that makes none either.
+   * The two keys that always report onFeedback('move') or ('edge'), so the
+   * movement is the sound and the key click would double it. Tied to
+   * onFeedback, so a caller that plays nothing for those kinds gets a silent
+   * arrow.
    *
-   * The modifier checks mirror onKey's — a combo it hands back to the browser
-   * is not a key it answers.
+   * The modifier checks mirror onKey's: a combination passed to the browser is
+   * not a key this handles.
    */
   silentKey(e: KeyInput): boolean {
-    // Already going. Nothing answers, so nothing sounds.
+    // Already closing. Nothing is handled, so nothing sounds.
     if (this.phase) return true
     if (e.metaKey || e.altKey || e.ctrlKey) return false
     if (e.key === 'Enter') return this.opts.silentChoose === true
-    // A row's own key is a choose by another name, so it answers the same way.
+    // A row's own key selects, so it sounds as Enter does.
     if (this.opts.silentChoose && e.key.length === 1
         && this.opts.keys?.some(k => k.toLowerCase() === e.key.toLowerCase())) return true
     return e.key === 'ArrowUp' || e.key === 'ArrowDown'
   }
 
   onKey(e: KeyInput): boolean {
-    // The answer is in; the box is on its way out. Keys are swallowed rather
-    // than passed on — a second Enter through here would choose twice, and an
-    // arrow falling through to the browser scrolls the page under the modal.
+    // The choice is made and the box is closing. Keys are swallowed rather than
+    // passed on: a second Enter would choose twice, and an arrow reaching the
+    // browser scrolls the page beneath the modal.
     if (this.phase) return true
     if (e.metaKey || e.altKey) return false
 
@@ -162,22 +151,21 @@ export class SelectPopup implements Screen {
 
     if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
       const count = this.opts.items.length
-      // Nothing to move through. Still consumed — see the arrow note below.
+      // Nothing to move through. Still consumed; see the arrow note below.
       if (!count) {
         this.opts.onFeedback?.('edge', e)
         return true
       }
-      // Wraps around the ends: the list is a ring, so one arrow held down
-      // reaches everything and neither end is a dead stop.
+      // Wraps at both ends, so holding one arrow reaches every item.
       const delta = e.key === 'ArrowUp' ? -1 : 1
       this.index = (this.index + delta + count) % count
       this.opts.onFeedback?.('move', e)
       return true
     }
 
-    // A single column has nowhere to go sideways, but the key must still be
-    // swallowed: unconsumed it falls through to the browser, which scrolls the
-    // page under the modal. Acknowledged with a click, no movement.
+    // A single column has no sideways movement, but the key must still be
+    // swallowed or it reaches the browser and scrolls the page beneath the
+    // modal. Acknowledged with a click and no movement.
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       this.opts.onFeedback?.('inert', e)
       return true
@@ -191,9 +179,9 @@ export class SelectPopup implements Screen {
       return true
     }
 
-    // A row's own key. Last, so it can never shadow a key the list already
-    // answers, and it MOVES the selection before choosing — the row lights up
-    // as it is taken, which is what says which one the key meant.
+    // A row's own key, checked last so it cannot shadow a key the list already
+    // handles. It moves the selection before choosing, so the row flashes as it
+    // is taken and identifies which one the key selected.
     if (this.opts.keys && e.key.length === 1) {
       const i = this.opts.keys.findIndex(k => k.toLowerCase() === e.key.toLowerCase())
       const item = i >= 0 ? this.opts.items[i] : undefined
@@ -209,11 +197,11 @@ export class SelectPopup implements Screen {
   }
 
   /**
-   * Take the row: flash it, then hand it over.
+   * Select the row: flash it, then resolve.
    *
-   * The stack repaints for the key that got here, which is the first lit phase;
-   * from there the clock owns the box. Without somewhere to paint there is no
-   * flash to run, so the answer goes straight out.
+   * The stack repaints for the key that reached here, which is the first lit
+   * phase; the timer drives the rest. Without a grid to paint on there is no
+   * flash, and the result resolves immediately.
    */
   private choose(item: string, index: number) {
     if (!this.opts.onRepaint) {
@@ -227,7 +215,7 @@ export class SelectPopup implements Screen {
         this.opts.onRepaint?.()
         return
       }
-      // Stopped first: onDone pops, and pop disposes this.
+      // Stopped first, because onDone pops and pop disposes this.
       this.stop()
       this.opts.onDone(item, index)
     }, FLASH_MS)
@@ -239,7 +227,7 @@ export class SelectPopup implements Screen {
     this.phase = 0
   }
 
-  /** Popped mid-flash — a program tearing down. Kill the clock. */
+  /** Popped mid-flash, as when a program tears down. Stops the timer. */
   dispose() {
     this.stop()
   }
@@ -257,12 +245,11 @@ export class SelectPopup implements Screen {
       Math.max(MIN_W, b.w - 4),
       Math.max(MIN_W, widest + PAD * 2 + 2, this.opts.title.length + 6, hintW + 6)
     )
-    // Never taller than the region it was given: the whole point of bounds is
-    // that the caller keeps the rows it did not offer.
+    // Never taller than the given region, so the caller keeps the rows it did
+    // not offer.
     const h = Math.min(Math.max(3, b.h - 2), this.opts.items.length + 2)
-    // Taken off the top with the bottom edge left where it was, so the box
-    // shortens and descends by the same amount. Never below a frame with one
-    // row in it.
+    // Removed from the top with the bottom edge unchanged, so the box shortens
+    // and descends by the same amount. Never smaller than a frame with one row.
     const trim = Math.min(Math.max(0, this.opts.trimTop ?? 0), Math.max(0, h - 3))
 
     return {
@@ -276,10 +263,10 @@ export class SelectPopup implements Screen {
   draw(term: Grid) {
     const r = this.rect(term)
 
-    // Blank the whole box, borders included, BEFORE framing it: box drawing
-    // merges line bits with what is already in the cell, so a border laid over
-    // the program's own rule underneath would fuse with it into a tee rather
-    // than covering it. See the same note in text.ts.
+    // Clear the whole box, borders included, before framing it: box drawing
+    // merges line bits with the existing cell, so a border over the program's
+    // own rule would merge into a tee rather than covering it. Same note in
+    // text.ts.
     clear(term, r)
     if (this.opts.shadow) shadow(term, r, this.opts.bounds)
     const inner = frame(term, r)
@@ -295,31 +282,28 @@ export class SelectPopup implements Screen {
       this.opts.items.length - inner.h
     ))
 
-    // The flash is BRIGHT on the odd phases — a slab of lit phosphor, which is
-    // exactly what the resting bar is drawn DIM to avoid being. For a fifth of
-    // a second on the row that was just taken, that is the point.
+    // BRIGHT on the odd phases, which the resting bar is drawn DIM to avoid.
+    // Intended here, for a fifth of a second on the row just taken.
     const lit = this.phase % 2 === 1
 
     for (let i = 0; i < inner.h; i++) {
       const item = this.opts.items[first + i]
       if (item === undefined) break
       const on = first + i === this.index
-      // Pad the whole row so the highlight is a bar, not a ragged word.
+      // Pad the whole row so the highlight is a bar rather than a ragged word.
       const text = ' '.repeat(PAD) + item.padEnd(inner.w - PAD)
       // DIM inverse with BOLD text on the selected row. On an inverse cell the
-      // attr is the FIELD, so BRIGHT made the selection a slab of lit phosphor
-      // with the words cut out of it — the brightest thing on the tube, for a
-      // row whose job is only to say where you are. Taking the field down and
-      // thickening the letters says the same thing without shouting it.
+      // attribute applies to the background, so BRIGHT would make the selection
+      // the brightest element on screen. DIM with bold text marks the row
+      // without that.
       const attr = on ? (lit ? BRIGHT : DIM) | BOLD : NORMAL
       term.text(inner.x, inner.y + i, text.slice(0, inner.w), attr, on ? 1 : 0)
-      // After the row, never instead of it: the string is what lays the bar
-      // down, and this only goes back over columns of it. Handed the item's own
-      // rect rather than the row's — see `decorate`.
+      // Applied after the row rather than instead of it: the padded string
+      // draws the bar and this re-attributes columns of it. Passed the item's
+      // own rect rather than the row's; see `decorate`.
       //
-      // Not while the chosen row is flashing: a column re-attributed to its own
-      // level is a hole in the bar the moment the bar changes level, and the
-      // flash wants one solid strobe rather than a row of parts pulsing apart.
+      // Skipped while the chosen row is flashing, where a column held at its own
+      // level would leave a gap in the bar as the bar changes level.
       if (!(on && this.phase)) this.opts.decorate?.(
         term,
         { x: inner.x + PAD, y: inner.y + i, w: inner.w - PAD, h: 1 },
@@ -328,13 +312,12 @@ export class SelectPopup implements Screen {
       )
     }
 
-    // Last, over everything the box just drew. See `ground` in box.ts.
+    // Applied last, over everything the box drew. See ground() in box.ts.
     ground(term, r)
 
-    // Nothing to type into, so there should be no caret at all. Parking it on
-    // the frame does not hide it — the cursor stamp inverts whatever cell it
-    // lands on, so it shows up as a blinking corner. The stack restores
-    // showCursor on pop.
+    // Nothing here takes input, so the caret is hidden rather than parked on
+    // the frame, where the cursor would invert that cell and blink. The stack
+    // restores showCursor on pop.
     term.showCursor = false
     term.dirty = true
   }

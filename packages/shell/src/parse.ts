@@ -31,7 +31,7 @@ export interface Pipeline {
   cmds: Cmd[]
 }
 
-/** op is the connective BEFORE the pipeline; first is always ';'. */
+/** op is the connective preceding the pipeline; the first is always ';'. */
 export interface List {
   items: { op: ';' | '&&' | '||'; pipeline: Pipeline }[]
 }

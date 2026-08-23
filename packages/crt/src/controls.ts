@@ -1,11 +1,11 @@
-// The knobs the tube has, grouped the way CONFIG lists them.
+// The CRT's tunable uniforms, grouped as CONFIG lists them.
 //
-// Ranges bracket the default with room either side. They are not physically
-// meaningful — several of these look best well past plausible.
+// Ranges bracket each default with room either side. They are not physically
+// meaningful; several of these are best set well past plausible values.
 //
-// Data, next to the shader rather than next to the box that draws it: how far a
-// uniform can sensibly go is knowledge about the tube, and the widget reading it
-// is one of several that could.
+// Kept beside the shader rather than the widget that draws them, since the
+// usable range of a uniform is a property of the display and more than one
+// widget could read it.
 
 import type { Knob, KnobGroup } from '@cyberspace/tui'
 

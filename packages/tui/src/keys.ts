@@ -1,12 +1,12 @@
-// stdin bytes -> key events, shaped like the DOM events TextBuffer grew up on.
+// Decodes stdin bytes into key events shaped like the DOM events TextBuffer expects.
 
 export interface KeyInput {
-  /** A single character, or a DOM-style name (Enter, ArrowUp, ...). */
+  /** A single character, or a DOM-style name such as Enter or ArrowUp. */
   key: string
   ctrlKey: boolean
   metaKey: boolean
   altKey: boolean
-  /** From a CSI modifier parameter: xterm reports Shift+Arrow as `1;2A`. */
+  /** From a CSI modifier parameter; xterm reports Shift+Arrow as `1;2A`. */
   shiftKey: boolean
 }
 
@@ -33,7 +33,7 @@ function modifiers(params: string): { shift: boolean; ctrl: boolean } {
   return { shift: (n & 1) !== 0, ctrl: (n & 4) !== 0 }
 }
 
-/** Decode one chunk. Escape sequences never split across reads in practice. */
+/** Decode one chunk. Assumes escape sequences do not split across reads. */
 export function parseKeys(text: string): KeyInput[] {
   const out: KeyInput[] = []
   let i = 0
@@ -43,15 +43,15 @@ export function parseKeys(text: string): KeyInput[] {
       const m = /^\x1b\[([0-9;]*)([A-Za-z~])/.exec(text.slice(i))
       if (m) {
         const mod = modifiers(m[1])
-        // CSI u: `104;5u` is Ctrl+h — the codepoint is the first parameter.
+        // CSI u: `104;5u` is Ctrl+h, with the code point as the first parameter.
         if (m[2] === 'u') {
           const code = Number(m[1].split(';')[0])
           if (code > 0) out.push(plain(String.fromCharCode(code), mod.ctrl, mod.shift))
           i += m[0].length
           continue
         }
-        // A modified key carries its parameters: `1;2A` is Shift+Up. The table
-        // is keyed by the bare form, so the first parameter is dropped.
+        // A modified key carries parameters: `1;2A` is Shift+Up. The table is
+        // keyed by the bare form, so the first parameter is dropped.
         const bare = (m[1].includes(';') ? '' : m[1]) + m[2]
         const name = CSI[bare] ?? CSI[m[2]]
         if (name) out.push(plain(name, mod.ctrl, mod.shift))

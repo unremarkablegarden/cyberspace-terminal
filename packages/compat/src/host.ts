@@ -1,10 +1,10 @@
-// Runs a program written for the original /terminal: export default
+// Runs a program written for the original /terminal: a default export of
 // { name, description, run(ctx, args) } against a virtual cell grid.
 //
-// Two modes, switched by the screen stack. Line mode maps ctx.write/type to
-// SGR text on the pty. The first pushScreen enters the alternate screen and
-// the grid becomes real: a ticker diffs it to ANSI every frame. popScreen to
-// an empty stack returns to line mode.
+// Two modes, selected by the screen stack. In line mode ctx.write and ctx.type
+// map to SGR text on the pty. The first pushScreen enters the alternate screen,
+// after which a ticker diffs the cell grid to ANSI every frame. popScreen to an
+// empty stack returns to line mode.
 
 import { dec, type Proc, type Program } from '@cyberspace/kernel'
 import { Surface, parseKeys } from '@cyberspace/tui'
@@ -15,9 +15,8 @@ import {
   frame, label, hline, vline, clear, shadow, ground, inside, cells,
 } from '@cyberspace/tui'
 
-// What a compat program's ctx.tui has always been: the box helpers, nothing
-// else. The module they come from now carries widgets too, which are not on
-// offer here.
+// ctx.tui exposes the box helpers only. The module they come from also holds
+// widgets, which are not offered to compat programs.
 const box = { frame, label, hline, vline, clear, shadow, ground, inside, cells }
 import { DotCanvas, drawEdges, teapot } from './vector.js'
 import { roll } from './roll.js'
@@ -30,7 +29,7 @@ interface UserProgram {
   run(ctx: unknown, args: string[]): void | Promise<void>
 }
 
-/** Import one file's worth of source as a real ES module. */
+/** Import a string of source as an ES module. */
 async function importSource(source: string): Promise<UserProgram | null> {
   const url = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }))
   try {
@@ -44,7 +43,7 @@ async function importSource(source: string): Promise<UserProgram | null> {
   }
 }
 
-/** Where in the author's own file a stack points, or null. */
+/** The position in the author's own source that a stack trace points at, or null. */
 function whereInSource(stack: string | undefined): string | null {
   if (!stack) return null
   const hit = stack.match(/blob:[^\s)]*?:(\d+):(\d+)/)
@@ -100,6 +99,23 @@ export function runGridProgram(deps: CompatDeps): (p: Proc, source: string) => P
     const cols = p.tty?.cols ?? (Number(p.env.COLUMNS) || 80)
     const rows = p.tty?.rows ?? (Number(p.env.LINES) || 25)
 
+    // Checked before running. The import below evaluates a real ES module in
+    // this page, so this check is the boundary; see guard.ts. Loaded on demand
+    // because the parser is ~130 KB and only a program run needs it.
+    try {
+      const { inspect, refusalLines } = await import('./guard.js')
+      const hits = inspect(source)
+      if (hits.length) {
+        for (const line of refusalLines(p.argv[0] ?? '?', hits)) p.err(line.text + '\n')
+        return 1
+      }
+    } catch (e) {
+      // A SyntaxError is treated as the program's. Source the guard cannot parse
+      // but the engine can would be a bypass, so it is refused.
+      p.err(`${p.argv[0]}: ${(e as Error)?.message ?? e}\n`)
+      return 1
+    }
+
     let program: UserProgram | null
     try {
       program = await importSource(source)
@@ -126,7 +142,7 @@ export function runGridProgram(deps: CompatDeps): (p: Proc, source: string) => P
       for (let i = 0; i < cols * rows; i++) {
         const code = grid.chars[i]
         surface.chars[i] = code === 0 ? ' ' : String.fromCodePoint(code || 32)
-        // Same attribute byte either side; the Surface is the grid's own model.
+        // The same attribute byte on both sides: the Surface mirrors the cell grid.
         surface.attrs[i] = grid.attrs[i]
         surface.inv[i] = grid.inverse[i]
       }
@@ -186,7 +202,7 @@ export function runGridProgram(deps: CompatDeps): (p: Proc, source: string) => P
 
     const snd = deps.snd ?? SILENT_SND
 
-    // The API capability: /v1/ paths only, dead when the host provides none.
+    // API capability: /v1/ paths only, and inert when the host supplies no client.
     const apiPath = (path: unknown): string => {
       if (typeof path !== 'string' || !path.startsWith('/v1/')) {
         throw new Error('api: path must start with /v1/')
@@ -285,7 +301,7 @@ export function runGridProgram(deps: CompatDeps): (p: Proc, source: string) => P
       shutdown: () => {},
     }
 
-    // Keys: ^C aborts from anywhere; everything else goes to the top screen.
+    // ^C aborts from anywhere; every other key goes to the top screen.
     p.tty?.setRaw()
     let pumping = true
     const pump = (async () => {
@@ -326,7 +342,7 @@ export function runGridProgram(deps: CompatDeps): (p: Proc, source: string) => P
   }
 }
 
-/** Kernel file handler: old-style JS programs, recognised by their export. */
+/** Kernel file handler for old-style JS programs, recognised by their default export. */
 export function compatFileHandler(deps: CompatDeps): (path: string, data: Uint8Array) => Program | null {
   const run = runGridProgram(deps)
   return (_path, data) => {

@@ -1,13 +1,12 @@
 // A centred modal that asks one question and takes one answer.
 //
-// The smallest member of the popup family — SelectPopup with the list taken
-// away, which is the whole point: there is nothing to move through, so nothing
-// to land on by accident. The answer is a letter, deliberately not Enter: a
-// reader who has just pressed Escape or Ctrl-C is already on their way out, and
-// a box that took the next keystroke as yes would not be asking anything.
+// SelectPopup without the list, so there is nothing to move through and nothing
+// to select by accident. The answer is a letter rather than Enter, because a
+// reader who has just pressed Escape or Ctrl-C is already leaving and a box
+// that read the next keystroke as yes would not be asking anything.
 //
-// It is a Screen, so the grid underneath is snapshotted on push and handed back
-// on pop — the program behind it neither knows nor redraws.
+// A Screen, so the grid beneath is snapshotted on push and restored on pop; the
+// program behind is not notified and does not redraw.
 
 import { NORMAL, BRIGHT, BOLD } from './attrs.js'
 import type { Grid } from './surface.js'
@@ -17,68 +16,54 @@ import { cells, clear, frame, ground, label, shadow, type Rect, type Span } from
 
 export interface ConfirmOptions {
   title: string
-  /** The question. One entry per line — this does not reflow. */
+  /** The question, one entry per line. This does not reflow. */
   lines: string[]
-  /**
-   * The answer. Called once, and the caller pops — as everywhere else here,
-   * because only the caller knows what to draw underneath afterwards.
-   */
+  /** The answer. Called once; the caller pops, since only it knows what to draw next. */
   onDone: (yes: boolean) => void
   /**
-   * As SelectPopup: the widget makes no sound of its own. Both answers are
-   * declared silent for the keyclick, so a caller that voices neither gets a
-   * box that answers in silence.
+   * As SelectPopup: the widget produces no sound itself. Both answers suppress
+   * the key click, so a caller that plays no sound for either gets a silent box.
    */
   onFeedback?: (kind: 'confirm' | 'cancel' | 'inert', e: KeyInput) => void
-  /** Shown in the bottom rule. Plain text — a modal's hint is a caption. */
+  /** Shown in the bottom rule, as plain text. */
   hint?: string | Span[]
   /** Region to centre within. Defaults to the whole grid. */
   bounds?: Rect
   /**
-   * Lay a drop-shadow under the box — see `shadow` in box.ts. Off by default,
-   * because it EATS the cells it falls on. The caller knows what is underneath.
+   * Draw a drop shadow under the box. See shadow() in box.ts. Off by default,
+   * because it overwrites the cells it falls on.
    */
   shadow?: boolean
   /**
-   * Light the box's own cells instead of leaving them black — see `ground` in
-   * box.ts. On by default, as it is in every popup here.
+   * Light the box's cells rather than leaving them black. See ground() in
+   * box.ts. On by default, as in every popup here.
    *
-   * The escape hatch exists for a box over a photograph, where a lit field
-   * behind the text and an unlit picture beside it read as two screens; nothing
-   * passes false today.
+   * Can be disabled for a box over an image, where a lit background beside an
+   * unlit picture reads as two separate screens. Nothing passes false today.
    */
   panel?: boolean
 }
 
-/**
- * The two answers, as a hint.
- *
- * Shared rather than written out at each call site: a box that asks Y or N is
- * asking the same question wherever it is, and four copies of this is four
- * chances for one of them to say it differently.
- */
+/** The two answers, as a hint. Shared so every call site words it identically. */
 export const YES_NO: Span[] = [{ text: 'Y/N' }]
 
 const MIN_W = 18
 /**
  * Blank columns either side of the longest line.
  *
- * Wider than SelectPopup's 2, and the difference is what the two boxes are.
- * A list is a column of rows you move a bar through, so its padding is the
- * margin the bar starts at and more of it is wasted width. This box holds one
- * sentence and asks you to stop and read it — the space around it is what says
- * so, and at 2 the words sat against the frame like a row of a list that had
- * lost its neighbours.
+ * Wider than SelectPopup's 2. In a list the padding is the margin the selection
+ * bar starts at, and extra is wasted width. This box holds one sentence, where
+ * the surrounding space separates it from the frame; at 2 the text sat against
+ * the border.
  */
 const PAD = 4
 
 /**
- * Blank ROWS above and below the question. There were none.
+ * Blank rows above and below the question.
  *
- * The height was `lines.length + 2`, which is the two border rows and nothing
- * else — so `Quit cIRC?` was drawn hard against the title rule above it and the
- * `Y/N` rule below it, in a box three rows tall. A question wedged between two
- * labelled rules reads as a third label rather than as the thing being asked.
+ * Previously zero: the height was lines.length + 2, the two border rows only,
+ * so a one-line question sat directly against the title rule above and the Y/N
+ * rule below, in a box three rows tall, and read as a third label.
  */
 const PAD_Y = 1
 
@@ -88,10 +73,9 @@ export class ConfirmPopup implements Screen {
   constructor(private opts: ConfirmOptions) {}
 
   /**
-   * Both answers close the box, which is an event the caller voices — the
-   * keyclick on top of that is two sounds for one keypress. Everything else is
-   * not an answer and keeps its click, which is what says the key was heard and
-   * was not one of the two.
+   * Both answers close the box, which the caller sounds, so the key click would
+   * be a second sound. Every other key keeps its click, indicating it was
+   * received but was not an answer.
    */
   silentKey(e: KeyInput): boolean {
     if (e.metaKey || e.altKey) return false
@@ -103,10 +87,9 @@ export class ConfirmPopup implements Screen {
     if (this.answered) return false
     if (e.metaKey || e.altKey) return false
 
-    // Escape and Ctrl-C are no, as they are in every other box here. Worth
-    // saying out loud for a quit dialog, where Ctrl-C is also what opened it:
-    // the second one cancels rather than confirming, because a key that means
-    // "get me out of this" cannot also mean "yes, do the thing".
+    // Escape and Ctrl-C answer no, as in every other box here. This matters for
+    // a quit dialog, where Ctrl-C also opened the box: the second press cancels
+    // rather than confirming.
     if (e.key === 'Escape' || (e.ctrlKey && (e.key === 'c' || e.key === 'C'))) {
       this.finish(false, e)
       return true
@@ -122,9 +105,9 @@ export class ConfirmPopup implements Screen {
       return true
     }
 
-    // Anything else is not an answer. Consumed rather than passed on — a key
-    // that fell through would act on a screen the reader cannot see, and an
-    // unconsumed arrow scrolls the page under the modal.
+    // Anything else is not an answer. Consumed rather than passed on: a key
+    // falling through would act on the hidden screen beneath, and an unconsumed
+    // arrow scrolls the host page.
     this.opts.onFeedback?.('inert', e)
     return true
   }
@@ -148,9 +131,8 @@ export class ConfirmPopup implements Screen {
       Math.max(MIN_W, b.w - 4),
       Math.max(MIN_W, widest + PAD * 2 + 2, cells(this.opts.title) + 6, hintW + 6),
     )
-    // Never taller than the region it was given, and never shorter than a frame
-    // with one row in it — the clamp is what keeps a long question inside a
-    // short pane rather than growing past the bottom of it.
+    // Never taller than the given region and never shorter than a frame with one
+    // row, so a long question stays inside a short pane.
     const h = Math.min(Math.max(3, b.h - 2), this.opts.lines.length + 2 + PAD_Y * 2)
 
     return {
@@ -164,32 +146,29 @@ export class ConfirmPopup implements Screen {
   draw(term: Grid) {
     const r = this.rect(term)
 
-    // Blank the whole box, borders included, BEFORE framing it: box drawing
-    // merges line bits with what is already in the cell, so a border laid over
-    // the program's own rule underneath would fuse with it into a tee rather
-    // than covering it. Same note as text.ts.
+    // Clear the whole box, borders included, before framing it: box drawing
+    // merges line bits with the existing cell, so a border over the program's
+    // own rule would merge into a tee rather than covering it. Same note as
+    // text.ts.
     clear(term, r)
-    // The shadow stays OUTSIDE the box, so `ground` below never reaches it —
-    // which is what keeps the two readable together. It is drawn at FAINT
-    // (100), three times the panel's level, so a lit box still casts a darker
-    // edge rather than dissolving into it.
+    // The shadow falls outside the box, so ground() below never reaches it. It
+    // is drawn at FAINT (100), three times the panel's level, so a lit box still
+    // casts a darker edge rather than merging into it.
     if (this.opts.shadow) shadow(term, r, this.opts.bounds)
     const inner = frame(term, r)
 
     label(term, r, this.opts.title, { attr: BRIGHT | BOLD })
     if (this.opts.hint) label(term, r, this.opts.hint, { edge: 'bottom', align: 'right' })
 
-    // **Padding yields to the words when the box is clamped.** `rect` asks for
-    // `widest + PAD * 2`, and gets it on any screen with the room — but a 44
-    // column phone clamps the width to the pane, and spending four columns a
-    // side there would cut six characters off every line of a sentence that
-    // already only just fits. So the pad is whatever is actually spare, down to
-    // one: a narrow box loses its margins before it loses its text.
+    // Padding gives way to the text when the box is clamped. rect() requests
+    // widest + PAD * 2 and gets it where there is room, but at 44 columns the
+    // width is clamped to the pane and four columns a side would remove six
+    // characters from every line. The pad is therefore whatever is spare, down
+    // to one, so a narrow box loses its margins before its text.
     const widest = this.opts.lines.reduce((n, s) => Math.max(n, cells(s)), 0)
     const pad = Math.max(1, Math.min(PAD, Math.floor((inner.w - widest) / 2)))
-    // Same trade vertically. Two blank rows are worth having and are worth less
-    // than the last line of the question, so a box clamped shorter than its
-    // content gives them up first.
+    // The same vertically: a box clamped shorter than its content drops the
+    // blank rows before dropping a line of the question.
     const padY = this.opts.lines.length + PAD_Y * 2 <= inner.h ? PAD_Y : 0
 
     for (let i = 0; i < Math.max(0, inner.h - padY); i++) {
@@ -201,11 +180,11 @@ export class ConfirmPopup implements Screen {
       )
     }
 
-    // Last, over everything the box just drew. See `ground`.
+    // Applied last, over everything the box drew. See ground().
     if (this.opts.panel !== false) ground(term, r)
 
-    // Nothing to type into, so no caret — the stamp would invert a cell of the
-    // frame and read as a blinking corner. The stack restores this on pop.
+    // Nothing here takes input, so the caret is hidden; it would otherwise
+    // invert a cell of the frame. The stack restores it on pop.
     term.showCursor = false
     term.dirty = true
   }

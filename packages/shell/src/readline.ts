@@ -1,9 +1,9 @@
 // Line editor over a raw tty: cursor movement, history, tab completion.
 // Renders on one screen row with horizontal scrolling for long lines.
 //
-// What it draws is echo, not program output: it goes to the tty unpaced, and a
-// keystroke repaints only what changed. Reprinting the whole line on every key
-// would send the line back out at the configured baud.
+// What it draws is echo rather than program output, so it is written to the tty
+// unrate-limited and a keystroke repaints only what changed. Reprinting the
+// whole line per key would send the entire row through the rate limiter.
 
 import { dec, type Source } from '@cyberspace/kernel'
 import type { TtyControl } from '@cyberspace/kernel'
@@ -28,7 +28,7 @@ export class Readline {
   private draft = ''
   private prompt = ''
 
-  // What is on the row now, for the incremental repaint.
+  // What is currently on the row, for the incremental repaint.
   private drawnStart = 0
   private drawnView = ''
   private drawnCol = 0
@@ -164,7 +164,7 @@ export class Readline {
     const view = this.buf.slice(start, start + width)
     const col = this.cursor - start
 
-    // Same window: send the difference rather than the row.
+    // Same window, so send the difference rather than the whole row.
     if (!force && start === this.drawnStart) {
       const atEnd = col === view.length && this.drawnCol === this.drawnView.length
       if (atEnd && view.length > this.drawnView.length && view.startsWith(this.drawnView)) {

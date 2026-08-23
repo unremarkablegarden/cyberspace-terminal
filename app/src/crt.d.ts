@@ -18,7 +18,7 @@ declare module '@cyberspace/crt/term' {
     chars: Uint16Array
     attrs: Uint8Array
     inverse: Uint8Array
-    gfx: (number[] | undefined)[]
+    gfx: (ArrayLike<number> | undefined)[]
     font: { cellW: number; cellH: number }
     advance: number
     cx: number
@@ -27,7 +27,7 @@ declare module '@cyberspace/crt/term' {
     showCursor: boolean
     clear(): void
     put(x: number, y: number, ch: string | number, attr?: number, inv?: number): void
-    putGlyph(x: number, y: number, bits: number[], attr?: number, inv?: number): void
+    putGlyph(x: number, y: number, bits: ArrayLike<number>, attr?: number, inv?: number): void
     text(x: number, y: number, str: string, attr?: number, inv?: number): number
     write(str: string, attr?: number): void
     writeln(str?: string, attr?: number): void

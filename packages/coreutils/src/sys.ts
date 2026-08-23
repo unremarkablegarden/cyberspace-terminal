@@ -74,6 +74,7 @@ export const help: Program = async p => {
     p.out('  ' + names.slice(i, i + per).map(s => s.padEnd(w)).join('').trimEnd() + '\n')
   }
   p.out('Shell builtins:\n  cd  pwd  export  unset  exit  history\n')
+  p.out('Keys:\n  [UP/DOWN] recall\n  [TAB] complete\n  [CTRL-SHIFT-UP/DOWN] and [SHIFT-PGUP/PGDN] scroll\n')
   return 0
 }
 

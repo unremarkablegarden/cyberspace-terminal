@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "bun ../tools/version.ts --check && tsc --noEmit && vite build",
+    "build": "bun ../tools/version.ts --check && bun ../tools/comments.ts --check && tsc --noEmit && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -15,6 +15,8 @@
     "@cyberspace/crt": "workspace:*",
     "@cyberspace/kernel": "workspace:*",
     "@cyberspace/shell": "workspace:*",
+    "@cyberspace/tui": "workspace:*",
+    "@xterm/addon-serialize": "^0.14.0",
     "@xterm/headless": "^5.5.0",
     "@zenfs/core": "^2.6.3",
     "@zenfs/dom": "^1.2.10"

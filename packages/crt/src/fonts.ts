@@ -1,9 +1,10 @@
-// The faces on offer, and which cuts each has. A family is a roman plus
-// whatever was drawn to go with it: a real bold is used, an absent one falls
-// back to the smear; an absent oblique draws roman (no synthetic italic).
+// The available fonts and the cuts each provides. A family is a roman plus
+// whatever else was drawn for it: a real bold is used where present and falls
+// back to the smear otherwise, and a missing oblique draws roman rather than a
+// synthetic italic.
 //
-// Each URL must be an inline `new URL(...)` literal — Vite emits assets by
-// static analysis of the call site, and a helper breaks it silently.
+// Each URL must be an inline `new URL(...)` literal. Vite emits assets by static
+// analysis of the call site, so wrapping this in a helper fails silently.
 
 import { parseBDF } from './bdf.js'
 
@@ -14,7 +15,7 @@ export interface FontFamily {
   italic?: string
 }
 
-/** First is the default. Terminus leads: its bold matches its roman's coverage. */
+/** The first entry is the default. Terminus leads because its bold matches its roman's coverage. */
 export const FAMILIES: FontFamily[] = [
   {
     name: 'terminus-8x16',
@@ -41,8 +42,8 @@ export const FAMILIES: FontFamily[] = [
     name: 'spleen-12x24',
     regular: new URL('../fonts/spleen-12x24.bdf', import.meta.url).href,
   },
-  // The Apple II text ROM: 95 codepoints, no box drawing — everything else is
-  // borrowed from the coverage face. A period piece, priced like one.
+  // The Apple II text ROM: 95 code points and no box drawing, so everything else
+  // is borrowed from the coverage face.
   {
     name: 'apple-ii-7x8',
     regular: new URL('../fonts/apple-ii-full-7x8.bdf', import.meta.url).href,
@@ -50,8 +51,8 @@ export const FAMILIES: FontFamily[] = [
 ]
 
 /**
- * The coverage face — Term.fallback. 6x13's roman: 4124 glyphs, the widest we
- * ship. Every other face borrows codepoints it lacks from this one.
+ * The coverage face, used as Term.fallback: 6x13 roman, 4124 glyphs, the widest
+ * shipped here. Every other face borrows code points it lacks from this one.
  */
 export const FALLBACK_FONT = new URL('../fonts/6x13.bdf', import.meta.url).href
 
@@ -79,8 +80,9 @@ interface TermFontSlots {
 }
 
 /**
- * Load a family into the term: roman synchronously, cuts behind it. The caller
- * re-points the CRT at the resized framebuffer (crt.setSource(term.w, term.h)).
+ * Load a family into the term: the roman synchronously, the other cuts in the
+ * background. The caller must then point the CRT at the resized framebuffer with
+ * crt.setSource(term.w, term.h).
  */
 export async function loadFamily(term: TermFontSlots, family: FontFamily): Promise<void> {
   const roman = await fetchFont(family.regular)
@@ -90,7 +92,7 @@ export async function loadFamily(term: TermFontSlots, family: FontFamily): Promi
   if (family.italic) fetchFont(family.italic).then(f => { term.italic = f; term.dirty = true }).catch(() => {})
 }
 
-/** Load the coverage face into Term.fallback. Fire-and-forget. */
+/** Load the coverage face into Term.fallback. Not awaited. */
 export async function loadFallback(term: TermFontSlots): Promise<void> {
   try {
     term.fallback = await fetchFont(FALLBACK_FONT)
@@ -98,7 +100,7 @@ export async function loadFallback(term: TermFontSlots): Promise<void> {
   } catch {}
 }
 
-/** What the list shows: the family, plus the cuts it actually has. */
+/** The label for a family: its name plus the cuts it provides. */
 export interface FontEntry {
   name: string
   label: string
@@ -107,9 +109,9 @@ export interface FontEntry {
 /**
  * The FONT list.
  *
- * A family wears what it has — `6x13 B+O` — so the row says both what you are
- * picking and what picking it buys you. A face with neither is just its name,
- * which is the honest thing for it to be.
+ * Each row is labelled with the cuts the family provides, as in `6x13 B+O`, so
+ * the row states both the name and what selecting it gains. A family with
+ * neither shows its name alone.
  */
 export const FONT_ENTRIES: FontEntry[] = FAMILIES.map((f) => {
   const mark = [f.bold ? 'B' : '', f.italic ? 'O' : ''].filter(Boolean).join('+')
@@ -119,8 +121,8 @@ export const FONT_ENTRIES: FontEntry[] = FAMILIES.map((f) => {
 const LABEL_OF = new Map(FONT_ENTRIES.map(e => [e.name, e.label]))
 const NAME_OF = new Map(FONT_ENTRIES.map(e => [e.label, e.name]))
 
-/** What the config box calls a loaded family. */
+/** The label the config box shows for a loaded family. */
 export const fontLabel = (name: string): string => LABEL_OF.get(name) ?? name
 
-/** The family a row of the config box loads. */
+/** The family a config box row loads. */
 export const fontFace = (label: string): string => NAME_OF.get(label) ?? label

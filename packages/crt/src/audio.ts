@@ -9,8 +9,8 @@ const ARROWS: Record<string, string> = {
   ArrowLeft: 'arrleft', ArrowRight: 'arrright',
 }
 
-// Machine output emits blips, not keystrokes. Throttled so a fast type-out
-// chatters rather than turning into a solid tone.
+// Program output plays blips rather than key sounds. Throttled so a fast
+// type-out chatters instead of becoming a continuous tone.
 const BLIP_MS = 55
 
 /** Loop period of the shared noise buffer. Short periods are audible. */
@@ -28,10 +28,10 @@ const CHANNELS: SoundChannel[] = ['background', 'keys', 'beeps']
 const CHANNEL_FADE = 0.02
 
 export interface SoundAssets {
-  /** Key sample URLs by group: `default` (variants) plus space/enter/del/arr*.
-   *  Omitted to take the default board; see setKeyPack. */
+  /** Key sample URLs by group: `default` variants plus space/enter/del/arr*.
+   *  Omit to use the default pack; see setKeyPack. */
   keys?: Record<string, string[]>
-  /** The startup chime, scored under a cold boot. */
+  /** The startup chime, played under a cold boot. */
   bootupUrl?: string
 }
 
@@ -56,7 +56,7 @@ export class Sound {
   private bootLoad: Promise<void> | null = null
   private bootSrc: AudioBufferSourceNode | null = null
   private bootGain: GainNode | null = null
-  // The chime decodes for seconds; a skip in that window cancels via this flag.
+  // The chime takes seconds to decode; a skip during that window cancels via this flag.
   private bootWanted = false
 
   constructor(assets: SoundAssets) {
@@ -88,20 +88,19 @@ export class Sound {
     this.loaded = true
   }
 
-  /** The sample table in play: an explicit one from the host, or the pack. */
+  /** The sample table in use: one supplied by the host, or the pack's. */
   private keys(): Record<string, string[]> {
     return this.assets.keys ?? KEY_PACKS[this.pack]?.urls ?? {}
   }
 
-  /** Which board is on. */
+  /** The key pack currently loaded. */
   get keyPackName(): string {
     return this.pack
   }
 
   /**
-   * Wear another board. Returns immediately and fetches behind itself, so the
-   * first few keys after a switch are silent rather than late — a keyclick that
-   * arrives after the letter is worse than one that never came.
+   * Switch key pack. Returns immediately and fetches in the background, so the
+   * first few keys after a switch are silent rather than delayed.
    */
   setKeyPack(name: string): string {
     if (!KEY_PACKS[name] || this.assets.keys) return this.pack
@@ -130,7 +129,7 @@ export class Sound {
     }
   }
 
-  /** The machine's permanent noise floor: fan, platters, hum, flyback whine. */
+  /** The continuous noise floor: fan, platters, mains hum and flyback whine. */
   start(): void {
     if (!this.ctx || this.running || this.disposed) return
     this.running = true
@@ -160,7 +159,7 @@ export class Sound {
     const platter = ctx.createBufferSource()
     platter.buffer = this.noise
     platter.loop = true
-    // Off-speed: 3.6s loop against the fan's 3, so they never line up.
+    // A 3.6s loop against the fan's 3s, so the two never align.
     platter.playbackRate.value = 0.83
     const platterBP = ctx.createBiquadFilter()
     platterBP.type = 'bandpass'
@@ -194,7 +193,7 @@ export class Sound {
     this.drones.push(fan, platter, hum, whine)
   }
 
-  /** A short filtered noise burst — the building block for every mechanical hit. */
+  /** A short filtered noise burst, used to build every mechanical sound. */
   private clack(at: number, freq: number, q: number, gain: number, dur: number): void {
     const ctx = this.ctx!
     const src = ctx.createBufferSource()
@@ -220,15 +219,16 @@ export class Sound {
     return buf
   }
 
-  // A suspended context does not advance its clock: scheduled work piles up and
-  // fires as one blast when audio unlocks. One-shots check this and stay silent.
+  // A suspended context does not advance its clock, so scheduled work
+  // accumulates and fires at once when audio unlocks. One-shots check this and
+  // stay silent.
   private get live(): AudioContext | null {
     const ctx = this.ctx
     if (!ctx || !this.enabled || this.disposed) return null
     return ctx.state === 'running' ? ctx : null
   }
 
-  /** Nudge a suspended context. Only an actual gesture lets it through. */
+  /** Attempt to resume a suspended context. Only a real user gesture succeeds. */
   resume(): void {
     if (!this.ctx || this.disposed) return
     if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {})
@@ -256,7 +256,7 @@ export class Sound {
     if (!buf) return
     const src = this.ctx.createBufferSource()
     src.buffer = buf
-    // Rate jitter so a long type-out never settles into an audible loop.
+    // Playback-rate jitter, so a long type-out does not settle into an audible loop.
     src.playbackRate.value = 0.97 + Math.random() * 0.06
     const g = this.ctx.createGain()
     g.gain.value = gain
@@ -264,8 +264,8 @@ export class Sound {
     src.start()
   }
 
-  // A real keystroke. Never on auto-repeat: a switch clicks going down, not per
-  // repeated character.
+  // A real keystroke. Not played on auto-repeat, which produces characters
+  // without a further key press.
   key(e?: { repeat?: boolean; key?: string }): void {
     if (e?.repeat) return
     if (!e || !e.key) return this.sample('default')
@@ -277,7 +277,7 @@ export class Sound {
     this.sample('default')
   }
 
-  /** A character emitted by the machine — the movie-computer bleep. */
+  /** The bleep played for characters emitted by a program. */
   blip(hz = 1400, dur = 0.030, jitter = 0.04): void {
     const ctx = this.live
     if (!ctx) return
@@ -289,7 +289,7 @@ export class Sound {
     const o = ctx.createOscillator()
     o.type = 'square'
     o.frequency.value = hz * (1 - jitter + Math.random() * jitter * 2)
-    // Roll off the top: a buzz becomes a bleep. Cutoff tracks pitch.
+    // Low-pass to turn the buzz into a bleep. Cutoff tracks pitch.
     const lp = ctx.createBiquadFilter()
     lp.type = 'lowpass'
     lp.frequency.value = hz * 1.86
@@ -302,12 +302,12 @@ export class Sound {
     o.stop(t + dur + 0.02)
   }
 
-  /** One row moving under a selection. Pitch held exactly. */
+  /** The tick for one row of selection movement. Pitch is not jittered. */
   tick(): void {
     this.blip(2500, 0.030, 0)
   }
 
-  /** Head seeks, randomly spaced — even spacing reads as a drum machine. */
+  /** Disk head seeks, randomly spaced; even spacing sounds mechanical rather than incidental. */
   seek(count = 1): void {
     const ctx = this.live
     if (!ctx) return
@@ -318,7 +318,7 @@ export class Sound {
     }
   }
 
-  /** Broadband hiss — a tube with no signal on it. */
+  /** Broadband hiss, for a display with no signal. */
   hiss(dur = 0.2, gain = 0.10): void {
     const ctx = this.live
     if (!ctx) return
@@ -337,7 +337,7 @@ export class Sound {
     src.stop(t + dur + 0.02)
   }
 
-  /** Degauss: the coil slammed with mains and left to decay, amplitude beating. */
+  /** Degauss: the coil driven at mains frequency and left to decay, with amplitude beating. */
   degauss(): void {
     const ctx = this.live
     if (!ctx) return
@@ -362,7 +362,7 @@ export class Sound {
     beat.start(t); beat.stop(t + 1.2)
   }
 
-  /** The POST beep: a bare square wave into a small paper cone. */
+  /** The POST beep: a square wave through a small-speaker filter. */
   postBeep(freq = 330, dur = 0.62): void {
     const ctx = this.live
     if (!ctx) return
@@ -405,9 +405,9 @@ export class Sound {
   }
 
   /**
-   * A machine of this era starting up: the switch, the transformer taking load,
-   * platters to speed, heads unparking into seek chatter. The sustained fan and
-   * whirr live in start(), ramping in underneath.
+   * The power-on sequence: the switch, the transformer taking load, platters
+   * spinning up, and heads unparking into seek chatter. The sustained fan and
+   * whirr are started by start(), ramping in beneath.
    */
   powerOn(): void {
     const ctx = this.live
@@ -458,7 +458,7 @@ export class Sound {
     }
   }
 
-  /** The recorded startup chime, under the whole cold boot. Never awaited. */
+  /** The recorded startup chime, played under the cold boot. Never awaited. */
   async bootup(): Promise<void> {
     if (!this.ctx || this.disposed || !this.assets.bootupUrl) return
     if (!this.enabled || !this.levels.background) return
@@ -482,7 +482,7 @@ export class Sound {
     this.bootGain = g
   }
 
-  /** Cut the chime short — it outlasts the boot it scores. */
+  /** Stop the chime early; it is longer than the boot sequence. */
   stopBootup(): void {
     this.bootWanted = false
     this.fadeBootSource()
@@ -505,7 +505,7 @@ export class Sound {
     }
   }
 
-  /** The mirror of powerOn(), with the whole room fading to silence under it. */
+  /** The reverse of powerOn(), fading every sustained source to silence. */
   powerOff(): void {
     const ctx = this.live
     if (!ctx) return
@@ -514,7 +514,7 @@ export class Sound {
     this.clack(t, 900, 1.6, 0.26, 0.070)
     this.clack(t + 0.045, 2600, 2.5, 0.28, 0.030)
 
-    // The 15.7kHz line whistle dropping away — what a CRT is remembered by.
+    // The 15.7kHz line whistle falling away as the tube loses power.
     const whine = ctx.createOscillator()
     whine.type = 'triangle'
     whine.frequency.setValueAtTime(15720, t + 0.04)
@@ -561,7 +561,7 @@ export class Sound {
     gain.exponentialRampToValueAtTime(0.0001, t + 1.6)
   }
 
-  /** Undo powerOff()'s fade, for a cancel that stays on the page. */
+  /** Reverse powerOff()'s fade, for a shutdown that was cancelled. */
   restoreLevel(): void {
     const ctx = this.live
     if (!ctx) return

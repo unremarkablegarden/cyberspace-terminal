@@ -5,6 +5,7 @@ import type { Program, Proc, SpawnOptions, Task } from './proc.js'
 import { basename, join, resolve } from './paths.js'
 import { dec, type Sink } from './pipe.js'
 import { isWasm, runWasi } from './wasi.js'
+import { Resume } from './resume.js'
 
 export class Kernel {
   readonly fs = fs.promises
@@ -12,6 +13,8 @@ export class Kernel {
   release = '0'
   /** Extra executable-file formats, tried after wasm and shebangs. */
   fileHandlers: ((path: string, data: Uint8Array) => Program | null)[] = []
+  /** Resume slot for the foreground program. See Resume. */
+  readonly resume = new Resume()
   private programs = new Map<string, Program>()
   private nextPid = 1
 
@@ -33,8 +36,8 @@ export class Kernel {
   }
 
   /**
-   * Resolve a command word to something runnable: builtins by name, then real
-   * files — wasm binaries and shebang scripts — by path or $PATH search.
+   * Resolve a command word to something runnable: builtins by name, then files
+   * (wasm binaries and shebang scripts) by path or $PATH search.
    */
   async resolveExec(word: string, cwd: string, env: Record<string, string>): Promise<Program | null> {
     if (!word.includes('/')) {
@@ -57,7 +60,7 @@ export class Kernel {
       return p => runWasi(p, data)
     }
 
-    // Shebang. `#!builtin` marks the /bin stubs for the registry programs.
+    // Shebang. #!builtin marks the /bin stubs for the registry programs.
     if (data[0] === 0x23 && data[1] === 0x21) {
       const line = dec.decode(data.subarray(2, Math.min(data.length, 256))).split('\n')[0].trim()
       if (line === 'builtin') return this.programs.get(basename(path)) ?? null
@@ -81,14 +84,12 @@ export class Kernel {
     let killed = false
 
     /**
-     * A killed process no longer owns the terminal.
+     * Detach a killed process from the terminal.
      *
-     * Nothing here can stop a JS function that ignores its abort signal from
-     * running to the end of its loop — but it can stop it WRITING. Without this
-     * a program killed mid-enumeration goes on printing over the prompt that
-     * replaced it, which is the reader pressing Ctrl-C and watching it not
-     * work. The sinks are gated rather than the loop, because the loop is the
-     * program's business and the glass is not.
+     * A JS function that ignores its abort signal cannot be stopped, but its
+     * writes can. Without this, a program killed mid-enumeration keeps printing
+     * over the prompt that replaced it. The sinks are gated rather than the
+     * loop, since the loop belongs to the program and the terminal does not.
      */
     const gate = (sink: Sink): Sink => ({
       write(data) { if (!killed) sink.write(data) },
@@ -111,6 +112,9 @@ export class Kernel {
       tty: opts.tty,
       out: s => stdout.write(s),
       err: s => stderr.write(s),
+      setResume: line => { this.resume.line = line },
+      setState: value => { this.resume.state = value },
+      takeState: () => this.resume.takeState(),
     }
     const run = (async () => {
       try {
@@ -128,6 +132,7 @@ export class Kernel {
 
     return {
       pid,
+      proc,
       wait: Promise.race([run, killedP]),
       kill() {
         killed = true

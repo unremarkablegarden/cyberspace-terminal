@@ -1,39 +1,36 @@
-// Text the grid can hold: one code point per cell, or the frame loses a column.
+// Folds text so the grid holds one code point per cell.
 //
-// A Surface gives one cell per CODE POINT. The parser on the other side of the
-// wire gives one per GRAPHEME, and two to CJK. So `❤️` (U+2764 U+FE0F) is two
-// cells here and one there, `👨‍👩` is three here and one there, `中` is one here
-// and two there. Any of them shifts the rest of that row in the host's buffer,
-// and what falls off the end is whatever the layout keeps at the right margin —
-// in cIRC, the divider and the outer border. The diff never repairs it: it
-// compares against its own model of the row, and its own model says the row is
-// fine.
+// A Surface allocates one cell per code point. The parser on the other side of
+// the pty allocates one per grapheme, and two for CJK. So U+2764 U+FE0F is two
+// cells here and one there, a joined emoji sequence is three here and one
+// there, and a CJK character is one here and two there. Each case shifts the
+// rest of that row in the host's buffer, and whatever the layout keeps at the
+// right margin is lost: in circ, the divider and the outer border. The diff
+// cannot repair it, because it compares against its own model of the row.
 //
-// So text off the wire is folded to one cell per cluster before it is drawn.
-// The rule is the whole module:
+// Incoming text is therefore folded to one cell per cluster before it is drawn:
 //
 //   A cluster that is a single code point the grid can hold in one cell passes
 //   through. Everything else becomes one symbol from the pool.
 //
-// Which is also how the site does it — `emoji-replace` swaps emoji for plain
-// period symbols rather than showing a face this machine has no glyph for. It
-// needs no whitelist here: `♥ ☆ ✧ ◕ ┻ ━ ╯ ╭ ╮ ▽` are one cell already and pass
-// the rule on their own.
+// The website does the same, substituting plain symbols for emoji it has no
+// glyph for. No allowlist is needed: characters such as the card suits, stars
+// and box shapes are already one cell and pass the rule.
 
 /**
- * What an emoji becomes.
+ * Replacement symbols for emoji.
  *
- * Blocks, geometric shapes and braille only — every code point here is in a
- * Unicode block the coverage face carries whole (2580..25FF, 2800..28FF), so
- * coverage is a property of the ranges rather than a list to re-check. No box
- * drawing: a `┼` arriving in somebody's message would read as a broken frame,
- * which is the fault this module exists to prevent.
+ * Blocks, geometric shapes and braille only. Every code point here falls in a
+ * Unicode block the coverage font carries in full (2580..25FF, 2800..28FF), so
+ * coverage follows from the ranges rather than needing to be checked per entry.
+ * No box drawing: a box character arriving in a message would read as a broken
+ * frame, which is the fault this module exists to prevent.
  */
 const POOL = [...'▀▄█▌▐░▒▓■□▪▬▲△▼▽◆◇○●◐◑◘◙◢◣◤◥◦⣿⣤⡿']
 
 /**
- * Two cells on the host's side. Written as escapes: a CJK literal in a source
- * file is a range nobody can check by eye.
+ * Ranges the host renders as two cells. Written as escapes, since CJK literals
+ * in source cannot be checked by eye.
  */
 const WIDE = new RegExp(
   '[\\u1100-\\u115F\\u2329\\u232A\\u2E80-\\u303E\\u3041-\\uA4CF\\uA960-\\uA97F'
@@ -41,9 +38,10 @@ const WIDE = new RegExp(
   + '\\uFF00-\\uFF60\\uFFE0-\\uFFE6]')
 
 /**
- * No cells at all: combining marks, joiners, variation selectors — plus the
- * three the parser's own table zeroes that the Unicode categories do not
- * (an Arabic sign, the Hangul jamo fillers, and U+3040). Measured, not assumed.
+ * Ranges that occupy no cell: combining marks, joiners and variation selectors,
+ * plus three the parser's table treats as zero-width where the Unicode
+ * categories do not (an Arabic sign, the Hangul jamo fillers, and U+3040).
+ * Determined by measurement.
  */
 const ZERO = /[\p{M}\p{Cf}\u06DE\u1160-\u11FF\u3040]/u
 
@@ -60,12 +58,12 @@ const segmenter = typeof Intl !== 'undefined' && 'Segmenter' in Intl
   : null
 
 /**
- * The pool index for a cluster. FNV-1a over its code points.
+ * Pool index for a cluster, as FNV-1a over its code points.
  *
- * The site picks at random, because it substitutes once when the node mounts.
- * Here a message is redrawn on every frame, and a random pick would make the
- * glyph dance for as long as the line is on the glass. The same emoji has to
- * land on the same symbol every time, and on everyone's screen.
+ * Hashed rather than chosen at random, as the website does, because a message
+ * here is redrawn every frame and a random choice would change the glyph on
+ * each one. The same cluster must map to the same symbol every time and for
+ * every viewer.
  */
 function pick(cluster: string): string {
   let h = 0x811c9dc5
@@ -76,7 +74,7 @@ function pick(cluster: string): string {
   return POOL[h % POOL.length]!
 }
 
-/** Split into grapheme clusters, or code points where Intl cannot. */
+/** Split into grapheme clusters, falling back to code points without Intl.Segmenter. */
 function clusters(text: string): string[] {
   if (!segmenter) return [...text]
   const out: string[] = []
@@ -87,14 +85,14 @@ function clusters(text: string): string[] {
 /**
  * Fold text to one cell per character.
  *
- * NFC first, so a decomposed `é` becomes the single code point the face carries
- * instead of being replaced along with the emoji.
+ * Normalised to NFC first, so a decomposed accented character becomes the
+ * single code point the font carries rather than being replaced.
  */
 export function plain(text: string): string {
   if (!text) return text
   const norm = text.normalize('NFC')
-  // Nothing outside plain ASCII means nothing to fold, which is nearly every
-  // line: don't segment the whole log for it.
+  // Pure ASCII needs no folding, which covers nearly every line, so the
+  // segmenter is skipped.
   if (!/[^\x20-\x7e\t\n]/.test(norm)) return norm
   let out = ''
   for (const cluster of clusters(norm)) {

@@ -8,6 +8,5 @@ spikes/**/*.wasm
 spikes/**/*.wasm.gz
 
 # local-only
-.claude/
-CLAUDE.local.md
 *.tsbuildinfo
+TODO.md

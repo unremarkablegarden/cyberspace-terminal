@@ -1,12 +1,12 @@
-// The screen stack: what lets a modal cover a program and give the grid back.
+// The screen stack, which lets a modal cover a program and then restore it.
 //
-// A pushed screen owns the whole grid and the keyboard; whatever is underneath
-// sits still and sees nothing. Push snapshots the planes and pop restores them,
-// so a popup can paint over a program's chrome and leave it exactly as it was —
-// the program is not asked to repaint, and cannot get it wrong.
+// A pushed screen holds the whole grid and the keyboard; screens beneath it are
+// not drawn and receive no keys. Push snapshots the planes and pop restores
+// them, so a popup can paint over a program's chrome without the program having
+// to repaint.
 //
-// The original carries a wider contract (pointer lock, dropped files, block
-// pastes). None of that reaches a pty, so this is the half that does.
+// Pointer lock, dropped files and block pastes are not modelled here: none of
+// them crosses a pty.
 
 import type { Grid } from './surface.js'
 import type { KeyInput } from './keys.js'
@@ -15,13 +15,13 @@ export interface Screen {
   /** True if the key was consumed. Only the top screen is asked. */
   onKey(e: KeyInput): boolean
   /**
-   * True for a key this screen answers with a sound of its own, so the host
-   * does not also play the keyclick. Asked before the key is dispatched, so it
-   * must answer from the key alone — say yes only for a key ALWAYS answered.
+   * True for a key this screen plays its own sound for, so the host suppresses
+   * the key click. Called before the key is dispatched, so it must decide from
+   * the key alone: return true only for keys the screen always handles.
    */
   silentKey?(e: KeyInput): boolean
   draw?(term: Grid): void
-  /** Covered by something on top: stop drawing, or a repaint erases it. */
+  /** Called when another screen covers this one, which must then stop drawing. */
   setActive?(on: boolean): void
   dispose?(): void
 }
@@ -38,16 +38,16 @@ interface Snapshot {
 }
 
 /**
- * The grid a stack restores onto: one that owns its planes.
+ * A grid a stack can snapshot and restore, meaning one that owns its planes.
  *
- * The tube keeps code points in a typed array and a Surface keeps characters in
- * a plain one, so the copy is by `slice` and the paste is by index — the one
- * operation both stores answer to.
+ * The CRT grid stores code points in a typed array and a Surface stores
+ * characters in a plain one, so copying uses slice and restoring assigns by
+ * index, which both support.
  */
 export interface StackSurface extends Omit<Grid, 'chars' | 'attrs'> {
   chars: Plane
   attrs: Plane
-  /** Called `inverse` on the tube and `inv` on a Surface. Either will do. */
+  /** Named `inverse` on the CRT grid and `inv` on a Surface; either is accepted. */
   inv?: Plane
   inverse?: Plane
 }
@@ -77,7 +77,7 @@ export class ScreenStack {
       chars: this.term.chars.slice(),
       attrs: this.term.attrs.slice(),
       inv: (this.term.inv ?? this.term.inverse)!.slice(),
-      // The caret too: whoever is underneath writes where it left off.
+      // The caret is restored too, so the screen beneath resumes where it was.
       cx: this.term.cx,
       cy: this.term.cy,
       showCursor: this.term.showCursor,
@@ -108,7 +108,7 @@ export class ScreenStack {
     const top = this.top
     if (!top) return false
     const handled = top.onKey(e)
-    // Every consumed key repaints; a key may also have popped the top.
+    // Every consumed key repaints, and a key may also have popped the top screen.
     if (handled) this.top?.draw?.(this.term as unknown as Grid)
     return handled
   }

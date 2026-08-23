@@ -141,12 +141,12 @@ async function runPipeline(sh: ShellState, cmds: Cmd[]): Promise<number> {
     prevOut = nextIn ?? prevOut
   }
 
-  // ^C kills the whole foreground pipeline, and puts the terminal back.
+  // ^C kills the whole foreground pipeline and restores the terminal.
   //
   // The kill alone is not enough for a full-screen program: killed mid-paint it
-  // never reaches its own `finally`, and the alt screen and the raw mode would
-  // outlive it — leaving the reader at a prompt they cannot see. Both are
-  // idempotent, so saying it here costs nothing when the program does tidy up.
+  // never reaches its own finally, so the alt screen and raw mode would outlive
+  // it and leave the prompt invisible. Both calls are idempotent, so they cost
+  // nothing when the program does clean up.
   const tty = sh.proc.tty as {
     onSigint?: (() => void) | null
     setCooked?: () => void
@@ -166,6 +166,9 @@ async function runPipeline(sh: ShellState, cmds: Cmd[]): Promise<number> {
     return codes[codes.length - 1]
   } finally {
     if (tty) tty.onSigint = prevSigint ?? null
+    // The program has exited, so its resume point is discarded: the next bare
+    // `circ` opens on the default room.
+    sh.proc.kernel.resume.clear()
     await Promise.all(sinksToClose.map(s => s.end()))
   }
 }
@@ -186,6 +189,9 @@ const BUILTINS: Record<string, Builtin> = {
     }
     sh.cwd = target
     sh.proc.cwd = target
+    // Published so the host can store it with the session, and so `echo $PWD`
+    // agrees with `pwd`.
+    sh.proc.env.PWD = target
     return 0
   },
 

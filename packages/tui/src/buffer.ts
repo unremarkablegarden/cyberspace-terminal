@@ -1,26 +1,25 @@
-// The text a caret moves through: one string, one index, and a fold.
+// An editable text buffer: one string, one caret index, and a fold.
 //
-// The model is ONE string and ONE caret index into it, not an array of lines.
-// Everything else — where the rows break, which row the caret is on, what Up
-// does — falls out of folding that string to the width, so the wrap and the
-// caret can never disagree about where a character is. Hard newlines are in
-// the string like any other character; they are what Enter inserts.
+// The model is a single string with a single caret index into it, not an array
+// of lines. Row breaks, the caret's row and the behaviour of Up all follow from
+// folding that string to the width, so the wrap and the caret cannot disagree
+// about where a character is. Hard newlines are ordinary characters in the
+// string, inserted by Enter.
 
 import { Surface, type Rect } from './surface.js'
 import { NORMAL } from './attrs.js'
 import type { KeyInput } from './keys.js'
 
-/** One drawn row of the folded text: where it starts, and how long it is. */
+/** One drawn row of the folded text: its start offset and length. */
 export interface Fold { start: number; len: number }
 
 /**
- * Fold a string to `width`, keeping EVERY character — the caret is an index
- * into the same string, so a wrap that dropped the spaces it broke on would
- * put the caret in the wrong place the moment anyone typed one.
+ * Fold a string to `width`, keeping every character. The caret indexes the same
+ * string, so dropping the spaces broken on would misplace it.
  *
- * Breaks at the last space in the window when there is one; the space stays on
- * the row it ended. A hard line always contributes at least one row, so an
- * empty line is a row the caret can sit on.
+ * Breaks at the last space in the window where there is one, and that space
+ * stays on the row it ended. A hard line always produces at least one row, so
+ * an empty line is a row the caret can occupy.
  */
 export function fold(text: string, width: number, wrap = true): Fold[] {
   const rows: Fold[] = []
@@ -49,12 +48,12 @@ export function fold(text: string, width: number, wrap = true): Fold[] {
 
 export interface BufferOptions {
   initial?: string
-  /** Characters. Beyond it a key is refused rather than truncating. */
+  /** Maximum length in characters. Beyond it a key is refused rather than truncating. */
   maxLength?: number
-  /** Fold long lines to the width. Off makes it a canvas with a hard right edge. */
+  /** Fold long lines to the width. When off, the buffer has a hard right edge. */
   wrap?: boolean
   width?: number
-  /** A key that could not do what it asked — caret at an end, or a limit. */
+  /** Called when a key could not act: the caret is at an end, or a limit was hit. */
   onReject?: () => void
 }
 
@@ -64,7 +63,7 @@ const DEFAULT_WIDTH = 56
 export class TextBuffer {
   private str: string
   private at = 0
-  /** First visible row of the folded text. Owned by whoever draws. */
+  /** First visible row of the folded text. Owned by the caller that draws. */
   top = 0
   private cols = 0
 
@@ -84,7 +83,7 @@ export class TextBuffer {
     return this.cols || (this.opts.width ?? DEFAULT_WIDTH)
   }
 
-  /** Told by draw what it actually had room for. */
+  /** Set by draw() to the number of rows it had room for. */
   setWidth(cols: number): void {
     this.cols = cols
   }
@@ -99,18 +98,18 @@ export class TextBuffer {
     return fold(this.str, this.width, this.opts.wrap !== false)
   }
 
-  /** The row the caret is on: the last one that starts at or before it. */
+  /** The row the caret is on: the last row starting at or before the caret. */
   rowAt(rows: Fold[], at = this.at): number {
     for (let i = rows.length - 1; i > 0; i--) if (at >= rows[i].start) return i
     return 0
   }
 
-  /** One editing key, or false if it is not one of ours. */
+  /** Handle one editing key. False if it is not one this buffer handles. */
   key(e: KeyInput): boolean {
     if (e.metaKey || e.altKey) return false
 
     if (e.ctrlKey) {
-      // ^K is nano's: the whole hard line, not the tail of it.
+      // ^K follows nano: cuts the whole hard line, not the tail from the caret.
       if (e.key === 'k') return this.killLine()
       return false
     }
@@ -142,10 +141,7 @@ export class TextBuffer {
     return false
   }
 
-  /**
-   * Drop a run of text in at the caret. Refused rather than truncated: half a
-   * pasted paragraph is worse than none.
-   */
+  /** Insert a run of text at the caret. Refused rather than truncated if it does not fit. */
   insert(s: string): void {
     const max = this.opts.maxLength ?? DEFAULT_MAX
     if (this.str.length + s.length > max) { this.opts.onReject?.(); return }
@@ -160,7 +156,7 @@ export class TextBuffer {
     this.at += s.length
   }
 
-  /** Home/End on the FOLDED row — the line the eye sees. */
+  /** Home/End on the folded row rather than the hard line. */
   toLineEdge(start: boolean): boolean {
     const rows = this.rows()
     const row = rows[this.rowAt(rows)]
@@ -169,9 +165,9 @@ export class TextBuffer {
   }
 
   /**
-   * ^K: the hard line the caret is on, gone, with the newline that ends it —
-   * so what is underneath comes up. The last line takes its leading newline
-   * instead, or the text ends in a blank row nobody typed.
+   * ^K: delete the hard line the caret is on together with its trailing newline,
+   * so following lines move up. On the last line the leading newline is taken
+   * instead, which avoids leaving a blank row.
    */
   killLine(): boolean {
     if (!this.str) return this.reject()
@@ -186,7 +182,7 @@ export class TextBuffer {
     return true
   }
 
-  /** Up or down a visual row, keeping the column where it can. */
+  /** Move up or down one visual row, preserving the column where possible. */
   step(delta: number): boolean {
     const rows = this.rows()
     const i = this.rowAt(rows)
@@ -204,8 +200,8 @@ export class TextBuffer {
 }
 
 /**
- * Paint a buffer into `r` and park the cursor on its caret. The view follows
- * the caret and only the caret. Does not clear.
+ * Paint a buffer into `r` and place the cursor on its caret. The view scrolls to
+ * follow the caret only. Does not clear the rect.
  */
 export function drawBuffer(s: Surface, buf: TextBuffer, r: Rect, attr = NORMAL): Fold[] {
   buf.setWidth(r.w)

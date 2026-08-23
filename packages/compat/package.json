@@ -4,11 +4,15 @@
   "description": "Runs grid-native programs from the original /terminal over the pty.",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./guard": "./src/guard.ts"
   },
   "dependencies": {
     "@cyberspace/crt": "workspace:*",
     "@cyberspace/kernel": "workspace:*",
-    "@cyberspace/tui": "workspace:*"
+    "@cyberspace/tui": "workspace:*",
+    "acorn": "^8.18.0",
+    "acorn-globals": "^7.0.1",
+    "acorn-walk": "^8.3.5"
   }
 }

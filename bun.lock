@@ -7,6 +7,7 @@
     },
     "app": {
       "name": "app",
+      "version": "0.2.0",
       "dependencies": {
         "@cyberspace/apps": "workspace:*",
         "@cyberspace/compat": "workspace:*",
@@ -14,6 +15,8 @@
         "@cyberspace/crt": "workspace:*",
         "@cyberspace/kernel": "workspace:*",
         "@cyberspace/shell": "workspace:*",
+        "@cyberspace/tui": "workspace:*",
+        "@xterm/addon-serialize": "^0.14.0",
         "@xterm/headless": "^5.5.0",
         "@zenfs/core": "^2.6.3",
         "@zenfs/dom": "^1.2.10",
@@ -27,24 +30,28 @@
     },
     "apps/cyberspace": {
       "name": "@cyberspace/apps",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "dependencies": {
+        "@cyberspace/compat": "workspace:*",
         "@cyberspace/kernel": "workspace:*",
         "@cyberspace/tui": "workspace:*",
       },
     },
     "packages/compat": {
       "name": "@cyberspace/compat",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "dependencies": {
         "@cyberspace/crt": "workspace:*",
         "@cyberspace/kernel": "workspace:*",
         "@cyberspace/tui": "workspace:*",
+        "acorn": "^8.18.0",
+        "acorn-globals": "^7.0.1",
+        "acorn-walk": "^8.3.5",
       },
     },
     "packages/coreutils": {
       "name": "@cyberspace/coreutils",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "dependencies": {
         "@cyberspace/kernel": "workspace:*",
         "@cyberspace/tui": "workspace:*",
@@ -52,14 +59,14 @@
     },
     "packages/crt": {
       "name": "@cyberspace/crt",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "dependencies": {
         "@cyberspace/tui": "workspace:*",
       },
     },
     "packages/kernel": {
       "name": "@cyberspace/kernel",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "dependencies": {
         "@bjorn3/browser_wasi_shim": "^0.4.2",
         "@zenfs/core": "^2.6.3",
@@ -67,14 +74,14 @@
     },
     "packages/shell": {
       "name": "@cyberspace/shell",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "dependencies": {
         "@cyberspace/kernel": "workspace:*",
       },
     },
     "packages/tui": {
       "name": "@cyberspace/tui",
-      "version": "0.1.0",
+      "version": "0.2.0",
     },
   },
   "packages": {
@@ -416,6 +423,8 @@
 
     "@types/trusted-types": ["@types/trusted-types@2.0.7", "", {}, "sha512-ScaPdn1dQczgbl0QFTeTOmVHFULt394XJgOQNoyVhZ6r2vLnMLJfBPd53SB52T/3G36VI1/g2MZaX0cwDuXsfw=="],
 
+    "@xterm/addon-serialize": ["@xterm/addon-serialize@0.14.0", "", {}, "sha512-uteyTU1EkrQa2Ux6P/uFl2fzmXI46jy5uoQMKEOM0fKTyiW7cSn0WrFenHm5vO5uEXX/GpwW/FgILvv3r0WbkA=="],
+
     "@xterm/headless": ["@xterm/headless@5.5.0", "", {}, "sha512-5xXB7kdQlFBP82ViMJTwwEc3gKCLGKR/eoxQm4zge7GPBl86tCdI0IdPJjoKd8mUSFXz5V7i/25sfsEkP4j46g=="],
 
     "@zenfs/core": ["@zenfs/core@2.6.3", "", { "dependencies": { "@types/node": "^26.0.0", "buffer": "^6.0.3", "eventemitter3": "^5.0.1", "kerium": "^1.4.2", "memium": "^1.0.0", "readable-stream": "^4.5.2", "utilium": "^3.0.0" }, "bin": { "make-index": "scripts/make-index.js", "zenfs-test": "scripts/test.js", "zci": "scripts/ci-cli.js" } }, "sha512-/6GR/QBgU1lFQ2PDCB8sfsntAlTf93S2jKwmOcF/uNL/nh/DCqn11ReKO6GbhQu5/Pwxkv+bG4RVnucgwJq/Rg=="],
@@ -425,6 +434,10 @@
     "abort-controller": ["abort-controller@3.0.0", "", { "dependencies": { "event-target-shim": "^5.0.0" } }, "sha512-h8lQ8tacZYnR3vNQTgibj+tODHI5/+l06Au2Pcriv/Gmet0eaj4TwWH41sO9wnHDiQsEj19q0drzdWdeAHtweg=="],
 
     "acorn": ["acorn@8.18.0", "", { "bin": { "acorn": "bin/acorn" } }, "sha512-lGq+9yr1/GuAWaVYIHRjvvySG5/4VfKIvC8EWxStPdcDh/Ka7FG3twP6v4d5BkravUilhIAsG4Qj83t02LWUPQ=="],
+
+    "acorn-globals": ["acorn-globals@7.0.1", "", { "dependencies": { "acorn": "^8.1.0", "acorn-walk": "^8.0.2" } }, "sha512-umOSDSDrfHbTNPuNpC2NSnnA3LUrqpevPb4T9jRx4MagXNS0rs+gwiTcAvqCRmsD6utzsrzNt+ebm00SNWiC3Q=="],
+
+    "acorn-walk": ["acorn-walk@8.3.5", "", { "dependencies": { "acorn": "^8.11.0" } }, "sha512-HEHNfbars9v4pgpW6SO1KSPkfoS0xVOM/9UzkJltjlsHZmJasxg8aXkuZa7SMf8vKGIBhpUsPluQSqhJFCqebw=="],
 
     "ajv": ["ajv@8.20.0", "", { "dependencies": { "fast-deep-equal": "^3.1.3", "fast-uri": "^3.0.1", "json-schema-traverse": "^1.0.0", "require-from-string": "^2.0.2" } }, "sha512-Thbli+OlOj+iMPYFBVBfJ3OmCAnaSyNn4M1vz9T6Gka5Jt9ba/HIR56joy65tY6kx/FCF5VXNB819Y7/GUrBGA=="],
 

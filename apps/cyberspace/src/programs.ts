@@ -1,18 +1,19 @@
-// The network programs. Each closes over the ApiClient; none reaches Firebase
-// or the DOM. Accounts are created on the website — the machine only signs in.
+// The network programs. Each closes over the ApiClient; none touches Firebase
+// or the DOM. Accounts are created on the website; the machine only signs in.
 //
-// Output register is old unix: login(1) prompts, "Login incorrect", finger(1)
-// layout with the bio as Plan, silence on success.
+// Output follows the POSIX conventions: login(1) prompts, "Login incorrect",
+// finger(1) layout with the bio as Plan, and silence on success.
 
 import { dec, fs, type Proc, type Program, readText } from '@cyberspace/kernel'
+import { wrap } from '@cyberspace/tui'
 import { ApiClient, ApiError } from './api.js'
 
 export interface CsHooks {
-  /** Auth state changed. Runs to completion before login continues. */
+  /** Called when auth state changes. Awaited before login continues. */
   onAuth(username: string | null): void | Promise<void>
 }
 
-/** Read one line in raw mode. Empty mask hides input entirely. Null on ^C. */
+/** Read one line in raw mode. An empty mask hides input entirely. Null on ^C. */
 async function readLine(p: Proc, prompt: string, mask?: string): Promise<string | null> {
   const tty = p.tty
   if (!tty) return null
@@ -41,7 +42,7 @@ async function readLine(p: Proc, prompt: string, mask?: string): Promise<string 
         }
         if (ch >= ' ') {
           line += ch
-          // Keystroke echo, not program output: unpaced and silent.
+          // Keystroke echo rather than program output: not rate-limited, no bleep.
           tty.echo(mask ?? ch)
         }
       }
@@ -60,23 +61,6 @@ function fail(p: Proc, name: string, e: unknown): number {
 const when = (v: unknown): string => {
   const d = typeof v === 'number' || typeof v === 'string' ? new Date(v) : null
   return d && !isNaN(d.getTime()) ? d.toISOString().slice(0, 10) : ''
-}
-
-function wrap(text: string, width: number): string[] {
-  const out: string[] = []
-  for (const para of text.split('\n')) {
-    let line = ''
-    for (const word of para.split(/\s+/).filter(Boolean)) {
-      if (line && line.length + 1 + word.length > width) {
-        out.push(line)
-        line = word
-      } else {
-        line = line ? line + ' ' + word : word
-      }
-    }
-    out.push(line)
-  }
-  return out
 }
 
 export function cyberspacePrograms(api: ApiClient, hooks?: CsHooks): Record<string, Program> {
@@ -101,8 +85,8 @@ export function cyberspacePrograms(api: ApiClient, hooks?: CsHooks): Record<stri
     }
     await hooks?.onAuth(username)
 
-    // As login(1): print the motd, then run a shell as the user. Exiting it
-    // returns to the shell that ran login.
+    // As login(1): print the motd, then run a shell as the user. Exiting that
+    // shell returns to the one that ran login.
     const motd = await readText('/etc/motd').catch(() => '')
     if (motd) p.out(String(motd))
     const sh = p.kernel.resolveProgram('sh')

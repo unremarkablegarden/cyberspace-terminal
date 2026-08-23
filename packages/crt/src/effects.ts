@@ -1,11 +1,11 @@
-// The tube coming on and going out. strike() is implode() played backwards —
-// the machine goes out the same way it comes in.
+// The display powering on and off. strike() is implode() in reverse.
 //
-// Both draw straight onto the Term planes. The host must stop feeding the grid
-// from anywhere else while one runs, and repaint afterwards.
+// Both draw directly onto the Term planes. The host must stop feeding the grid
+// while either runs, and repaint afterwards.
 //
-// Phases are paced by wall clock, not by step count: a throttled tab (timers
-// clamped to 1s) skips frames instead of stretching the movement.
+// Phases are paced by wall clock rather than step count, so a throttled tab,
+// where timers are clamped to 1s, skips frames instead of stretching the
+// sequence.
 
 import { BRIGHT, BOLD, NORMAL } from './term.js'
 import type { Sound } from './audio.js'
@@ -18,7 +18,7 @@ interface TermLike {
   put(x: number, y: number, ch: string | number, attr?: number, inv?: number): void
 }
 
-/** A skipped effect. The caller owns the end state. */
+/** Thrown when an effect is skipped. The caller handles the end state. */
 export class Aborted extends Error {}
 
 const sleep = (ms: number, signal?: AbortSignal): Promise<void> => {
@@ -31,7 +31,7 @@ const sleep = (ms: number, signal?: AbortSignal): Promise<void> => {
   })
 }
 
-/** Run draw(progress 0..1) until dur elapses. Always ends exactly at 1. */
+/** Call draw(progress 0..1) until dur elapses. Always ends at exactly 1. */
 async function anim(dur: number, draw: (p: number) => void, signal?: AbortSignal): Promise<void> {
   const t0 = performance.now()
   for (;;) {
@@ -51,16 +51,16 @@ function line(term: TermLike, midX: number, midY: number, half: number): void {
 }
 
 /**
- * A CRT does not fade up, it strikes: the gun fires before the yoke deflects
- * properly, so the picture arrives as a dot, springs out into a line, and only
- * then opens into a raster.
+ * The power-on sequence. A CRT does not fade up: the gun fires before the yoke
+ * deflects fully, so the picture appears as a dot, expands to a line, and then
+ * opens into a raster.
  */
 export async function strike(term: TermLike, snd?: Sound, signal?: AbortSignal): Promise<void> {
   const { cols, rows } = term
   const midX = cols >> 1
   const midY = rows >> 1
 
-  // Contact, then the transformer taking load. Nothing on screen yet.
+  // Contact, then the transformer taking load. Nothing is drawn yet.
   await sleep(420, signal)
 
   term.put(midX, midY, '●', BRIGHT | BOLD)
@@ -68,10 +68,10 @@ export async function strike(term: TermLike, snd?: Sound, signal?: AbortSignal):
   snd?.degauss()
   await sleep(280, signal)
 
-  // Out into a line.
+  // Expand the dot into a horizontal line.
   await anim(300, p => line(term, midX, midY, Math.max(2, Math.round(p * midX))), signal)
 
-  // Open into a raster. Faint — a warming tube is a dim wash, not a flash.
+  // Open the line into a raster, faint: a warming tube is dim rather than bright.
   await anim(420, p => {
     const half = Math.round(p * midY)
     term.clear()
@@ -87,15 +87,15 @@ export async function strike(term: TermLike, snd?: Sound, signal?: AbortSignal):
 
   snd?.hiss(0.30, 0.10)
   await sleep(120, signal)
-  // Settled. The phosphor lets go of the wash on its own.
+  // Settled. The phosphor decay clears the remaining wash.
   term.clear()
   term.dirty = true
   await sleep(420, signal)
 }
 
 /**
- * The raster collapsing: picture to a bright line, line to a dot, dot out.
- * Does NOT clear first — whatever is on the glass is what gets crushed.
+ * The power-off sequence: the raster collapses to a bright line, then a dot,
+ * then out. Does not clear first, so whatever is displayed is what collapses.
  */
 export async function implode(term: TermLike, snd?: Sound): Promise<void> {
   const { cols, rows } = term
@@ -104,7 +104,7 @@ export async function implode(term: TermLike, snd?: Sound): Promise<void> {
 
   snd?.powerOff()
 
-  // Down to a line, keeping some noise so the picture reads as being crushed.
+  // Collapse to a line, keeping some noise so the picture reads as compressed.
   await anim(950, p => {
     const half = Math.round((1 - p) * midY)
     term.clear()
@@ -117,7 +117,7 @@ export async function implode(term: TermLike, snd?: Sound): Promise<void> {
     term.dirty = true
   })
 
-  // In to a dot.
+  // Collapse the line to a dot.
   await anim(340, p => line(term, midX, midY, Math.round((1 - p) * midX)))
 
   term.clear()
@@ -125,7 +125,7 @@ export async function implode(term: TermLike, snd?: Sound): Promise<void> {
   term.dirty = true
   await sleep(420)
 
-  // Out. The phosphor takes a few more frames to let go of it.
+  // Extinguish. The phosphor decay takes a few more frames.
   term.clear()
   term.dirty = true
   await sleep(900)

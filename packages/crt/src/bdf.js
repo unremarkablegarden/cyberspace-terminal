@@ -214,10 +214,10 @@ function vArrow(w, h, top, bot, up) {
 /**
  * U+232B, erase to the left: a leftwards arrow inside a keycap outline.
  *
- * Synthesised for the same reason the vertical arrows are — no face on offer
- * carries it, and a missing codepoint renders as `?` with nothing to warn you.
- * The CONFIG box hints with it, which is the one screen where getting a glyph
- * wrong shows in front of the person switching faces.
+ * Synthesised for the same reason as the vertical arrows: no face here carries
+ * it, and a missing code point renders as `?` with no warning. The CONFIG box
+ * hints with it, and that is the screen where the face is switched, so a
+ * missing glyph would appear during the switch.
  */
 function erase(w, h, top, bot) {
   const rows = new Array(h).fill(0)

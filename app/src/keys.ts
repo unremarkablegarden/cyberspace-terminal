@@ -12,6 +12,8 @@ const NAMED: Record<string, string> = {
   Home: '\x1b[H',
   End: '\x1b[F',
   Delete: '\x1b[3~',
+  PageUp: '\x1b[5~',
+  PageDown: '\x1b[6~',
 }
 
 /** Encode by key name — shared by physical keys and the soft keyboard. */

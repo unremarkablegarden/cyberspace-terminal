@@ -1,18 +1,15 @@
-// circ — cIRC. The room as the machine at /terminal draws it: a framed log
-// under a titled rule, the online pane beside it, a status rule, and the
-// legend across the foot.
+// circ: the chat room screen. A framed log under a titled rule, the online pane
+// beside it, a status rule, and the key legend across the foot.
 //
-// Room state and sends go through the API; live messages arrive on an RTDB REST
+// Room state and sends go through the API. Live messages arrive on an RTDB REST
 // stream (EventSource, same idToken). Slash commands resolve server-side except
-// /rooms, /who, /quit and /help; an unknown verb is refused here, since the
-// server would post it as prose. Rooms change through the picker — ^J or
-// /rooms — not a /join.
+// /rooms, /who, /quit and /help; an unknown verb is refused here, because the
+// server would post it as prose. Rooms are changed through the picker, opened
+// with ^J or /rooms; there is no /join.
 //
-// Arrival is two clocks and they never run together. The opening screenful is
-// PRINTED by the line (Reveal, 45 a second): a room's history is already
-// history, and typing it out would be minutes of somebody else's evening
-// retyped in front of you. What arrives after is TYPED at 2400 baud, because
-// that is somebody talking.
+// Two arrival clocks, never running together. The opening screenful is revealed
+// a line at a time (Reveal, 45 lines a second), since typing a backlog at 2400
+// baud would take minutes. Messages arriving afterwards type out at 2400 baud.
 
 import { dec, type Proc, type Program } from '@cyberspace/kernel'
 import {
@@ -23,11 +20,11 @@ import {
   type LogLine, type Span, type Rect, type KeyInput, type Screen,
 } from '@cyberspace/tui'
 import { ApiClient, ApiError } from './api.js'
-import { bodyOf, followList, hasStyle, type MsgBody } from './chatui.js'
+import { artLines, bodyOf, followList, hasStyle, type MsgBody } from './chatui.js'
 import {
-  ARROWS, ASLEEP, BLIP_HZ, Blinker, SILENT, Typewriter, entryLines, entryParts,
+  ARROWS, ASLEEP, BLIP_HZ, Blinker, HEAD_W, SILENT, Typewriter, entryLines, entryParts,
   mentions, narrowLines, nick, printing, systemLines, type ChatMessage,
-  type ChatSound, type ChatUser,
+  type ChatPictureHost, type ChatSound, type ChatUser, type Picture,
 } from './chat.js'
 import { helpLines, routeSlash, slashNames, type LocalCommand } from './slash.js'
 
@@ -54,41 +51,40 @@ interface Msg extends MsgBody {
   deleted?: boolean
 }
 
-/** The online pane, its two border columns included. */
+/** Width of the online pane, including its two border columns. */
 const SIDEBAR_W = 16
-/** Below this the pane and the gutter leave too little to say anything in. */
+/** Below this width the pane and gutter leave too few columns for the text. */
 const NARROW = 60
 const MAX_MSGS = 200
 const IDLE_MS = 5 * 60_000
-/** Names offered at once. */
+/** Maximum names offered in the completion box at once. */
 const SUGGEST_MAX = 6
-/** How long the typing has to pause before the index is asked. */
+/** Debounce in ms before the name index is queried. */
 const SUGGEST_MS = 250
-/** Shorter than this and the index has nothing useful to say. */
+/** Minimum fragment length before the index is worth querying. */
 const SUGGEST_MIN = 2
-/** An @ being typed at the end of the line, and the fragment after it. */
+/** Matches an @ at the end of the input line, capturing the fragment after it. */
 const MENTION_RE = /(?:^|\s)@(\w*)$/
-/** Pitch of the boop a room change makes. */
+/** Pitch of the tone played on a room change. */
 const ROOM_HZ = 420
-/** The mark on a room with something in it you have not read. */
+/** Marker shown against a room with unread messages. */
 const UNREAD = '+'
-/** Blank columns between the longest room name and the head count. */
+/** Blank columns between the longest room name and the member count. */
 const GAP = 2
 
-/** The commands this program answers itself; the server resolves the rest. */
+/** Commands this program handles itself; the server resolves the rest. */
 const LOCAL: LocalCommand[] = [
   { name: 'rooms', usage: '/rooms', summary: 'list them' },
   { name: 'who', usage: '/who', summary: 'who is here' },
   { name: 'quit', usage: '/quit', summary: 'leave cIRC' },
 ]
-/** As dispatched, aliases included. Tab and the help box show only LOCAL. */
+/** Every dispatched name, aliases included. Tab and the help box show only LOCAL. */
 const LOCAL_NAMES = ['rooms', 'who', 'quit', 'exit']
 const SLASH = slashNames('chat', LOCAL)
 
 /**
- * The legend. Inverse keycaps: the beam fills the cell and the glyph is the
- * hole left in it, which is the frame's own voice — a modal's hint is plain
- * text, and a second row of caps would compete with this one.
+ * The key legend, drawn as inverse keycaps. Modal hints use plain text instead,
+ * so a second row of caps does not compete with this one.
  */
 const HINT: Span[] = [
   { text: ' ^H ', inverse: true, attr: DIM },
@@ -101,7 +97,7 @@ const HINT: Span[] = [
   { text: ' Exit' },
 ]
 
-/** The same legend for a narrow room: no pane, so Who joins the row. */
+/** The legend for a narrow room, where there is no pane and Who joins the row. */
 const HINT_NARROW: Span[] = [
   { text: ' ^H ', inverse: true, attr: DIM },
   { text: ' Help ' },
@@ -114,7 +110,22 @@ const HINT_NARROW: Span[] = [
 
 const HELP = helpLines('chat', LOCAL)
 
-export function circProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILENT): Program {
+/** Bump when ChatState changes. A mismatch discards the draft and nothing else. */
+const STATE_VERSION = 1
+
+/** State kept across a reload. Messages are refetched rather than stored. */
+interface ChatState { v: number; draft: string }
+
+function readState(raw: unknown): ChatState | null {
+  if (!raw || typeof raw !== 'object') return null
+  const s = raw as Record<string, unknown>
+  if (s.v !== STATE_VERSION || typeof s.draft !== 'string') return null
+  return { v: STATE_VERSION, draft: s.draft }
+}
+
+export function circProgram(
+  api: ApiClient, rtdb: string, snd: ChatSound = SILENT, pictures?: ChatPictureHost,
+): Program {
   const base = rtdb.replace(/\/$/, '')
 
   return async (p: Proc) => {
@@ -141,8 +152,8 @@ export function circProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILEN
     const stack = new ScreenStack(s as never)
     const input = new InputLine({ maxLength: 2048 })
 
-    // Every rect off cols/rows: a literal column count is a bug on the other
-    // screen size.
+    // Rects are derived from cols/rows; a literal column count breaks on the
+    // other screen size.
     const outer: Rect = { x: 0, y: 0, w: cols, h: rows }
     const splitX = cols - SIDEBAR_W
     const splitY = rows - 3
@@ -154,7 +165,7 @@ export function circProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILEN
     let rooms: Room[] = []
     const msgs = new Map<string, Msg>()
     let users: ChatUser[] = []
-    /** Local-only lines, merged into the log by time. */
+    /** Lines generated locally, merged into the log by timestamp. */
     let system: { text: string; at: number }[] = []
     let scroll = 0
     let lastLines = 0
@@ -164,13 +175,13 @@ export function circProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILEN
     let running = true
     let primed = false
     let switching = false
-    /** Whether this room's roster has printed. Only the first one does. */
+    /** Whether this room's roster has been revealed. Only the first one is. */
     let rostered = false
 
     let stopStream: (() => void) | null = null
     let heartbeat: ReturnType<typeof setInterval> | null = null
 
-    /** The @ being typed, what the index said about it, and where the cycle is. */
+    /** The @-fragment being typed, the index's reply, and the cycle position. */
     let suggest: { frag: string; remote: string[]; index: number } | null = null
     let suggestTimer: ReturnType<typeof setTimeout> | null = null
     let suggestReq = 0
@@ -178,16 +189,35 @@ export function circProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILEN
     const ordered = (): Msg[] =>
       [...msgs.values()].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0))
 
-    /** The wire's shape, as the line builders want it. */
+    /**
+     * Maximum picture width: the message column, so a picture starts where the
+     * text does rather than being indented twice.
+     */
+    const picBounds = (): { cols: number; rows: number } => ({
+      cols: Math.max(1, narrow ? logRect.w : logRect.w - HEAD_W),
+      rows: Math.max(1, logRect.h),
+    })
+
+    /** The halftoned picture for a message, or undefined until it has loaded. */
+    const picture = (m: ChatMessage): Picture | undefined => {
+      if (!pics || !m.imageUrl) return undefined
+      const { cols, rows } = picBounds()
+      return pics.get(m.imageUrl, cols, rows)
+    }
+
+    /** One message in the form the line builders expect. */
     const asChat = (m: Msg): ChatMessage => ({
       id: m.id,
       username: m.username,
       timestamp: m.timestamp,
-      content: bodyOf(m),
+      // A picture the screen is about to draw is not also named in the text.
+      content: bodyOf(m, { image: Boolean(pics && m.imageUrl), art: true }),
       action: m.isAction,
       system: m.isSystem,
       deleted: m.deleted,
       blink: hasStyle(m.style, 'blink'),
+      imageUrl: m.imageUrl,
+      art: artLines(m),
     })
 
     const wire = new Typewriter({
@@ -196,12 +226,12 @@ export function circProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILEN
       onBlip: () => snd.blip(BLIP_HZ),
     })
 
-    // One bleep per BATCH of printed lines, as the shell's own type-out does it.
+    // One bleep per batch of revealed lines, matching the shell's type-out.
     const print = new Reveal({ onTick: () => paint(), onBlip: () => snd.blip(BLIP_HZ) })
 
-    // The roster lands the same way the backlog does — a name at a time, coming
-    // down the wire. Silent while the log is printing: the two run together on
-    // entry, and one clock chattering is arrival, two is a fault.
+    // The roster reveals a name at a time, like the backlog. Silent while the
+    // log is still revealing, since the two run together on entry and two
+    // chattering clocks read as a fault.
     const roll = new Reveal({
       onTick: () => paint(),
       onBlip: () => { if (!print.running) snd.blip(BLIP_HZ) },
@@ -209,8 +239,14 @@ export function circProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILEN
 
     const blink = new Blinker(() => paint())
 
-    // The server's own replies come through here — /fortune, /8ball and the
-    // rest — so they are folded like a message body.
+    // The picture scope is taken here and released in the finally. A picture
+    // loads long after the line carrying it was drawn, so the screen repaints
+    // when one arrives.
+    const pics = pictures?.()
+    const unwatchPics = pics?.onLoad(() => paint())
+
+    // Server replies (/fortune, /8ball and the rest) arrive here, so they are
+    // folded like a message body.
     const say = (text: string, complaint = false): void => {
       system.push({ text: plain(text), at: Date.now() })
       if (system.length > 40) system = system.slice(-40)
@@ -218,17 +254,22 @@ export function circProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILEN
       paint()
     }
 
-    // Never your own lines: /me and /8ball carry the author's name in the text.
+    // Never the reader's own lines: /me and /8ball carry the author's name in the text.
     const namesMe = (m: ChatMessage, text: string): boolean =>
       (m.username ?? '').toLowerCase() !== me && mentions(text, me)
 
     const lineOf = (m: ChatMessage, reveal?: number): LogLine[] => {
-      const opts = { reveal, namesMe: (said: string) => namesMe(m, said), blinkOn: blink.on }
+      const opts = {
+        reveal,
+        namesMe: (said: string) => namesMe(m, said),
+        blinkOn: blink.on,
+        picture: picture(m),
+      }
       return narrow ? narrowLines(m, logRect.w, opts) : entryLines(m, logRect.w, opts)
     }
 
     const logLines = (): LogLine[] => {
-      // Local lines interleave with the room by time.
+      // Local lines are interleaved with the room's by timestamp.
       const entries: { at: number; lines: () => LogLine[] }[] = [
         ...wire.displayed.map(m => ({ at: m.timestamp ?? 0, lines: () => lineOf(m) })),
         ...system.map(s => ({
@@ -239,31 +280,29 @@ export function circProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILEN
       entries.sort((a, b) => a.at - b.at)
       const out: LogLine[] = []
       for (const e of entries) out.push(...e.lines())
-      // Then the one still coming in, as far as it has got.
+      // Then the message still typing, as far as it has been revealed.
       const head = wire.head
       if (head) out.push(...lineOf(head, wire.typed))
       return out
     }
 
     /**
-     * The room's roster, in the order it is read.
+     * The room's roster in display order: idle members last, then operators
+     * first, then alphabetical within each group.
      *
-     * Sleepers sink to the bottom, and outrank the op sigil doing it: an op who
-     * left a window open is not who you talk to, so sorting them up among the
-     * people actually here would be worse than losing the tidy block of `@`s.
-     * Above that line it is the order every IRC client has used since 1988 —
-     * ops first, alphabetical within each group.
+     * Idle sorts ahead of operator status, so an operator who left a window
+     * open does not appear among the members actually present.
      */
     const roster = (rows: RoomUser[]): ChatUser[] => {
       const now = Date.now()
       return rows
         .map((r): ChatUser => ({
-          // Folded here rather than at each use: the pane, the Who box, the
-          // mention index and /who all read this list.
+          // Folded once here rather than at each use: the pane, the Who box,
+          // the mention index and /who all read this list.
           username: plain(r.username),
           op: r.isChatAdmin === true,
-          // Absent on a client that never sent one: those read as awake, which
-          // is better than a pane full of sleepers.
+          // Absent from clients that never send one, which then read as awake
+          // rather than filling the pane with idle markers.
           asleep: !!r.lastActivity && now - r.lastActivity > IDLE_MS,
         }))
         .sort((a, b) =>
@@ -272,21 +311,17 @@ export function circProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILEN
           || a.username.localeCompare(b.username))
     }
 
-    /** A name in the online pane, and whether it has been sitting still. */
+    /** One name in the online pane, with its idle marker. */
     const entry = (u: ChatUser): Span[] => {
       const name = { text: nick(u) }
-      // DIM, and behind the name: the marker is a fact about somebody rather
-      // than a thing they are doing, and skimming the pane for who is here
-      // should land on names.
+      // Drawn DIM and after the name, so scanning the pane lands on names.
       return u.asleep ? [{ text: `${ASLEEP} `, attr: DIM }, name] : [name]
     }
 
     /**
-     * Who to offer, in the order worth offering them.
-     *
-     * Present first, as the pane lists them; then whoever has spoken, most
-     * recent first — in a room of regulars that is nearly always the person you
-     * meant; then whatever the site's index answered with.
+     * Completion candidates in priority order: members present, in pane order;
+     * then members who have spoken, most recent first; then names from the
+     * site's index.
      */
     const suggestNames = (): string[] => {
       if (!suggest) return []
@@ -319,8 +354,8 @@ export function circProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILEN
       const r = suggestRect(names)
       if (!r || !suggest) return
 
-      // Blank before framing, as the modals do: box drawing merges with
-      // whatever is in the cell, and the log underneath is full of text.
+      // Cleared before framing, as the modals do: box drawing merges with
+      // whatever is already in the cell, and the log beneath is full of text.
       clear(s, r)
       const inner = frame(s, r)
       label(s, r, 'NAMES', { attr: BRIGHT | BOLD })
@@ -329,20 +364,19 @@ export function circProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILEN
         const name = names[i]
         if (name === undefined) break
         const on = i === suggest.index
-        // The whole row, so the selection is a bar rather than a ragged word.
+        // The whole row, so the selection reads as a bar rather than a ragged word.
         const text = ` ${name}`.padEnd(inner.w)
-        // Dim field, thickened letters: on an inverse cell the attribute is the
-        // FIELD, and BRIGHT there lights the whole bar.
+        // DIM with BOLD text: on an inverse cell the attribute applies to the
+        // background, so BRIGHT would light the whole bar.
         s.text(inner.x, inner.y + i, text.slice(0, inner.w), on ? DIM | BOLD : NORMAL, on ? 1 : 0)
       }
 
-      // Last. It is not on the screen stack — it is drawn inside the log's own
-      // rectangle — but it is a box floating over text, which is what a ground
-      // is for.
+      // Drawn last. Not on the screen stack, since it sits inside the log's own
+      // rectangle, but it is a box over text and needs a background.
       ground(s, r)
     }
 
-    /** Ask the site's index, once the typing has paused. */
+    /** Query the site's name index once typing has paused. */
     const askIndex = (frag: string): void => {
       if (suggestTimer !== null) clearTimeout(suggestTimer)
       suggestTimer = null
@@ -350,7 +384,7 @@ export function circProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILEN
       if (frag.length < SUGGEST_MIN) return
       suggestTimer = setTimeout(() => {
         void api.searchUsers(frag).catch(() => [] as string[]).then((names) => {
-          // Stale if the fragment moved on, pointless if the room is gone.
+          // Discarded if the fragment has moved on or the room has changed.
           if (id !== suggestReq || !running || !suggest) return
           suggest.remote = names
           paint()
@@ -364,15 +398,14 @@ export function circProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILEN
       suggest = null
     }
 
-    /** Read the line and open, update or close the box to match it. */
+    /** Open, update or close the completion box to match the current input line. */
     const syncSuggest = (): void => {
       const found = MENTION_RE.exec(input.value)
       if (!found) { closeSuggest(); return }
       const frag = found[1].toLowerCase()
       if (suggest?.frag === frag) return
-      // Whatever the index last said is kept until its replacement lands: a
-      // list that empties and refills reads as broken, and the locals
-      // underneath are already narrowing correctly.
+      // The previous index result is kept until its replacement arrives, so the
+      // list does not empty and refill; local names narrow correctly meanwhile.
       suggest = { frag, remote: suggest?.remote ?? [], index: 0 }
       askIndex(frag)
     }
@@ -390,16 +423,15 @@ export function circProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILEN
       const name = suggest ? names[suggest.index] : undefined
       const found = MENTION_RE.exec(input.value)
       if (!name || !found) { closeSuggest(); paint(); return }
-      // Replace the typed fragment only: the `@` and everything before it stay
-      // exactly as they are, and a trailing space means the next word is just a
-      // word.
+      // Replaces the typed fragment only, leaving the @ and everything before it
+      // untouched. The trailing space ends the completion.
       const typed = found[1].length
       input.set(input.value.slice(0, input.value.length - typed) + name + ' ')
       closeSuggest()
       paint()
     }
 
-    /** Tab on a `/word`: finish it, or say what it could have been. */
+    /** Tab on a /word: complete it, or list the possibilities. */
     const completeSlash = (): void => {
       const value = input.value
       if (!value.startsWith('/') || /\s/.test(value)) { snd.beep(220, 0.05); return }
@@ -421,7 +453,11 @@ export function circProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILEN
 
     const paint = (): void => {
       if (!running) return
-      // A modal owns the grid while it is up; painting under it would erase it.
+      // Stored here because every consumed key repaints, so no input path can
+      // omit it. A field assignment rather than a serialise; the blob is read
+      // when the session is written.
+      p.setState({ v: STATE_VERSION, draft: input.value })
+      // A modal holds the grid while open; painting beneath would erase it.
       if (stack.active) return
       blink.sync(wire.blinking)
       s.clear()
@@ -430,21 +466,20 @@ export function circProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILEN
       if (!narrow) vline(s, splitX, 0, splitY)
       hline(s, splitY, 0, cols - 1)
 
-      // Both labels in this rule are as wide as the room makes them, and the
-      // rule also carries the pane's junction and two corners. Budget them or a
-      // long slug — or a head count in the hundreds — writes over the frame.
+      // Both labels vary with the room, and the rule also carries the pane's
+      // junction and two corners, so widths are budgeted: a long slug or a
+      // three-digit member count would otherwise overwrite the frame.
       const count = ` (${users.length})`
-      // Right-anchored, so the count grows leftwards as it widens rather than
-      // over the corner. Where the pane is too narrow to hold the word as well,
-      // the number is the fact worth keeping.
+      // Right-anchored, so the count grows leftwards rather than over the
+      // corner. Where the pane cannot hold the word too, the number is kept.
       const onlineMax = narrow ? cols - 4 : cols - 3 - splitX
       const online: Span[] = cells('ONLINE' + count) + 2 <= onlineMax
         ? [{ text: 'ONLINE', attr: BOLD }, { text: count }]
         : [{ text: count.trim(), attr: BOLD }]
       const onlineW = online.reduce((n, x) => n + cells(x.text), 2)
 
-      // Wide: stop at the junction. Narrow: the two labels share the rule, so
-      // the room name is what gives way.
+      // Wide layout stops at the junction. Narrow layout shares the rule between
+      // both labels, and the room name is truncated first.
       label(s, outer, `#${(room?.slug ?? 'circ').toUpperCase()}`, {
         attr: BRIGHT | BOLD,
         max: narrow ? cols - 4 - onlineW : splitX - 2,
@@ -460,13 +495,13 @@ export function circProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILEN
 
       drawSuggest()
 
-      // `roll.count` is Infinity when no reveal is running, so the slice is the
-      // whole list without asking whether one is.
+      // roll.count is Infinity when no reveal is running, so the slice is the
+      // whole list without a separate check.
       if (!narrow) {
         drawList(s, sidebarRect, users.slice(0, roll.count).map(u => ({ text: entry(u) })))
       }
 
-      // The status rule: redraw it, then what is happening on the right.
+      // Redraw the status rule, then the current activity on its right.
       hline(s, splitY, 1, cols - 2)
       if (status) s.text(cols - 4 - cells(status), splitY, ` ${status} `, BRIGHT)
 
@@ -475,21 +510,21 @@ export function circProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILEN
       tty.paint(s.render())
     }
 
-    // --- the wire ------------------------------------------------------------
+    // --- messages -------------------------------------------------------------
 
     const feed = (): void => {
       const list = ordered().map(asChat)
       if (!primed) {
         primed = true
         wire.prime(list)
-        // The opening screenful prints by the line, oldest first.
+        // The opening screenful is revealed a line at a time, oldest first.
         print.start(Math.min(logLines().length, logRect.h))
         paint()
         return
       }
       const fresh = wire.receive(list)
       if (fresh.length) {
-        // A mention chirps in the tick's voice, held longer.
+        // A mention plays the tick tone, held longer.
         if (fresh.some(m => namesMe(m, m.content ?? ''))) snd.blip(2500, 0.06)
         else snd.blip(900)
       }
@@ -533,12 +568,12 @@ export function circProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILEN
       if (!room) return
       const asked = room.id
       const rows = await api.get<RoomUser[]>(`/v1/circ/${asked}/users`).catch(() => null)
-      // A roster in flight when the room changed belongs to the room you left.
+      // A roster request in flight across a room change belongs to the old room.
       if (room?.id !== asked) return
       if (rows) {
         users = roster(rows)
-        // The first roster of a room only. This also runs on the heartbeat, and
-        // a pane that reprinted itself every half minute is a fault, not arrival.
+        // Revealed for a room's first roster only. This also runs on the
+        // heartbeat, which must not reprint the pane every half minute.
         if (!rostered && !narrow) {
           rostered = true
           roll.start(Math.min(users.length, sidebarRect.h))
@@ -585,7 +620,7 @@ export function circProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILEN
         say(e instanceof ApiError ? e.message : 'cannot join room', true)
         return false
       }
-      // Room-change boop; not on first entry.
+      // Room-change tone, suppressed on first entry.
       if (room) snd.blip(ROOM_HZ, 0.120, 0)
       await leaveRoom()
       room = next
@@ -601,8 +636,11 @@ export function circProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILEN
       void fetchUsers()
       if (heartbeat) clearInterval(heartbeat)
       heartbeat = setInterval(() => { void beat(); void fetchUsers() }, heartbeatMs)
-      // A room change swaps every line at once. One full repaint here is cheap,
-      // and it is the only moment the diff has nothing worth carrying over.
+      // Points at the room currently being watched, so a reload returns there
+      // rather than to the room the program was started with.
+      p.setResume(`circ ${next.slug}`)
+      // A room change replaces every line, so the diff has nothing to carry
+      // over and one full repaint is cheaper.
       s.invalidate()
       paint()
       return true
@@ -637,7 +675,7 @@ export function circProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILEN
       paint()
     }
 
-    /** A modal animating between keystrokes — the stack only repaints on keys. */
+    /** Drives a modal that animates between keystrokes; the stack only repaints on keys. */
     const repaint = (): void => {
       stack.top?.draw?.(s)
       tty.paint(s.render())
@@ -648,7 +686,7 @@ export function circProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILEN
     }
 
     const openWho = (): void => {
-      // Same row builder as the sidebar, so the markers cannot drift.
+      // Shares the sidebar's row builder, so the markers cannot drift apart.
       open(new TextPopup({
         title: `ONLINE (${users.length})`,
         lines: users.length ? users.map(entry) : [[{ text: 'nobody', attr: DIM }]],
@@ -657,7 +695,7 @@ export function circProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILEN
       }))
     }
 
-    // Read markers off the RTDB; the API has no unread flag.
+    // Read markers come from RTDB directly; the API exposes no unread flag.
     const roomViews = async (): Promise<Record<string, { lastViewedAt?: number }>> => {
       if (!api.userId) return {}
       const token = await api.token()
@@ -689,7 +727,7 @@ export function circProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILEN
         return
       }
 
-      // Never marks the current room.
+      // The current room is never marked unread.
       const unread = (r: Room): boolean =>
         r.slug !== room?.slug &&
         (r.lastMessageAt ?? 0) > (views[r.id]?.lastViewedAt ?? 0)
@@ -704,7 +742,7 @@ export function circProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILEN
         hint: `${ARROWS} ↵`,
         items: heads.map((h, i) => (h + counts[i].padStart(rowW - h.length)).trimEnd()),
         selected: Math.max(0, list.findIndex(r => r.slug === room?.slug)),
-        // Mark BOLD, count DIM; on the inverted row the attr is the field.
+        // Marker BOLD, count DIM. On the inverted row the attribute is the background.
         decorate: (g, row, i, on) => {
           const head = heads[i]
           const count = counts[i]
@@ -719,7 +757,7 @@ export function circProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILEN
             g.text(row.x + countX, row.y, count, DIM, inv)
           }
         },
-        // Above the input divider: the line being typed stays visible.
+        // Drawn above the input divider so the line being typed stays visible.
         bounds: { x: 0, y: 0, w: cols, h: splitY },
         trimTop: 1,
         shadow: true,
@@ -776,7 +814,7 @@ export function circProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILEN
     const onKey = (k: KeyInput): void => {
       if (stack.active) { stack.key(k); tty.paint(s.render()); return }
 
-      // Any key ends the backlog print, then means what it always means.
+      // Any key finishes the backlog reveal and then acts as it normally would.
       print.finish()
       roll.finish()
 
@@ -790,9 +828,8 @@ export function circProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILEN
       if (k.ctrlKey && k.key === 'j') { void openRooms(); return }
       if (k.ctrlKey && k.key === 'u' && narrow) { openWho(); return }
 
-      // While the names box is up it owns the arrows and Tab: that is the whole
-      // interaction, and an arrow that scrolled the log instead would be the
-      // cycle you are in refusing to move.
+      // While the names box is open it takes the arrows and Tab, which are its
+      // whole interaction; an arrow scrolling the log would leave the cycle stuck.
       const names = suggestNames()
       if (names.length && !k.ctrlKey && !k.metaKey && !k.altKey) {
         if (k.key === 'ArrowUp') { moveSuggest(-1); return }
@@ -804,8 +841,8 @@ export function circProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILEN
       if (k.key === 'Enter') { submit(); return }
       if (k.key === 'Tab') { completeSlash(); return }
 
-      // Up and down always land on something that answers: a line of scrollback,
-      // or a complaint at the end of it.
+      // Up and down always produce a response: a line of scrollback, or the
+      // edge beep at the end of it.
       const page = Math.max(1, logRect.h - 2)
       const maxScroll = Math.max(0, lastLines - logRect.h)
       const move = (to: number): void => {
@@ -825,13 +862,16 @@ export function circProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILEN
     // --- run -----------------------------------------------------------------
 
     tty.setRaw()
-    // These answer with a tick of their own; the host must not clack over it.
+    // These play their own tick, so the host suppresses the key click.
     tty.silence(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown'])
     p.out('\x1b[?1049h')
     s.invalidate()
     paint()
 
     try {
+      const parked = readState(p.takeState())
+      if (parked?.draft) { input.set(parked.draft); paint() }
+
       const target = p.argv[1] ?? (await loadRooms().catch(() => []))[0]?.slug
       if (!target || !await joinRoom(target)) {
         say('/rooms to enter one, /quit to leave')
@@ -853,6 +893,8 @@ export function circProgram(api: ApiClient, rtdb: string, snd: ChatSound = SILEN
       print.stop()
       roll.stop()
       blink.stop()
+      unwatchPics?.()
+      pics?.release()
       await leaveRoom()
       p.out('\x1b[?1049l\x1b[?25h')
       tty.setCooked()

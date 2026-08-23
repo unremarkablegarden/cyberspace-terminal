@@ -1,13 +1,17 @@
-// xterm buffer -> Term cell planes. Runs every frame; writes only changed cells.
+// Copies the xterm buffer into the Term cell planes. Runs every frame and
+// writes only changed cells.
 //
-// Two kinds of program write here. One draws on a Surface and encodes the exact
-// attribute byte (@cyberspace/tui attrs.ts): the palette index it sets is the
-// marker, and the byte comes back whole. Everything else — a shell, a wasm
-// binary, anything printing plain SGR — is read the way a terminal reads it.
+// Cells arrive in three forms:
+// - A Surface encodes the exact attribute byte as a palette index
+//   (@cyberspace/tui attrs.ts), which is decoded back here unchanged.
+// - Plain SGR from a shell or wasm binary is read as any terminal reads it.
+// - A picture cell is a private-use code point naming a bitmap the faceplate
+//   already holds, which is written to the gfx plane. See app/src/image.ts.
 
 import type { Terminal, IBufferCell } from '@xterm/headless'
 import { NORMAL, BRIGHT, BOLD, DIM, ITALIC, BG } from '@cyberspace/crt/term'
-import { INDEX_LEVEL, BG_INDEX } from '@cyberspace/tui'
+import { INDEX_LEVEL, BG_INDEX, PICT_LO, PICT_HI } from '@cyberspace/tui'
+import { pictureBits } from './image'
 
 function attrFor(cell: IBufferCell): number {
   let attr = NORMAL
@@ -29,14 +33,16 @@ function attrFor(cell: IBufferCell): number {
   return attr
 }
 
-export function syncTerm(xt: Terminal, term: any): void {
+/** `back` is how many rows above the live bottom the view sits. 0 is live. */
+export function syncTerm(xt: Terminal, term: any, back = 0): void {
   const buf = xt.buffer.active
   const cell = buf.getNullCell()
   const cols = Math.min(term.cols, xt.cols)
   const rows = Math.min(term.rows, xt.rows)
+  const top = buf.baseY - back
 
   for (let y = 0; y < rows; y++) {
-    const line = buf.getLine(buf.baseY + y)
+    const line = buf.getLine(top + y)
     const base = y * term.cols
     for (let x = 0; x < cols; x++) {
       let code = 32
@@ -51,13 +57,31 @@ export function syncTerm(xt: Terminal, term: any): void {
         inv = cell.isInverse() ? 1 : 0
       }
       const i = base + x
-      if (term.chars[i] !== code || term.attrs[i] !== attr || term.inverse[i] !== inv) {
+      // A picture cell: the code point is a handle on a bitmap held by the host,
+      // not a character. Bitmaps are interned, so comparing identity is enough to
+      // diff them. An unknown handle renders blank rather than as a missing-glyph
+      // box; a session restored after a reload has handles but no bank behind them.
+      // See app/src/image.ts and packages/tui/src/pict.ts.
+      const bits = pictureBits(code)
+      if (bits) {
+        if (term.gfx[i] !== bits || term.attrs[i] !== attr || term.inverse[i] !== inv) {
+          term.putGlyph(x, y, bits, attr, inv)
+        }
+        continue
+      }
+      if (code >= PICT_LO && code <= PICT_HI) code = 32
+      // `|| term.gfx[i]` clears a cell that has stopped being a picture. putGlyph
+      // leaves a space in the character plane, so the code points already match
+      // and no other term would detect the change.
+      if (term.chars[i] !== code || term.gfx[i] || term.attrs[i] !== attr || term.inverse[i] !== inv) {
         term.put(x, y, code, attr, inv)
       }
     }
   }
 
-  if (term.cx !== buf.cursorX || term.cy !== buf.cursorY) {
+  // Not updated while scrolled back: the row index would fall outside the grid.
+  // The host hides the caret instead.
+  if (back === 0 && (term.cx !== buf.cursorX || term.cy !== buf.cursorY)) {
     term.cx = buf.cursorX
     term.cy = buf.cursorY
     term.dirty = true

@@ -66,8 +66,9 @@ export class ApiClient {
   }
 
   /**
-   * idToken for direct RTDB reads (live streams use it as ?auth=). renew=true
-   * forces a refresh — call it when the database reports the token expired.
+   * idToken for direct RTDB reads, which live streams pass as ?auth=.
+   * renew=true forces a refresh; call it when the database reports the token
+   * has expired.
    */
   async token(renew = false): Promise<string | null> {
     if ((renew || !this.idToken) && this.refreshToken) {
@@ -145,8 +146,8 @@ export class ApiClient {
     return json?.data as T
   }
   /**
-   * Names for an @-fragment, for the autocompletes. Answers with usernames
-   * only — the boxes that call this are lists of names, not of people.
+   * Usernames matching an @-fragment, for autocomplete. Returns names only.
+   * A fragment shorter than two characters returns empty.
    */
   async searchUsers(q: string): Promise<string[]> {
     if (q.length < 2) return []

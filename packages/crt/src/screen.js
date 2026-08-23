@@ -55,8 +55,8 @@ export class Screen {
 
     this.program?.frame?.(this, (t - this.t0) / 1000)
 
-    // The tube renders every frame (noise, roll bar and persistence are all
-    // per-frame); the rasteriser runs only when a cell changed.
+    // The CRT renders every frame, since noise, the roll bar and persistence are
+    // all per-frame. The rasteriser runs only when a cell changed.
     if (term.dirty) {
       term.raster()
       crt.upload(term.fb)

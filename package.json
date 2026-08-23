@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "version:sync": "bun tools/version.ts",
-    "version:check": "bun tools/version.ts --check"
+    "version:check": "bun tools/version.ts --check",
+    "comments:check": "bun tools/comments.ts --check"
   },
   "workspaces": [
     "packages/*",

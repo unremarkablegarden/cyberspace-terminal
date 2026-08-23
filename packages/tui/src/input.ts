@@ -1,17 +1,15 @@
-// A single-line input, with a caret.
+// A single-line input with a caret.
 //
-// Editing behaves the way the command line does — arrows, Home/End, insert and
-// delete at the caret — because there is no good reason for the two places you
-// type in this machine to disagree about what Left does.
+// Editing matches the command line: arrows, Home/End, and insert and delete at
+// the caret, so both places text is typed behave the same way.
 //
-// The value can be longer than the field, so the field is a window onto it that
-// follows the caret. The window only moves when the caret would otherwise leave
-// it, which is what keeps the text still while you type in the middle of a long
-// line instead of shuffling it under your eyes.
+// The value may be longer than the field, which is a window onto it that
+// follows the caret. The window moves only when the caret would otherwise leave
+// it, so text stays still while typing in the middle of a long line.
 //
-// The shell's own line editor (shell.ts) is a different thing: it also has
-// history and completion, and is wired straight to the grid rather than to a
-// rect. This is the widget for programs.
+// The shell's own line editor (shell.ts) is separate: it adds history and
+// completion and writes to the grid rather than to a rect. This is the widget
+// for programs.
 
 import { NORMAL, BRIGHT, DIM } from './attrs.js'
 import { oneCell } from './plain.js'
@@ -23,14 +21,11 @@ export interface InputOptions {
   prompt?: string
   maxLength?: number
   /**
-   * Shown DIM in the empty field, and gone the moment anything is typed.
-   *
-   * Furniture, so it takes the beam level furniture takes — a placeholder at
-   * NORMAL is a value, and a field that already looks filled in is one nobody
-   * types into.
+   * Placeholder shown DIM in an empty field, cleared as soon as anything is
+   * typed. DIM rather than NORMAL, which would read as an entered value.
    */
   placeholder?: string
-  /** Rings when a keystroke is refused. */
+  /** Called when a keystroke is refused. */
   onReject?: () => void
 }
 
@@ -52,21 +47,19 @@ export class InputLine {
     this.onReject = opts.onReject
   }
 
-  /** What has been typed. Read-only from outside — see set(). */
+  /** The current value. Read-only from outside; use set(). */
   get value() {
     return this.text
   }
 
   /**
-   * Replace the line wholesale, as a completion does. The caret lands at the
-   * end unless told otherwise, which is where someone who just accepted a
-   * completion expects to carry on typing.
+   * Replace the whole value, as a completion does. The caret moves to the end
+   * unless a position is given.
    *
-   * A setter rather than a writable field: the caret is an offset INTO the
-   * value, so the two have to move together. Assigning the text on its own
-   * leaves the caret parked at whatever offset the old value put it — which is
-   * exactly the bug where completing `@jon` to `@jonny` left the cursor sitting
-   * after the first `n`.
+   * A method rather than a writable field, because the caret is an offset into
+   * the value and the two must move together: assigning the text alone leaves
+   * the caret at the old offset, which is how completing `@jon` to `@jonny` left
+   * it after the first `n`.
    */
   set(next: string, pos = next.length) {
     this.text = next.slice(0, this.maxLength)
@@ -74,12 +67,11 @@ export class InputLine {
   }
 
   /**
-   * Drop a run of text in at the caret — a paste, or anything else arriving all
-   * at once. Whatever will not fit is trimmed and refused audibly, the same as
-   * one character too many is.
+   * Insert a run of text at the caret, as a paste does. Text beyond the limit is
+   * trimmed and the refusal is sounded, as for a single character.
    *
-   * Returns false only when there was nothing to insert, so a caller can leave
-   * an empty clipboard to the browser.
+   * Returns false only when there was nothing to insert, so a caller can let the
+   * browser handle an empty clipboard.
    */
   insert(text: string): boolean {
     if (!text) return false
@@ -97,7 +89,7 @@ export class InputLine {
     return true
   }
 
-  /** True if the key was consumed. Enter and Escape are the caller's business. */
+  /** True if the key was consumed. Enter and Escape are left to the caller. */
   onKey(e: KeyInput): boolean {
     if (e.metaKey || e.ctrlKey || e.altKey) return false
 
@@ -129,8 +121,8 @@ export class InputLine {
       return true
     }
 
-    // Forward delete. Only reachable now that the caret can leave the end of
-    // the line, which is why it did not exist before.
+    // Forward delete, reachable only because the caret can sit before the end
+    // of the line.
     if (e.key === 'Delete') {
       if (this.pos < this.text.length) {
         this.text = this.text.slice(0, this.pos) + this.text.slice(this.pos + 1)
@@ -139,9 +131,9 @@ export class InputLine {
     }
 
     if (e.key.length === 1) {
-      // A character the grid cannot hold in one cell tears the row it is typed
-      // into, and every row after it once it is sent. Refused at the key, which
-      // is the only place the operator can be told. See plain.ts.
+      // A character the grid cannot hold in one cell misaligns this row, and
+      // every row after it once sent. Refused at the keystroke, the only point
+      // at which the operator can be told. See plain.ts.
       if (this.text.length >= this.maxLength || !oneCell(e.key)) {
         this.onReject?.()
         return true
@@ -161,29 +153,27 @@ export class InputLine {
   }
 
   /**
-   * Paint into `r` (one row is used) and park the hardware cursor on the caret,
-   * so the shell's blink lands in the right place.
+   * Paint into `r`, using one row, and place the hardware cursor on the caret so
+   * the terminal's blink appears in the right place.
    */
   draw(term: Grid, r: Rect) {
     for (let x = r.x; x < r.x + r.w; x++) term.put(x, r.y, 32)
 
     const width = Math.max(1, r.w - this.prompt.length)
 
-    // Scroll only as far as it takes to bring the caret back into the field.
-    // The caret needs a cell of its own at the end of the value, hence the
-    // width - 1: it can sit one past the last character.
+    // Scroll only far enough to bring the caret back into the field. width - 1
+    // because the caret needs its own cell one past the last character.
     if (this.pos < this.off) this.off = this.pos
     if (this.pos > this.off + width - 1) this.off = this.pos - width + 1
-    // And never so far that the field is padded out with blanks on the right,
-    // which is what a shrinking value would otherwise leave behind.
+    // Never so far that the field is padded with blanks on the right, which a
+    // shrinking value would otherwise leave.
     this.off = Math.max(0, Math.min(this.off, Math.max(0, this.text.length - width + 1)))
 
     const visible = this.text.slice(this.off, this.off + width)
 
     term.text(r.x, r.y, this.prompt, BRIGHT)
-    // The placeholder sits where the value would, so the caret lands on its
-    // first character rather than beside it — which is what says the field is
-    // empty and waiting rather than holding those words.
+    // The placeholder occupies the value's position, so the caret sits on its
+    // first character and the field reads as empty rather than filled.
     if (!this.text && this.placeholder) {
       term.text(r.x + this.prompt.length, r.y, this.placeholder.slice(0, width), DIM)
     } else {

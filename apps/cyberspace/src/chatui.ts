@@ -22,20 +22,33 @@ export interface MsgBody {
   style?: string | string[]
 }
 
-/** Styles arrive as one name or a chain. */
+/** A style arrives as one name or a chain of them. */
 export const hasStyle = (style: string | string[] | undefined, name: string): boolean =>
   Array.isArray(style) ? style.includes(name) : style === name
 
 /**
- * One message's tail: text plus any attachment placeholders.
+ * One message's body: its text plus any attachment placeholders.
  *
- * Folded to one cell per character on the way out — an emoji is two cells here
- * and one on the parser's side, and the difference costs the row a column for
- * good. See plain.ts.
+ * `drawn` lists what the caller renders itself. An attachment the screen is
+ * about to draw must not also be named in the text, or it appears twice; the
+ * name is the fallback for attachments that cannot be shown.
+ *
+ * Folded to one cell per character on the way out, because an emoji occupies
+ * two cells here and one on the parser's side, which would misalign the row
+ * permanently. See plain.ts.
  */
-export function bodyOf(m: MsgBody): string {
-  let text = hasStyle(m.style, 'art') ? '[ART]' : (m.content ?? '')
-  // The API writes these into the content as well as the field.
+export interface BodyDrawn {
+  /** The screen halftones `imageUrl` itself. */
+  image?: boolean
+  /** The screen lays the art out itself. */
+  art?: boolean
+}
+
+export function bodyOf(m: MsgBody, drawn: BodyDrawn = {}): string {
+  const art = hasStyle(m.style, 'art')
+  if (art && drawn.art) return ''
+  let text = art ? '[ART]' : (m.content ?? '')
+  // The API writes these into the content as well as into the field.
   if (m.eightballAnswer && !text.includes(m.eightballAnswer)) text += ` ${m.eightballAnswer}`
   if (m.fortuneText && !text.includes(m.fortuneText)) text += ` ${m.fortuneText}`
   if (m.audioAttachment) {
@@ -44,8 +57,27 @@ export function bodyOf(m: MsgBody): string {
     text += ` [SONG: ${name}${a.genre ? ` (${a.genre})` : ''}]`
   }
   if (m.gifUrl) text += ' [GIF]'
-  if (m.imageUrl) text += ' [IMG]'
+  if (m.imageUrl && !drawn.image) text += ' [IMG]'
   return plain(text.trim())
+}
+
+/**
+ * The rows of an `/art` message.
+ *
+ * Art is drawn against a fixed width and carried as base64 in `content` rather
+ * than as text, so it must not be wrapped, reflowed or folded. Rows wider than
+ * the pane are truncated.
+ */
+export function artLines(m: MsgBody): string[] | undefined {
+  if (!hasStyle(m.style, 'art') || !m.content) return undefined
+  let text: string
+  try {
+    text = atob(m.content)
+  } catch {
+    // Not valid base64. Show the raw line rather than an empty message.
+    return m.content.split('\n')
+  }
+  return text.replace(/\r/g, '').split('\n')
 }
 
 /** Wrap spans to width; continuation lines get a hanging indent. */
@@ -65,7 +97,7 @@ export function wrapSpans(spans: Span[], width: number, indent: number): Span[][
     for (const word of text.split(/(\s+)/)) {
       if (!word) continue
       if (used + word.length > width && used > indent) flush()
-      // A word longer than the line hard-breaks.
+      // A word longer than the line is hard-broken.
       let w = word
       while (used + w.length > width) {
         const take = width - used

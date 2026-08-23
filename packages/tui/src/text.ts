@@ -1,11 +1,10 @@
-// A centred modal page of text — read it, dismiss it.
+// A centred modal page of read-only text.
 //
-// SelectPopup's sibling: same frame, same centring, same rule about only using
-// the `bounds` it was given. What it does not have is a selection, because
-// there is nothing here to choose. Anything taller than the box scrolls.
+// The same frame, centring and bounds handling as SelectPopup, without a
+// selection. Content taller than the box scrolls.
 //
-// It is a Screen, so the grid underneath is snapshotted on push and handed back
-// on pop — the program behind it neither knows nor redraws.
+// A Screen, so the grid beneath is snapshotted on push and restored on pop; the
+// program behind it is not notified and does not redraw.
 
 import { NORMAL, BRIGHT, BOLD, DIM } from './attrs.js'
 import type { Grid } from './surface.js'
@@ -14,20 +13,18 @@ import type { KeyInput } from './keys.js'
 import { cells, clear, frame, ground, hline, label, shadow, type Rect, type Span } from './box.js'
 
 /**
- * A label's worth of content: plain text, or spans when parts of it carry their
- * own treatment — a keycap, a badge on a DIM inverse field. The same Span the
- * rules use, so a program styles a line in a box the way it styles a label in a
- * rule.
+ * One line's content: plain text, or spans when parts carry their own
+ * attributes, such as a keycap or a badge. The same Span type the rules use, so
+ * a line in a box is styled the same way as a label in a rule.
  */
 export type TextLabel = string | Span[]
 
 /**
- * One display row: a label's worth of content, or a rule across the box.
+ * One display row: line content, or a rule across the box.
  *
- * RULE is a marker rather than a string of dashes because only the widget knows
- * how wide the box ended up — a caller that drew its own would either fall
- * short of both edges or set the width of the box by being the longest line in
- * it.
+ * RULE is a marker rather than a string of dashes, because only the widget
+ * knows the final box width. A caller supplying its own would either fall short
+ * of both edges or become the longest line and set the width.
  */
 export type TextLine = TextLabel | typeof RULE
 
@@ -37,33 +34,29 @@ export const RULE = { rule: true } as const
 export interface TextOptions {
   title: string
   /**
-   * Set into the TOP rule at the right, opposite the title.
+   * Set into the top rule at the right, opposite the title.
    *
-   * For what a thing IS rather than what it says — a badge, a count, a state.
-   * On the rule because the rule is where this widget keeps everything that is
-   * about the box rather than in it, and because a row of the body spent on
-   * two words is a row of the text it was opened to read.
+   * For a badge, a count or a state: metadata about the box rather than part of
+   * its content, and it costs no row of the body.
    */
   note?: TextLabel
-  /** One entry per display line. Already wrapped — this does not reflow. */
+  /** One entry per display line. Already wrapped; this does not reflow. */
   lines: TextLine[]
   /** Called when the reader dismisses it. The caller pops. */
   onDone: () => void
-  /** As SelectPopup: the widget makes no sound of its own. */
+  /** As SelectPopup: the widget produces no sound itself. */
   onFeedback?: (kind: 'move' | 'close' | 'edge' | 'inert', e: KeyInput) => void
   /**
-   * One extra key the box answers, matched case-insensitively and only as a
-   * bare letter — a modifier combo belongs to the browser.
+   * One extra key the box handles, matched case-insensitively and only as a
+   * bare letter; modifier combinations are left to the browser.
    *
-   * The box stays open: an action here is something you do TO what is on
-   * screen, not a way off it, and the caller owns whatever it sounds like.
-   * Advertise it in `hint` — the widget will not do that for you, because only
-   * the caller knows what to call it.
+   * The box stays open, since an action operates on what is displayed rather
+   * than dismissing it, and the caller supplies any sound. Advertise it in
+   * `hint`: the widget cannot, since only the caller knows its label.
    */
   /**
-   * One extra key the box answers itself — the bio's `L`, which copies. `silent`
-   * says the caller makes a sound of its own for it, so the keyclick would be a
-   * second sound for one keypress.
+   * One extra key the box handles itself, such as the bio box's L, which copies.
+   * `silent` marks keys the caller sounds itself, so the key click is suppressed.
    */
   action?: { key: string; run: () => void; silent?: boolean }
   /** Shown in the bottom rule. */
@@ -71,13 +64,12 @@ export interface TextOptions {
   /** Region to centre within. Defaults to the whole grid. */
   bounds?: Rect
   /**
-   * Lay a drop-shadow under the box, one row down and one column right — the
-   * same offset the boot banner and the site's own DOS modals use.
+   * Draw a drop shadow under the box, one row down and one column right, the
+   * same offset the boot banner and the website's DOS modals use.
    *
-   * Off by default. It costs nothing to draw, but it EATS the cells it falls
-   * on: over a program that is still readable underneath, a shadow is the thing
-   * saying this box is on top of it, and over a program that is not it is just
-   * a smudge. The caller knows which it has.
+   * Off by default. The shadow overwrites the cells it falls on, which reads as
+   * depth over a program still legible beneath and as noise otherwise. Only the
+   * caller knows which case applies.
    */
   shadow?: boolean
 }
@@ -88,8 +80,8 @@ const PAD = 2
 
 
 /**
- * Cells a line occupies, whichever kind it is. A rule is zero: it takes the
- * width the box turns out to have rather than asking for one.
+ * Cells a line occupies, for either kind. A rule counts zero, since it adopts
+ * the box's final width rather than requesting one.
  */
 const width = (line: TextLine): number => {
   if (typeof line === 'string') return cells(line)
@@ -100,24 +92,23 @@ const width = (line: TextLine): number => {
 export class TextPopup implements Screen {
   /** First visible line. Non-zero only when the text is taller than the box. */
   private top = 0
-  /** A result standing in for the hint until the next keypress. See say(). */
+  /** A result shown in place of the hint until the next keypress. See say(). */
   private message?: TextLabel
   /**
-   * The grid this box was last drawn on, so `say` can repaint without being
-   * handed one. There is only ever the one, and a modal that cannot show the
-   * result of its own action would make the caller draw over it from outside.
+   * The grid this box was last drawn on, so say() can repaint without being
+   * passed one. Without it, a caller would have to draw the result over the
+   * modal from outside.
    */
   private term?: Grid
 
   constructor(private opts: TextOptions) {}
 
   /**
-   * Report the result of an `action` in the bottom rule, in place of the hint.
+   * Report the result of an action in the bottom rule, replacing the hint.
    *
-   * Because the box is the only thing the reader can see: the program
-   * underneath is covered, and its own status rule — even where the box does
-   * not reach — was snapshotted when this went up and will not be repainted
-   * until it comes down. The next keypress puts the hint back.
+   * The program beneath is covered, and its own status rule was snapshotted on
+   * push and will not repaint until this box is popped, so the result has
+   * nowhere else to go. The next keypress restores the hint.
    */
   say(text: TextLabel) {
     this.message = text
@@ -127,22 +118,22 @@ export class TextPopup implements Screen {
   }
 
   /**
-   * Forget the grid, so a `say` still in flight cannot paint a box that is no
-   * longer on the stack.
+   * Drop the grid reference, so a pending say() cannot paint a box that has been
+   * popped.
    *
-   * The one caller of `say` is asynchronous — `feed`'s bio box reports a
-   * clipboard write from a `.then` — and Escape does not wait for it. Without
-   * this, an answer landing after the pop repaints a dead box over whatever is
-   * underneath AND turns the caret off with `draw`'s last line, which is how
-   * the shell ends up at a prompt with no cursor: nothing below the stack ever
-   * turns it back on. The same guard TunePopup and SettingsScreen keep, and the
-   * same one PromptPopup keeps with its `closed` flag.
+   * say()'s only caller is asynchronous: feed's bio box reports a clipboard
+   * write from a .then, and Escape does not wait for it. Without this, a result
+   * arriving after the pop repaints a dead box over whatever is beneath and
+   * clears the caret in draw()'s last line, leaving the shell at a prompt with
+   * no cursor, since nothing below the stack turns it back on. TunePopup and
+   * SettingsScreen keep the same guard, as does PromptPopup with its `closed`
+   * flag.
    */
   dispose() {
     this.term = undefined
   }
 
-  /** As SelectPopup: the scroll keys answer themselves, so no keyclick. */
+  /** As SelectPopup: the scroll keys sound themselves, so the key click is suppressed. */
   silentKey(e: KeyInput): boolean {
     if (e.metaKey || e.altKey || e.ctrlKey) return false
     const action = this.opts.action
@@ -152,10 +143,9 @@ export class TextPopup implements Screen {
 
   onKey(e: KeyInput): boolean {
     if (e.metaKey || e.altKey) return false
-    // Any key the box answers puts the hint back — a result is about the key
-    // that caused it and stops being true the moment there is another one. The
-    // stack repaints after a consumed key, so this needs no draw of its own;
-    // an action that reports again does so through say() below.
+    // Any handled key restores the hint, since a result describes the keypress
+    // that produced it. The stack repaints after a consumed key, so no draw is
+    // needed here; an action reporting again does so through say().
     this.message = undefined
 
     if (e.key === 'Escape' || e.key === 'Enter'
@@ -174,8 +164,8 @@ export class TextPopup implements Screen {
       return true
     }
 
-    // Swallowed rather than passed on: unconsumed arrows scroll the page under
-    // the modal, which is the classic way a TUI in a browser leaks.
+    // Swallowed rather than passed on: an unconsumed arrow scrolls the host
+    // page beneath the modal.
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       this.opts.onFeedback?.('inert', e)
       return true
@@ -191,8 +181,8 @@ export class TextPopup implements Screen {
   }
 
   /**
-   * How far down the text can be pushed. Recomputed rather than stored: it
-   * depends on the box height, which depends on the grid.
+   * Maximum scroll offset. Recomputed rather than stored, since it depends on
+   * the box height, which depends on the grid.
    */
   private maxTop = 0
 
@@ -201,8 +191,8 @@ export class TextPopup implements Screen {
     const b = this.opts.bounds ?? { x: 0, y: 0, w: term.cols, h: term.rows }
     const widest = this.opts.lines.reduce((n, line) => Math.max(n, width(line)), 0)
 
-    // A title and a note share the top rule, so that row wants room for both
-    // plus the blank each label sits in — otherwise they meet in the middle.
+    // The title and note share the top rule, so it needs room for both plus the
+    // blank each label sits in, or they meet in the middle.
     const top = cells(this.opts.title)
       + (this.opts.note ? width(this.opts.note) + 2 : 0)
 
@@ -212,9 +202,9 @@ export class TextPopup implements Screen {
         MIN_W,
         widest + PAD * 2 + 2,
         top + 6,
-        // Both, and the wider of them: a message longer than the hint would
-        // otherwise be laid out from an edge the box does not have, and a
-        // right-aligned label that does not fit starts before its own frame.
+        // The wider of the two: a message longer than the hint would otherwise
+        // be laid out from an edge the box does not have, and a right-aligned
+        // label that does not fit would start before its own frame.
         Math.max(
           this.opts.hint ? width(this.opts.hint) : 0,
           this.message ? width(this.message) : 0,
@@ -235,12 +225,11 @@ export class TextPopup implements Screen {
     this.term = term
     const r = this.rect(term)
 
-    // Blank the whole box, borders included, BEFORE framing it. Box drawing
-    // merges line bits with whatever is already in the cell — which is what
-    // makes junctions resolve themselves, and is exactly wrong for a modal: a
-    // border crossing the program's own rule underneath would fuse with it
-    // into a tee instead of covering it. Clearing first means the frame is
-    // drawn onto nothing and has nothing to fuse with.
+    // Clear the whole box, borders included, before framing it. Box drawing
+    // merges line bits with the existing cell, which resolves junctions but is
+    // wrong for a modal: a border crossing the program's own rule beneath would
+    // merge into a tee rather than covering it. Clearing first leaves nothing
+    // to merge with.
     clear(term, r)
     if (this.opts.shadow) shadow(term, r, this.opts.bounds)
     const inner = frame(term, r)
@@ -262,20 +251,19 @@ export class TextPopup implements Screen {
         continue
       }
       if (!Array.isArray(line)) {
-        // RULE. Run it into both borders: hline merges line bits with what is
-        // already in the cell, so the ends resolve to tees rather than sitting
-        // a column short of an edge they were clearly meant to reach.
+        // A rule, run into both borders: hline merges line bits with the
+        // existing cell, so the ends resolve to tees rather than stopping a
+        // column short.
         //
-        // At the frame's own beam, not below it. A divider IS the frame — the
-        // same rule, continued inwards — and hline writes its attribute into
-        // the two border cells it merges with, so a dimmer one would take the
-        // tees down with it and leave two faint notches in the border.
+        // Drawn at the frame's own beam level. hline writes its attribute into
+        // the two border cells it merges with, so a dimmer divider would dim
+        // those tees and leave two notches in the border.
         hline(term, y, inner.x - 1, inner.x + inner.w, NORMAL)
         continue
       }
-      // Spans run left to right from the same margin, each cut at the edge of
-      // the box — a row that overruns loses its tail rather than wrapping into
-      // the next line, which is not this widget's business to invent.
+      // Spans run left to right from the same margin, each cut at the box edge.
+      // An over-long row loses its tail rather than wrapping, which this widget
+      // does not do.
       let x = inner.x + PAD
       const end = inner.x + inner.w
       for (const span of line) {
@@ -286,13 +274,12 @@ export class TextPopup implements Screen {
       }
     }
 
-    // Last, over everything the box just drew. See `ground` in box.ts. Picture
-    // cells are skipped there, which matters here more than anywhere: this is
-    // the widget a halftone lands in.
+    // Applied last, over everything the box drew. See ground() in box.ts, which
+    // skips picture cells; this is the widget images are drawn into.
     ground(term, r)
 
-    // Nothing to type into, so no caret — the stamp would invert a cell of the
-    // frame and read as a blinking corner. The stack restores this on pop.
+    // Nothing here takes input, so the caret is hidden; it would otherwise
+    // invert a cell of the frame. The stack restores it on pop.
     term.showCursor = false
     term.dirty = true
   }

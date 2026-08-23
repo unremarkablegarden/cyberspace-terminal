@@ -1,13 +1,13 @@
-// A cell grid that renders to ANSI. Full paint on first render, minimal
-// cursor-move + SGR runs after — the byte diet matters at baud rates.
+// A cell grid that renders to ANSI. Full paint on the first render, then
+// cursor moves and SGR runs for changed cells only, which keeps the byte count
+// low enough to matter at the output rate.
 //
-// The planes and the drawing calls are the CRT grid's, cell for cell and
-// argument for argument, so a widget written against one draws on the other
-// without knowing which it has. See attrs.ts.
+// The planes and drawing calls mirror the CRT grid cell for cell and argument
+// for argument, so one copy of each widget draws on either. See attrs.ts.
 
 import { NORMAL, sgr } from './attrs.js'
 
-/** Marks, joiners and variation selectors: no cell of their own. See text(). */
+/** Combining marks, joiners and variation selectors, which occupy no cell. See text(). */
 const ZERO_WIDTH = /[\p{M}\p{Cf}]/u
 
 export interface Rect {
@@ -18,22 +18,22 @@ export interface Rect {
 }
 
 /**
- * What a widget needs to draw. Both Surface and the CRT's own CellGrid satisfy
- * it, which is why there is one copy of each widget rather than two.
+ * The drawing surface a widget requires. Both Surface and the CRT's CellGrid
+ * satisfy it, so each widget exists once rather than twice.
  */
 export interface Grid {
   cols: number
   rows: number
   attrs: Uint8Array
-  /** The tube stores code points, a Surface stores characters. Read either. */
+  /** Code points on the CRT grid, characters on a Surface. Either can be read. */
   chars: ArrayLike<string | number>
-  /** Where the caret is parked, and whether there is one to park. */
+  /** Caret position, and whether a caret is shown. */
   cx: number
   cy: number
   showCursor: boolean
-  /** Picture cells, which a ground must not lift. A plain Surface has none. */
+  /** Picture cells, which a background must not highlight. Absent on a plain Surface. */
   gfx?: ArrayLike<unknown> | null
-  /** The tube repaints on this; a Surface diffs instead and ignores it. */
+  /** Repaint flag used by the CRT grid. A Surface diffs instead and ignores it. */
   dirty?: boolean
   put(x: number, y: number, ch: string | number, attr?: number, inv?: number): void
   text(x: number, y: number, str: string, attr?: number, inv?: number): number
@@ -73,14 +73,14 @@ export class Surface implements Grid {
   }
 
   /**
-   * A cell per code point — except the ones that are no cells at all.
+   * One cell per code point, except code points that occupy no cell.
    *
-   * A combining mark, a joiner or a variation selector folds into the character
-   * before it on the parser's side. Given a cell here, the row is one column
-   * longer than the row on the glass and everything past it is off by one; what
-   * falls off the end is whatever the layout keeps at the right margin, and the
-   * diff cannot find it because the diff compares against this. Text off a wire
-   * is folded by `plain()` before it gets here — this is the floor under that.
+   * A combining mark, joiner or variation selector folds into the preceding
+   * character on the parser's side. Giving it a cell here makes this row one
+   * column longer than the rendered row, so everything after it is off by one
+   * and whatever the layout holds at the right margin is lost. The diff cannot
+   * detect it, since the diff compares against this. Text from the network is
+   * folded by plain() before it arrives; this is the backstop.
    */
   text(x: number, y: number, str: string, attr = NORMAL, inv = 0): number {
     let cx = x
@@ -97,7 +97,7 @@ export class Surface implements Grid {
     }
   }
 
-  /** Forget the previous frame; the next render repaints everything. */
+  /** Discard the previous frame, so the next render repaints in full. */
   invalidate(): void {
     this.prevChars = null
     this.prevAttrs = null
@@ -123,12 +123,12 @@ export class Surface implements Grid {
       while (x < this.cols) {
         if (same(y * this.cols + x)) { x++; continue }
 
-        // Start of a changed run: move once, then stream cells.
+        // Start of a changed run: move the cursor once, then write cells.
         out += `\x1b[${y + 1};${x + 1}H`
         while (x < this.cols) {
           const j = y * this.cols + x
           if (same(j)) break
-          // The inverse plane rides in the same run as the attribute byte.
+          // The inverse plane is carried in the same run as the attribute byte.
           const cell = this.attrs[j] | (this.inv[j] ? 0x100 : 0)
           if (cell !== run) {
             run = cell

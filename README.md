@@ -18,6 +18,8 @@ Cyberspace API.
 - Network: `login`, `logout`, `whoami`, `finger`, `feed`
 - Chat: `circ` (rooms), `cmail` (1:1) — sends through the API, live
   reads streamed from the realtime database
+- Images: `view` halftones a photograph onto the cell grid; chat draws
+  attachments inline
 - Registry: `browse`, `install`, `publish`, `recall` — write a program here,
   publish it from the machine, run what others published
 - Offline: installable PWA; the machine boots with no network
@@ -30,12 +32,13 @@ Cyberspace API.
 | `packages/kernel` | VFS, processes, pipes, tty, WASI host |
 | `packages/shell` | Shell and line editor |
 | `packages/coreutils` | File, text and system tools; `edit` |
-| `packages/tui` | Full-screen program toolkit |
+| `packages/tui` | Full-screen program toolkit, image rasterisers |
+| `packages/compat` | Host for programs written for the original terminal |
 | `apps/cyberspace` | Network programs and API client |
 | `app` | Site entry: boots the machine, drives the display |
-| `tools` | Sources for bundled wasm programs |
+| `tools` | Repo tooling, sources for bundled wasm programs |
 | `spikes` | Feasibility probes |
-| `docs/design` | Engineering notes |
+| `docs` | Engineering notes, style guides |
 
 ## Development
 

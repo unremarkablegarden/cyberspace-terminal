@@ -67,3 +67,34 @@
 - Version follows the change log: motd, `uname -a`, boot banner, package manifests
 - motd drops the status line
 - Fixed `cat` on a directory printing its bytes
+- Session
+    - A refresh comes back on the same screen, in the same directory
+    - `circ` comes back in the room you were in, `cmail` in the thread
+    - The half-typed line survives the refresh
+    - Sessions expire after ten minutes, and never cross accounts
+- Scrollback
+    - `CTRL-SHIFT-UP` / `CTRL-SHIFT-DOWN` scroll a line
+    - `SHIFT-PGUP` / `SHIFT-PGDN` scroll a screen
+    - Any key or new output returns to the bottom
+- `help` lists the keys
+- `$PWD`
+- Fixed `PAGEUP` and `PAGEDOWN` never reaching programs
+- Source
+    - `app/src` split into modules: config, machine, motd, settings, saver, scrollback, input, session, skel
+    - Home directory seeded from `app/src/skel/home` — add a file there, it appears in `~`
+    - Endpoints, grid size and machine constants in `app/src/config.ts`
+    - Program registry and mounts in `app/src/machine.ts`
+    - One screensaver per file in `packages/crt/src/savers`
+    - CRT shaders split out into `packages/crt/src/shaders.js`
+- Pictures
+    - Photographs in `circ` and `cmail`, halftoned onto the tube
+    - `/art` blocks are drawn as they were made, not named
+    - `view file|url` opens an image full screen
+- Registry
+    - `browse` is a full screen: sortable columns, `/` filter, `SPACE` About, `S` reads the source, `↵` installs, `DEL` removes a copy, `U` unpublishes your own
+    - `T` runs a program once without installing it
+    - Rows you hold a copy of wear a `*`
+    - `publish` picks from your own programs and names the consequence before it happens — publish, recall or restore, whichever the program's state allows
+    - Versions are assigned by the registry; republishing unchanged source changes nothing and says so
+    - Programs are read before they run: one that reaches for the session token is refused, with the line and column
+

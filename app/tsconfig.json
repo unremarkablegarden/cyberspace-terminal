@@ -18,6 +18,7 @@
     ]
   },
   "include": [
-    "src"
+    "src",
+    "../packages/compat/src/acorn-globals.d.ts"
   ]
 }

@@ -1,22 +1,19 @@
-// A box of knobs — the first thing in here where ← and → change a VALUE.
+// A modal of numeric controls, and the only popup here where the sideways
+// arrows change a value.
 //
-// Every other popup in tui/ swallows the sideways arrows as `inert`: a single
-// column has nowhere to go, and the key only has to be stopped from scrolling
-// the browser page underneath. This one is a column of numbers, and a number
-// has somewhere to go in both directions. Up and down move between knobs, left
-// and right move the knob you are standing on, and the tube changes under the
-// key — which is the whole reason the box exists. You cannot pick a bloom by
-// reading `1.28`.
+// Every other popup in tui/ swallows the sideways arrows as inert, since a
+// single column has nowhere to move and the key only needs to be kept from
+// scrolling the host page. This one is a column of numbers, so up and down move
+// between controls and left and right adjust the focused one, with the display
+// updating live: the value cannot be judged from the number alone.
 //
-// There is no commit and therefore nothing to cancel, the same doctrine
-// settings.ts follows: every turn of a knob is already on the machine and
-// already written down by the time you reach for Escape. Escape means "done
-// turning things". What that costs is an undo, so there are two: Backspace puts
-// the knob under the cursor back where it started, and the row at the foot puts
-// all of them back.
+// There is no commit step and therefore nothing to cancel, following the same
+// approach as settings.ts: each adjustment is applied and persisted as it is
+// made, and Escape only closes the box. Two undo paths cover that: Backspace
+// restores the focused control, and the row at the foot restores all of them.
 //
-// The knobs are DATA, as the settings are. This module knows that a thing has a
-// range and a step; it has never heard of a phosphor mask. See TuneSpec.
+// The controls are data, as the settings are. This module knows only that a
+// control has a range and a step. See TuneSpec.
 
 import { NORMAL, BRIGHT, BOLD, DIM } from './attrs.js'
 import type { Grid } from './surface.js'
@@ -26,51 +23,49 @@ import { cells, clear, frame, ground, keyHint, label, shadow, type Rect, type Sp
 
 /** One number, and how far it is allowed to go. */
 export interface Knob {
-  /** Identifies it to `get`/`set`, and is what the row is labelled with. */
+  /** Identifies the control to get/set, and labels the row. */
   key: string
   min: number
   max: number
   /**
-   * One press of an arrow. Also what the readout is rounded to — a step of
-   * 0.0002 is four decimals, a step of 0.1 is one — so a knob cannot show more
-   * precision than it can actually be set to.
+   * The increment for one arrow press, and the precision the readout is rounded
+   * to: a step of 0.0002 gives four decimals and 0.1 gives one, so a control
+   * never displays more precision than it can be set to.
    */
   step: number
-  /** What it does, in a few words. Shown in the top rule for the focused row. */
+  /** Short description, shown in the top rule for the focused row. */
   hint: string
 }
 
-/** Knobs under a heading. Purely how they are listed; nothing groups them. */
+/** Controls under a heading. Presentation only; nothing else groups them. */
 export interface KnobGroup {
   title: string
   knobs: Knob[]
 }
 
 /**
- * What a tunable thing hands over: the knobs, and the three ways to touch them.
+ * What a tunable subject supplies: the controls, and the three operations on
+ * them.
  *
- * Everything is a call rather than a value for the reason `Setting.current` is a
- * getter — the box must never be the copy of record. What it draws is read back
- * out of the machine on every frame, so a value changed from anywhere else is
- * on screen the next time the box paints rather than silently overwritten.
+ * All are functions rather than values, for the same reason Setting.current is
+ * a getter: the box must not hold the authoritative copy. Values are read back
+ * on every frame, so a change made elsewhere appears at the next paint rather
+ * than being overwritten.
  */
 export interface TuneSpec {
   title: string
   groups: KnobGroup[]
   get(key: string): number
-  /** Applied and persisted at once. There is no commit step. */
+  /** Applied and persisted immediately. There is no commit step. */
   set(key: string, value: number): void
-  /** Back to where it started. No key means all of them. */
+  /** Restore the initial value. Omitting the key restores all of them. */
   reset(key?: string): void
 }
 
 export interface TuneOptions extends TuneSpec {
-  /** Dismissed. The caller pops — the same contract SelectPopup has. */
+  /** Called on dismissal. The caller pops, as with SelectPopup. */
   onDone(): void
-  /**
-   * Sounds the box has an opinion about; it makes none of its own. Not the
-   * keyclick — see SelectOptions.onFeedback.
-   */
+  /** Sounds the box requests; it produces none itself. See SelectOptions.onFeedback. */
   onFeedback?(
     kind: 'move' | 'adjust' | 'edge' | 'apply' | 'cancel',
     e: KeyInput
@@ -85,9 +80,9 @@ export interface TuneOptions extends TuneSpec {
 const PAD = 2
 /** Between a label, its bar and its number. */
 const GAP = 2
-/** What the bar wants. It gives cells back first when the box has to shrink. */
+/** Preferred bar width. The bar is the first element narrowed when the box must shrink. */
 const BAR = 16
-/** Below this it stops being a bar and starts being a rounding error. */
+/** Minimum bar width; below this it conveys nothing. */
 const MIN_BAR = 6
 /** Rows before the list scrolls instead of growing. As MAX_ROWS in settings.ts. */
 const MAX_ROWS = 14
@@ -95,13 +90,12 @@ const MAX_ROWS = 14
 const RESET_LABEL = 'reset all'
 
 /**
- * Plain text, not keycaps — a modal's hint is a caption, and the inverse cap is
- * the app frame's voice. Same rule as settings.ts's HINT and feed's POPUP_HINT.
+ * Plain text rather than keycaps, as modal hints are elsewhere. Same rule as
+ * settings.ts's HINT and feed's POPUP_HINT.
  *
- * `‹›` (U+2039/203A) because there is no leftwards arrow in any face here, and
- * `<>` reads as markup — settings.ts made the same call. BKSP is spelled out
- * for the same reason in reverse: `⌫` is NOT one of the glyphs bdf.ts
- * synthesises, so on most faces it would come out as `?`.
+ * Uses ‹› (U+2039/203A) because no font here has a leftwards arrow and <> reads
+ * as markup. BKSP is spelled out because ⌫ is not among the glyphs bdf.ts
+ * synthesises and would render as ? in most fonts.
  */
 /** Width of a run of spans, in cells. */
 const spanCells = (spans: Span[]): number =>
@@ -112,20 +106,20 @@ const HINT = keyHint([
 ])
 const COPIED = 'COPIED'
 const COPY_FAILED = 'CLIPBOARD BLOCKED — SEE CONSOLE'
-/** How long the copy acknowledgement sits in the rule. */
+/** How long the copy acknowledgement remains in the rule. */
 const FLASH_MS = 1400
 
-/** Ten at a time. Twenty-three knobs at a step of 0.0002 need a coarse gear. */
+/** Coarse adjustment: ten steps at once, for controls with a step as small as 0.0002. */
 const COARSE = 10
 
-/** A heading and a gap cannot be landed on; the other two can. */
+/** Headings and gaps cannot be focused; the other row kinds can. */
 type Row =
   | { kind: 'head', text: string }
   | { kind: 'gap' }
   | { kind: 'knob', knob: Knob }
   | { kind: 'reset' }
 
-/** Decimals the step implies. 0.01 is two, 0.0002 is four. */
+/** Decimal places implied by the step: 0.01 gives two, 0.0002 gives four. */
 function decimals(step: number): number {
   return Math.max(0, Math.ceil(-Math.log10(step)))
 }
@@ -134,10 +128,10 @@ export class TunePopup implements Screen {
   private rows: Row[]
   private cursor: number
   /**
-   * The grid from the last draw, so the copy acknowledgement can take itself
-   * back down. Nothing else would repaint: the stack draws on a consumed key,
-   * and by the time the flash expires that key is long gone. Same reason
-   * SettingsScreen keeps one.
+   * The grid from the last draw, so the copy acknowledgement can clear itself.
+   * Nothing else would repaint: the stack draws on a consumed key, and the
+   * acknowledgement expires long after that key. SettingsScreen keeps one for
+   * the same reason.
    */
   private term: Grid | null = null
   private flash: typeof COPIED | typeof COPY_FAILED | null = null
@@ -160,9 +154,9 @@ export class TunePopup implements Screen {
   }
 
   /**
-   * Every key here answers with a sound of its own, so the keyclick would be a
-   * second noise for one press. Ctrl-C is the exception and deliberately keeps
-   * its click: it is the one key in here that reaches outside the machine.
+   * Every key here plays its own sound, so the key click is suppressed. Ctrl-C
+   * keeps its click deliberately, being the only key here that acts outside the
+   * machine.
    */
   silentKey(e: KeyInput): boolean {
     if (e.metaKey || e.altKey || e.ctrlKey) return false
@@ -174,13 +168,10 @@ export class TunePopup implements Screen {
   onKey(e: KeyInput): boolean {
     if (e.metaKey || e.altKey) return false
 
-    // Ctrl-C COPIES here, and nowhere else in this machine does it mean
-    // anything but "no". That is a real exception to a rule the rest of the
-    // terminal keeps — ConfirmPopup treats it as a refusal precisely because a
-    // key meaning "get me out of this" must not also mean "do the thing" — and
-    // it is taken on purpose: this box is where a tuning worth keeping is
-    // arrived at, and the only thing to do with one is paste it into crt.ts.
-    // Escape is untouched, so the box is still exactly as easy to leave.
+    // Ctrl-C copies in this box only; everywhere else in the machine it cancels.
+    // A deliberate exception: this is where a tuning worth keeping is arrived
+    // at, and the only use for one is pasting it into crt.ts. Escape is
+    // unchanged, so the box is no harder to leave.
     if (e.ctrlKey && (e.key === 'c' || e.key === 'C')) {
       this.copy(e)
       return true
@@ -201,7 +192,7 @@ export class TunePopup implements Screen {
 
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       const row = this.focused
-      // The reset row is not a number, so there is nothing sideways about it.
+      // The reset row holds no value, so sideways keys do nothing.
       if (row?.kind !== 'knob') { this.opts.onFeedback?.('edge', e); return true }
       this.nudge(row.knob, (e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? COARSE : 1), e)
       return true
@@ -221,19 +212,19 @@ export class TunePopup implements Screen {
         this.opts.reset()
         return true
       }
-      // Every knob has been live since it was turned, so Enter on one is
-      // agreeing with what is already on the tube. Same as settings.ts.
+      // Every control has applied as it was adjusted, so Enter confirms what is
+      // already in effect. Same as settings.ts.
       this.opts.onFeedback?.('cancel', e)
       this.opts.onDone()
       return true
     }
 
-    // Swallow the rest. An unconsumed key acts on a screen the reader cannot
-    // see, and an unconsumed arrow scrolls the browser page under the modal.
+    // Swallow the rest: an unconsumed key acts on the hidden screen beneath,
+    // and an unconsumed arrow scrolls the host page.
     return false
   }
 
-  /** To the next landable row, wrapping. Headings and gaps are stepped over. */
+  /** Move to the next focusable row, wrapping. Headings and gaps are skipped. */
   private move(delta: number, e: KeyInput) {
     const n = this.rows.length
     for (let i = 1; i <= n; i++) {
@@ -249,12 +240,12 @@ export class TunePopup implements Screen {
   }
 
   /**
-   * Turn a knob by whole steps.
+   * Adjust a control by whole steps.
    *
-   * Snapped to the step grid and rounded to the decimals the step implies,
-   * rather than accumulating: forty presses of ← on a step of 0.005 otherwise
-   * drift into float noise, and a readout that says 0.30 while the uniform
-   * holds 0.30000000000000004 is a box lying about the machine.
+   * Snapped to the step grid and rounded to the implied decimals rather than
+   * accumulated: forty presses at a step of 0.005 would otherwise drift into
+   * floating-point noise, leaving the readout showing 0.30 while the value is
+   * 0.30000000000000004.
    */
   private nudge(knob: Knob, steps: number, e: KeyInput) {
     const current = this.opts.get(knob.key)
@@ -262,16 +253,15 @@ export class TunePopup implements Screen {
     const next = Number(
       Math.min(knob.max, Math.max(knob.min, raw)).toFixed(decimals(knob.step))
     )
-    // Already against the stop. Still consumed — the key did reach the box.
+    // Already at the limit. Still consumed, since the key reached the box.
     if (next === current) { this.opts.onFeedback?.('edge', e); return }
     this.opts.onFeedback?.('adjust', e)
     this.opts.set(knob.key, next)
   }
 
   /**
-   * Every knob as `  key: value,` lines — the shape of the preset blocks in
-   * crt.ts, so a tuning arrived at here goes back into the source as a paste
-   * rather than as twenty-three separate readings copied by eye.
+   * Every control as `  key: value,` lines, matching the preset blocks in
+   * crt.ts, so a tuning can be pasted back into the source in one step.
    */
   private copy(e: KeyInput) {
     const text = this.opts.groups
@@ -281,9 +271,9 @@ export class TunePopup implements Screen {
 
     this.opts.onFeedback?.('apply', e)
 
-    // Absent entirely over plain http, which is not an insecure context this
-    // ever runs in — but a `?.` that yields undefined and is then `.then`ed is
-    // a TypeError inside a key handler, and that would take the box down.
+    // Absent over plain http. This never runs in an insecure context, but a ?.
+    // yielding undefined and then being .then'd would throw a TypeError inside a
+    // key handler and close the box.
     const write = navigator.clipboard?.writeText(text)
     if (!write) { this.fallback(text); return }
 
@@ -293,7 +283,7 @@ export class TunePopup implements Screen {
       .catch(() => this.fallback(text))
   }
 
-  /** The console, which is where anyone copying shader values out already is. */
+  /** Fallback to the console, where shader values are usually collected. */
   private fallback(text: string) {
     console.log(text)
     this.setFlash(COPY_FAILED)
@@ -318,19 +308,18 @@ export class TunePopup implements Screen {
     const labelW = knobs.reduce(
       (n, k) => Math.max(n, cells(k.key)), cells(RESET_LABEL)
     )
-    // Measured off each knob's own top of range, which is the widest reading it
-    // can produce — a column sized to the value that happens to be live would
-    // shuffle the numbers sideways as they were turned.
+    // Measured from each control's maximum, the widest reading it can produce.
+    // Sizing to the current value would shift the numbers as they are adjusted.
     const numW = knobs.reduce(
       (n, k) => Math.max(n, cells(k.max.toFixed(decimals(k.step)))), 1
     )
 
-    // +1 on the left for the cursor caret in the first column.
+    // +1 on the left for the caret in the first column.
     const fixed = 1 + PAD + labelW + GAP + GAP + numW + PAD
     let barW = BAR
 
-    // The rules have to hold the title and the hint, both of which sit inside
-    // the frame with a blank either side and an inset of 2 from the corner.
+    // The rules must hold the title and the hint, both inside the frame with a
+    // blank either side and an inset of 2 from the corner.
     const need = Math.max(cells(this.opts.title), spanCells(HINT)) + 6
     const grow = need - (fixed + barW + 2)
     if (grow > 0) barW += grow
@@ -353,7 +342,7 @@ export class TunePopup implements Screen {
     }
   }
 
-  /** Keep the cursor on screen when the list is taller than the box. */
+  /** Keep the focused row on screen when the list is taller than the box. */
   private window(rows: number): number {
     return Math.max(0, Math.min(this.cursor - (rows >> 1), this.rows.length - rows))
   }
@@ -362,20 +351,20 @@ export class TunePopup implements Screen {
     this.term = term
     const { box, labelW, barW, numW } = this.geometry(term)
 
-    // Blank the whole box, borders included, BEFORE framing it: box drawing
-    // merges line bits with what is already in the cell, so a border laid over
-    // the config box's own rule underneath would fuse with it into a tee rather
-    // than cover it. Same note as in select.ts and settings.ts.
+    // Clear the whole box, borders included, before framing it: box drawing
+    // merges line bits with the existing cell, so a border over the config box's
+    // own rule would merge into a tee rather than covering it. Same note as in
+    // select.ts and settings.ts.
     clear(term, box)
     if (this.opts.shadow) shadow(term, box, this.opts.bounds)
     frame(term, box)
 
     label(term, box, this.opts.title, { attr: BRIGHT | BOLD })
 
-    // What the focused knob DOES, in the top rule opposite the title. The
-    // bottom rule is already spoken for by the keys, and a knob called `chroma`
-    // that never says it means misconvergence is a knob you turn at random.
-    // Dropped rather than wrapped when the box is too narrow for both.
+    // The focused control's description, in the top rule opposite the title.
+    // The bottom rule already carries the keys, and a name such as `chroma`
+    // does not convey that it controls misconvergence. Dropped rather than
+    // wrapped when the box is too narrow for both.
     const focused = this.focused
     if (focused?.kind === 'knob') {
       const hint = focused.knob.hint
@@ -403,16 +392,16 @@ export class TunePopup implements Screen {
       if (row.kind === 'gap') continue
 
       if (row.kind === 'head') {
-        // DIM and lower case: a heading is a divider that happens to be a word,
-        // and one drawn at the weight of the knobs would read as a knob.
+        // DIM and lower case, so a heading reads as a divider rather than as
+        // another control.
         term.text(inner.x + 1 + PAD, y, row.text.slice(0, inner.w - 1 - PAD), DIM)
         continue
       }
 
-      // The caret, and not an inverse bar. Every other list in here highlights
-      // with the inverse plane, which cannot work in this box: half of each row
-      // is block glyphs, and inverting a `█` puts out the very cells the bar is
-      // made of — the focused row would be the one whose meter reads backwards.
+      // A caret rather than an inverse bar. Every other list here highlights
+      // with the inverse plane, which fails in this box: half of each row is
+      // block glyphs, and inverting a filled block clears the cells the meter is
+      // drawn from, so the focused row's meter would read backwards.
       const attr = on ? BRIGHT : NORMAL
       term.text(inner.x, y, on ? '›' : ' ', attr)
 
@@ -437,17 +426,15 @@ export class TunePopup implements Screen {
       term.text(inner.x + 1, y, text.slice(0, inner.w - 1), attr)
     }
 
-    // Last, over everything the box just drew. See `ground` in box.ts. The
-    // meters take it like anything else: a `░` is a dither and a `█` is a
-    // fill, and both keep their own beam — the ground only lifts the dark
-    // pixels between them, which is the same lift the empty half of the bar
-    // already gets from the blanks around it.
+    // Applied last, over everything the box drew. See ground() in box.ts. The
+    // meters are unaffected: both the dithered and filled blocks keep their own
+    // beam level, and the background only lifts the dark pixels between them,
+    // as it already does for the blanks around the empty half of the bar.
     ground(term, box)
 
-    // Nothing to type into, so there should be no caret. Parking it on the
-    // frame does not hide it — the cursor stamp inverts whatever cell it lands
-    // on, so it shows up as a blinking corner. The stack gives showCursor back
-    // on pop.
+    // Nothing here takes input, so the caret is hidden rather than parked on the
+    // frame, where the cursor would invert that cell and blink. The stack
+    // restores showCursor on pop.
     term.showCursor = false
     term.dirty = true
   }
