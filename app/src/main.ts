@@ -23,6 +23,7 @@ import { OpfsHome } from './opfs'
 import { syncTerm } from './vt'
 import { encodeKey, encodeKeyName } from './keys'
 import { Baud } from './baud'
+import { changelog, VERSION } from './changelog'
 
 // Offline shell. A new worker downloads in the background and WAITS — it
 // takes over on the next fresh visit, never under a live session.
@@ -45,8 +46,7 @@ const ENV = {
   LINES: String(ROWS),
 }
 
-const motdText = (user: string | null) => `\x1b[1mCYBERSPACE TERMINAL\x1b[0m 0.1
-\x1b[2m${COLS}x${ROWS} TEXT  TUBE OK  HOME MOUNTED${user ? '  LINK UP' : '  NO CARRIER'}\x1b[0m
+const motdText = (user: string | null) => `\x1b[1mCYBERSPACE TERMINAL\x1b[0m ${VERSION}
 
 Type \x1b[1mhelp\x1b[0m for commands.${user ? '' : '  Type \x1b[1mlogin\x1b[0m to connect.'}${MOBILE ? '' : '\n\x1b[1mF1\x1b[0m Config'}
 
@@ -140,8 +140,10 @@ function waitForDrain(): Promise<void> {
 
 async function bootMachine(): Promise<Kernel> {
   const kernel = new Kernel()
+  kernel.release = VERSION
   kernel.registerAll(coreutils)
   kernel.register('sh', shellMain)
+  kernel.register('changelog', changelog)
   kernel.register('shutdown', shutdownProgram)
   kernel.register('reboot', rebootProgram)
   // After coreutils: the network whoami (answers with the login) wins.
@@ -159,7 +161,7 @@ async function bootMachine(): Promise<Kernel> {
   // Programs from the original /terminal, recognised by their export.
   kernel.fileHandlers.push(compatFileHandler({
     username: () => api.username ?? ENV.USER,
-    version: '0.1',
+    version: VERSION,
     api: {
       get: path => api.get(path),
       post: (path, body) => api.post(path, body),
@@ -688,7 +690,7 @@ const program = {
       await withGrid(async () => {
         try {
           await strike(s.term, snd, abort.signal)
-          await bootSequence(s.term, snd, abort.signal, { version: '0.1' })
+          await bootSequence(s.term, snd, abort.signal, { version: VERSION })
         } catch (err) {
           if (!(err instanceof Aborted)) throw err
           // A skip, not a failure: kill the chime and land on the prompt.

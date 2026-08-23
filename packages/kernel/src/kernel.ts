@@ -8,6 +8,8 @@ import { isWasm, runWasi } from './wasi.js'
 
 export class Kernel {
   readonly fs = fs.promises
+  /** Release string, stamped by the host at boot. uname(1) reports it. */
+  release = '0'
   /** Extra executable-file formats, tried after wasm and shebangs. */
   fileHandlers: ((path: string, data: Uint8Array) => Program | null)[] = []
   private programs = new Map<string, Program>()

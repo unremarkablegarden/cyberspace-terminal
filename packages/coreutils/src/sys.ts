@@ -9,7 +9,7 @@ export const date: Program = p => {
 }
 
 export const uname: Program = p => {
-  p.out(p.argv.includes('-a') ? 'CYBERSPACE tube0 0.1 web\n' : 'CYBERSPACE\n')
+  p.out(p.argv.includes('-a') ? `CYBERSPACE tube0 ${p.kernel.release} web\n` : 'CYBERSPACE\n')
   return 0
 }
 

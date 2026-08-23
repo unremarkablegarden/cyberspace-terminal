@@ -74,6 +74,10 @@ export const less: Program = async p => {
     paint()
   }
 
+  // Keys come from the terminal, never from stdin: under `cmd | less` stdin is
+  // the pipe, and it is at EOF the moment the text has been read.
+  const keys = p.stdin.isInteractive ? p.stdin : p.tty.stdin
+
   p.tty.setRaw()
   p.out('\x1b[?1049h')
   s.invalidate()
@@ -81,7 +85,7 @@ export const less: Program = async p => {
   try {
     paint()
     for (;;) {
-      const chunk = await p.stdin.read()
+      const chunk = await keys.read()
       if (chunk === null) return 0
       for (const k of parseKeys(dec.decode(chunk))) {
         if (k.ctrlKey && k.key === 'c') return 130

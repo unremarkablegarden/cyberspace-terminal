@@ -1,7 +1,12 @@
 {
   "name": "cyberspace-terminal",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
+  "scripts": {
+    "version:sync": "bun tools/version.ts",
+    "version:check": "bun tools/version.ts --check"
+  },
   "workspaces": [
     "packages/*",
     "apps/*",

@@ -61,3 +61,9 @@
 - Fixed pacing running 1000x slow (seconds counted as milliseconds)
 - Fixed `^H` and `^J` never reaching programs
 - Fixed popups not redrawing on a key
+- `changelog` prints the change log
+- Fixed `cmd | less` returning at once (keys were read from the pipe, not the terminal)
+- Icon: the site's globe, in P1 phosphor
+- Version follows the change log: motd, `uname -a`, boot banner, package manifests
+- motd drops the status line
+- Fixed `cat` on a directory printing its bytes

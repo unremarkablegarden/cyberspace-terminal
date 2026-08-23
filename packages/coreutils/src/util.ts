@@ -49,7 +49,11 @@ export async function inputText(p: Proc, files: string[]): Promise<string> {
   let out = ''
   for (const file of files) {
     try {
-      out += await readText(resolve(p, file))
+      // ZenFS hands back a directory's raw bytes rather than EISDIR, so the
+      // read would pour the index onto the glass.
+      const path = resolve(p, file)
+      if ((await fsp.stat(path)).isDirectory()) throw new Error(ERRNO.EISDIR)
+      out += await readText(path)
     } catch (e) {
       throw new Error(`${file}: ${strerror(e)}`)
     }

@@ -1,10 +1,11 @@
 {
   "name": "app",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "bun ../tools/version.ts --check && tsc --noEmit && vite build",
     "preview": "vite preview"
   },
   "dependencies": {

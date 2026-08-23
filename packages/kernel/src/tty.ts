@@ -35,6 +35,11 @@ export interface TtyControl {
    * and pacing one types its chrome on a character at a time.
    */
   paint(s: string): void
+  /**
+   * The keyboard itself. A full-screen program under a pipe has a pipe for
+   * stdin, so it takes its keys from here — the tty is /dev/tty.
+   */
+  get stdin(): Source
 }
 
 export class Tty implements TtyControl {
