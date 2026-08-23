@@ -10,7 +10,9 @@
 // stay off the DOM so the same kernel can run behind ssh; a faceplate with no
 // decoder supplies none of this and callers print [IMG] instead.
 
-import { PICT_LO, PICT_HI, halftoneFit, type CellMetrics, type Luma } from '@cyberspace/tui'
+import {
+  PICT_LO, PICT_HI, halftoneFit, fitImage, dotAspect, type CellMetrics, type Luma,
+} from '@cyberspace/tui'
 
 /** A rasterised picture, as rows of picture handles. `' '` is an unlit cell. */
 export interface Picture {
@@ -29,12 +31,26 @@ export interface ChatPictures {
    */
   picture(src: string, maxCols: number, maxRows: number): Picture | undefined
   /**
+   * Rows an attachment occupies, whether or not its pixels have arrived.
+   *
+   * A screen holds the slot open from the moment the message appears, so the
+   * log does not reflow as pictures load, are evicted and are read again. The
+   * height a 4:3 photograph fills at this width, which is the common case, so
+   * most pictures fill their slot exactly and wider ones leave the tail blank.
+   * Read from the host because it depends on the font, which F1 can change.
+   */
+  slot(maxCols: number, maxRows: number): number
+  /**
    * Declare the pictures the screen is about to draw.
    *
    * These are the ones kept when the bank has to make room, so a screen must
    * pass everything it can currently show. One load is started per call, which
    * is enough to fill a pane: a load that lands repaints the screen, and the
    * next call starts the next one.
+   *
+   * Loaded in the order given. A log drawn from the bottom up must list the
+   * bottom of the pane first: a picture that lands moves only the rows above
+   * it, so loading upwards leaves each one where it was drawn.
    */
   ensure(srcs: Iterable<string | undefined>, maxCols: number, maxRows: number): void
   /** Whether this source was read and could not be decoded. Loading is not failure. */
@@ -342,10 +358,14 @@ export function pictureHost(
 
   return {
     picture(src, maxCols, maxRows) {
-      if (!src || maxCols < 1 || maxRows < 1) return undefined
+      if (!src || maxCols < 1 || maxRows < 1 || unreadable.has(src)) return undefined
       const key = keyOf(metricsOf(term), src, maxCols, maxRows)
       const have = done.get(key)
       return have ? touch(key, have).pic : undefined
+    },
+
+    slot(maxCols, maxRows) {
+      return fitImage(4, 3, dotAspect(metricsOf(term)), maxCols, maxRows).rows
     },
 
     ensure(srcs, maxCols, maxRows) {

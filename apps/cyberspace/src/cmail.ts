@@ -349,7 +349,19 @@ export function cmailProgram(
      */
     const picture = (m: ChatMessage): Picture | undefined => {
       if (!pics || !m.imageUrl) return undefined
-      return pics.picture(m.imageUrl, dmInner(), Math.max(1, logRect.h))
+      const { cols, rows } = picBox()
+      return pics.picture(m.imageUrl, cols, rows)
+    }
+
+    /**
+     * The block a picture is drawn in. As tall as the host's slot, so every
+     * attachment holds the same rows in its box whether or not the pixels have
+     * arrived, and the thread does not reflow as they load.
+     */
+    const picBox = (): { cols: number; rows: number } => {
+      const cols = dmInner()
+      const room = Math.max(1, logRect.h)
+      return { cols, rows: pics ? pics.slot(cols, room) : room }
     }
 
     /** Whether the box expects to draw this attachment rather than name it. */
@@ -418,10 +430,15 @@ export function cmailProgram(
           // The picture is drawn inside the turn, below the text. DIM rather than
           // NORMAL: it matches both the exposure the rasteriser used and the
           // attribute of the box edges.
-          const pic = e.reveal === Infinity ? picture(e.m) : undefined
-          for (const line of pic?.lines ?? []) {
+          // Held open at the slot height once the message has typed out, so a
+          // picture arriving later does not change the size of its box.
+          const shows = e.reveal === Infinity && drawsPicture(e.m.imageUrl)
+          const pic = shows ? picture(e.m) : undefined
+          const slot = shows ? picBox().rows : 0
+          const picLines = (pic?.lines ?? [])
+          for (let i = 0; i < Math.max(slot, picLines.length); i++) {
             out.push({
-              text: pad + '│ ' + line.padEnd(inner) + ' │',
+              text: pad + '│ ' + (picLines[i] ?? '').padEnd(inner) + ' │',
               attr: DIM,
               spans: edges,
             })
@@ -493,14 +510,15 @@ export function cmailProgram(
       scroll = Math.max(0, Math.min(scroll, Math.max(0, lines.length - logRect.h)))
 
       // Only the pictures on the pane are loaded, and they are the ones the bank
-      // keeps. Same window as drawLog, which counts the scroll from the bottom.
+      // keeps. Same window as drawLog, which counts the scroll from the bottom,
+      // and the bottom of the pane is read first: a picture that lands moves
+      // only the rows above it.
       if (pics) {
         const end = lines.length - scroll
         const top = end - logRect.h
-        pics.ensure(
-          picSpans.filter(p => p.from < end && p.to > top).map(p => p.src),
-          dmInner(), Math.max(1, logRect.h),
-        )
+        const shown = picSpans.filter(p => p.from < end && p.to > top).reverse()
+        const { cols, rows } = picBox()
+        pics.ensure(shown.map(p => p.src), cols, rows)
       }
 
       drawLog(s, logRect, printing(lines, logRect.h, print.count), scroll)

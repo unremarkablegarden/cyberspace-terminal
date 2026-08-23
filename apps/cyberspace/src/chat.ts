@@ -135,6 +135,14 @@ export interface EntryOptions {
   blinkOn?: boolean
   /** The halftoned picture, once requested and loaded. */
   picture?: Picture
+  /**
+   * Rows an attachment holds, from the host's slot().
+   *
+   * Reserved whether or not the pixels have arrived, so a picture that loads,
+   * is evicted and is read again does not move the log around it. Zero means
+   * the attachment is named in the text instead.
+   */
+  picRows?: number
 }
 
 /**
@@ -164,6 +172,8 @@ export interface Picture {
 export interface ChatPictures {
   /** The picture at this size, if it is rasterised. A lookup, never a fetch. */
   picture(src: string, maxCols: number, maxRows: number): Picture | undefined
+  /** Rows an attachment holds, whether or not its pixels have arrived. */
+  slot(maxCols: number, maxRows: number): number
   /** The pictures on the pane: the ones worth loading and worth keeping. */
   ensure(srcs: Iterable<string | undefined>, maxCols: number, maxRows: number): void
   /** Whether this source could not be read. Still loading is not failure. */
@@ -247,7 +257,7 @@ export function entryLines(m: ChatMessage, width: number, opts: EntryOptions = {
   // before the name it belongs to.
   if (reveal < head.length) return rows
 
-  const tail = tailLines(m, opts.picture, width, head.length)
+  const tail = tailLines(m, opts.picture, width, head.length, opts.picRows)
   if (!tail.length) return rows
   // An image-only message has one row of prefix and no text, so the first row
   // of the block goes on it rather than below it.
@@ -270,14 +280,24 @@ export function entryLines(m: ChatMessage, width: number, opts: EntryOptions = {
  * case for an attachment, so a small pane does not spend a row on a blank line.
  */
 function tailLines(
-  m: ChatMessage, picture: Picture | undefined, width: number, indent: number,
+  m: ChatMessage, picture: Picture | undefined, width: number, indent: number, picRows = 0,
 ): LogLine[] {
   const out: LogLine[] = []
   if (m.art?.length) {
     const room = Math.max(1, width - indent)
     out.push(...blockLines(m.art.map(l => l.slice(0, room)), indent, NORMAL))
   }
-  if (picture) out.push(...blockLines(picture.lines, indent, DIM))
+  if (m.imageUrl && picRows > 0) {
+    // The slot is the same height for every attachment and is held from the
+    // moment the message appears. A picture wider than 4:3 is shorter than its
+    // slot and leaves the last rows blank, which reads as the space before the
+    // next message rather than as a gap.
+    const lines = picture?.lines ?? []
+    const rows = lines.length >= picRows
+      ? lines
+      : lines.concat(new Array(picRows - lines.length).fill(''))
+    out.push(...blockLines(rows, indent, DIM))
+  }
   return out
 }
 
@@ -315,7 +335,7 @@ export function narrowLines(m: ChatMessage, width: number, opts: EntryOptions = 
   if (reveal < head.length) return rows
 
   // From the margin, like the text: this layout has no gutter to hang under.
-  const tail = tailLines(m, opts.picture, width, 0)
+  const tail = tailLines(m, opts.picture, width, 0, opts.picRows)
 
   // Blanked rather than dropped, so the row count does not change with the
   // blink phase. An attachment with no text is the exception: wrapping '' would

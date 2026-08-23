@@ -190,13 +190,16 @@ export function circProgram(
       [...msgs.values()].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0))
 
     /**
-     * Maximum picture width: the message column, so a picture starts where the
-     * text does rather than being indented twice.
+     * The block an attachment is drawn in: as wide as the message column, so a
+     * picture starts where the text does rather than being indented twice, and
+     * as tall as the host's slot, so every attachment holds the same rows
+     * whether or not its pixels have arrived.
      */
-    const picBounds = (): { cols: number; rows: number } => ({
-      cols: Math.max(1, narrow ? logRect.w : logRect.w - HEAD_W),
-      rows: Math.max(1, logRect.h),
-    })
+    const picBounds = (): { cols: number; rows: number } => {
+      const cols = Math.max(1, narrow ? logRect.w : logRect.w - HEAD_W)
+      const room = Math.max(1, logRect.h)
+      return { cols, rows: pics ? pics.slot(cols, room) : room }
+    }
 
     /** The halftoned picture for a message, if it is rasterised. Never a fetch. */
     const picture = (m: ChatMessage): Picture | undefined => {
@@ -270,6 +273,7 @@ export function circProgram(
         namesMe: (said: string) => namesMe(m, said),
         blinkOn: blink.on,
         picture: picture(m),
+        picRows: drawsPicture(m.imageUrl) ? picBounds().rows : 0,
       }
       return narrow ? narrowLines(m, logRect.w, opts) : entryLines(m, logRect.w, opts)
     }
@@ -514,11 +518,16 @@ export function circProgram(
       // keeps: the log holds a hundred messages and the bank holds about seven
       // photographs. Same window as drawLog, which counts the scroll from the
       // bottom of the log.
+      //
+      // Bottom of the pane first. The log is drawn upwards from the last line,
+      // so a picture that lands moves only the rows above it: read downwards,
+      // every picture already drawn would be pushed up by the next one.
       if (pics) {
         const end = lines.length - scroll
         const top = end - logRect.h
         const { cols: pw, rows: ph } = picBounds()
-        pics.ensure(picSpans.filter(p => p.from < end && p.to > top).map(p => p.src), pw, ph)
+        const shown = picSpans.filter(p => p.from < end && p.to > top).reverse()
+        pics.ensure(shown.map(p => p.src), pw, ph)
       }
 
       drawLog(s, logRect, printing(lines, logRect.h, print.count), scroll)
