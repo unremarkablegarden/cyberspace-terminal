@@ -57,6 +57,9 @@ export function bodyOf(m: MsgBody, drawn: BodyDrawn = {}): string {
     text += ` [SONG: ${name}${a.genre ? ` (${a.genre})` : ''}]`
   }
   if (m.gifUrl) text += ' [GIF]'
+  // An attachment posted without a caption carries its own address as the body.
+  // The picture stands for it; the address is never read out.
+  if (m.imageUrl && text.trim() === m.imageUrl) text = ''
   if (m.imageUrl && !drawn.image) text += ' [IMG]'
   return plain(text.trim())
 }

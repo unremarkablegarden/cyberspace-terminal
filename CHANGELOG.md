@@ -90,6 +90,8 @@
     - Photographs in `circ` and `cmail`, halftoned onto the tube
     - `/art` blocks are drawn as they were made, not named
     - `view file|url` opens an image full screen
+    - Fixed only some photographs drawing in a room full of them (the picture bank filled and was never emptied)
+    - Fixed an uncaptioned attachment printing its address under the picture
 - Registry
     - `browse` is a full screen: sortable columns, `/` filter, `SPACE` About, `S` reads the source, `↵` installs, `DEL` removes a copy, `U` unpublishes your own
     - `T` runs a program once without installing it
@@ -97,5 +99,6 @@
     - `publish` picks from your own programs and names the consequence before it happens — publish, recall or restore, whichever the program's state allows
     - Versions are assigned by the registry; republishing unchanged source changes nothing and says so
     - Programs are read before they run: one that reaches for the session token is refused, with the line and column
+    - `browse` ticks as the selection moves, like the `cmail` mailbox
 - A new build is picked up on the next visit, with no force refresh
 - `reboot` takes a waiting build

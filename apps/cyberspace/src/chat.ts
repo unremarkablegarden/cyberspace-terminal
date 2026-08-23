@@ -153,13 +153,21 @@ export interface Picture {
 /**
  * How a screen requests a picture.
  *
- * The faceplate owns the decoder, cache and bank; a screen calls get() on every
- * paint and stores nothing. A host without a decoder supplies none of this, and
- * the attachment is named in text instead.
+ * The faceplate owns the decoder, cache and bank; a screen stores nothing. A
+ * host without a decoder supplies none of this, and the attachment is named in
+ * text instead.
+ *
+ * Laying out and loading are separate calls because a screen lays out every
+ * entry it holds and draws one pane of them. Loading the rest would exhaust the
+ * bank on pictures nobody can see.
  */
 export interface ChatPictures {
-  /** The picture at this size, or undefined while it loads or if it cannot be read. */
-  get(src: string, maxCols: number, maxRows: number): Picture | undefined
+  /** The picture at this size, if it is rasterised. A lookup, never a fetch. */
+  picture(src: string, maxCols: number, maxRows: number): Picture | undefined
+  /** The pictures on the pane: the ones worth loading and worth keeping. */
+  ensure(srcs: Iterable<string | undefined>, maxCols: number, maxRows: number): void
+  /** Whether this source could not be read. Still loading is not failure. */
+  failed(src: string): boolean
   /** Called when a picture arrives and the screen needs repainting. Returns an unsubscribe. */
   onLoad(cb: () => void): () => void
   /** Release this screen's slots. Called once, on exit. */

@@ -198,12 +198,18 @@ export function circProgram(
       rows: Math.max(1, logRect.h),
     })
 
-    /** The halftoned picture for a message, or undefined until it has loaded. */
+    /** The halftoned picture for a message, if it is rasterised. Never a fetch. */
     const picture = (m: ChatMessage): Picture | undefined => {
       if (!pics || !m.imageUrl) return undefined
       const { cols, rows } = picBounds()
-      return pics.get(m.imageUrl, cols, rows)
+      return pics.picture(m.imageUrl, cols, rows)
     }
+
+    /** Whether the screen expects to draw this attachment rather than name it. */
+    const drawsPicture = (src?: string): boolean => Boolean(pics && src && !pics.failed(src))
+
+    /** Where one message's picture rows sit in the log, as a half-open range. */
+    interface PicSpan { src: string; from: number; to: number }
 
     /** One message in the form the line builders expect. */
     const asChat = (m: Msg): ChatMessage => ({
@@ -211,7 +217,7 @@ export function circProgram(
       username: m.username,
       timestamp: m.timestamp,
       // A picture the screen is about to draw is not also named in the text.
-      content: bodyOf(m, { image: Boolean(pics && m.imageUrl), art: true }),
+      content: bodyOf(m, { image: drawsPicture(m.imageUrl), art: true }),
       action: m.isAction,
       system: m.isSystem,
       deleted: m.deleted,
@@ -268,10 +274,10 @@ export function circProgram(
       return narrow ? narrowLines(m, logRect.w, opts) : entryLines(m, logRect.w, opts)
     }
 
-    const logLines = (): LogLine[] => {
+    const logLines = (spans?: PicSpan[]): LogLine[] => {
       // Local lines are interleaved with the room's by timestamp.
-      const entries: { at: number; lines: () => LogLine[] }[] = [
-        ...wire.displayed.map(m => ({ at: m.timestamp ?? 0, lines: () => lineOf(m) })),
+      const entries: { at: number; src?: string; lines: () => LogLine[] }[] = [
+        ...wire.displayed.map(m => ({ at: m.timestamp ?? 0, src: m.imageUrl, lines: () => lineOf(m) })),
         ...system.map(s => ({
           at: s.at,
           lines: () => systemLines(s.text, logRect.w, narrow ? 0 : undefined),
@@ -279,10 +285,21 @@ export function circProgram(
       ]
       entries.sort((a, b) => a.at - b.at)
       const out: LogLine[] = []
-      for (const e of entries) out.push(...e.lines())
+      const place = (src: string | undefined, from: number): void => {
+        if (spans && src) spans.push({ src, from, to: out.length })
+      }
+      for (const e of entries) {
+        const from = out.length
+        out.push(...e.lines())
+        place(e.src, from)
+      }
       // Then the message still typing, as far as it has been revealed.
       const head = wire.head
-      if (head) out.push(...lineOf(head, wire.typed))
+      if (head) {
+        const from = out.length
+        out.push(...lineOf(head, wire.typed))
+        place(head.imageUrl, from)
+      }
       return out
     }
 
@@ -487,10 +504,23 @@ export function circProgram(
       label(s, outer, narrow ? HINT_NARROW : HINT, { edge: 'bottom', align: 'right' })
       label(s, outer, online, { align: 'right', max: onlineMax })
 
-      const lines = logLines()
+      const picSpans: PicSpan[] = []
+      const lines = logLines(picSpans)
       if (scroll > 0 && lines.length > lastLines) scroll += lines.length - lastLines
       lastLines = lines.length
       scroll = Math.max(0, Math.min(scroll, Math.max(0, lines.length - logRect.h)))
+
+      // Only the pictures on the pane are loaded, and they are the ones the bank
+      // keeps: the log holds a hundred messages and the bank holds about seven
+      // photographs. Same window as drawLog, which counts the scroll from the
+      // bottom of the log.
+      if (pics) {
+        const end = lines.length - scroll
+        const top = end - logRect.h
+        const { cols: pw, rows: ph } = picBounds()
+        pics.ensure(picSpans.filter(p => p.from < end && p.to > top).map(p => p.src), pw, ph)
+      }
+
       drawLog(s, logRect, printing(lines, logRect.h, print.count), scroll)
 
       drawSuggest()

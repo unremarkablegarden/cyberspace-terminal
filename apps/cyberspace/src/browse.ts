@@ -421,6 +421,7 @@ class BrowseScreen {
     }
     this.sel = next
     this.status = ''
+    this.snd.tick()
   }
 
   private get current(): PublishedProgram | null {

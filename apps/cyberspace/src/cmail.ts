@@ -304,7 +304,7 @@ export function cmailProgram(
       username: m.senderUsername,
       timestamp: m.timestamp,
       // A picture the box is about to draw is not also named in the text.
-      content: bodyOf(m, { image: Boolean(pics && m.imageUrl) }),
+      content: bodyOf(m, { image: drawsPicture(m.imageUrl) }),
       action: m.isAction,
       deleted: m.deleted,
       blink: hasStyle(m.style, 'blink'),
@@ -349,8 +349,14 @@ export function cmailProgram(
      */
     const picture = (m: ChatMessage): Picture | undefined => {
       if (!pics || !m.imageUrl) return undefined
-      return pics.get(m.imageUrl, dmInner(), Math.max(1, logRect.h))
+      return pics.picture(m.imageUrl, dmInner(), Math.max(1, logRect.h))
     }
+
+    /** Whether the box expects to draw this attachment rather than name it. */
+    const drawsPicture = (src?: string): boolean => Boolean(pics && src && !pics.failed(src))
+
+    /** Where one message's rows sit in the thread, as a half-open range. */
+    interface PicSpan { src: string; from: number; to: number }
 
     /**
      * A box rule with the clock set into it, on the side the box is aligned to,
@@ -377,7 +383,7 @@ export function cmailProgram(
      * one box. Anything that is not a message from one side closes the current
      * box, since a box cannot enclose a gap.
      */
-    const threadLines = (): LogLine[] => {
+    const threadLines = (spans?: PicSpan[]): LogLine[] => {
       const out: LogLine[] = []
       const w = boxW()
       const inner = dmInner()
@@ -390,6 +396,7 @@ export function cmailProgram(
         const offset = mine ? logRect.w - w : 0
         const pad = ' '.repeat(offset)
         turn.forEach((e, i) => {
+          const from = out.length
           out.push({
             text: pad + dmRule(i === 0 ? 'top' : 'mid', e.m.timestamp ?? 0, mine),
             attr: DIM,
@@ -419,6 +426,7 @@ export function cmailProgram(
               spans: edges,
             })
           }
+          if (spans && e.m.imageUrl) spans.push({ src: e.m.imageUrl, from, to: out.length })
         })
         out.push({ text: pad + dmRule('bottom', 0, mine), attr: DIM })
         turn = []
@@ -478,10 +486,23 @@ export function cmailProgram(
       label(s, outer, THREAD_HINT, { edge: 'bottom', align: 'right' })
 
       // Compensated so an arriving message does not move a scrolled-back view.
-      const lines = threadLines()
+      const picSpans: PicSpan[] = []
+      const lines = threadLines(picSpans)
       if (scroll > 0 && lines.length > lastLines) scroll += lines.length - lastLines
       lastLines = lines.length
       scroll = Math.max(0, Math.min(scroll, Math.max(0, lines.length - logRect.h)))
+
+      // Only the pictures on the pane are loaded, and they are the ones the bank
+      // keeps. Same window as drawLog, which counts the scroll from the bottom.
+      if (pics) {
+        const end = lines.length - scroll
+        const top = end - logRect.h
+        pics.ensure(
+          picSpans.filter(p => p.from < end && p.to > top).map(p => p.src),
+          dmInner(), Math.max(1, logRect.h),
+        )
+      }
+
       drawLog(s, logRect, printing(lines, logRect.h, print.count), scroll)
 
       hline(s, threadSplitY, 1, cols - 2)
