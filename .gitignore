@@ -10,3 +10,7 @@ spikes/**/*.wasm.gz
 # local-only
 *.tsbuildinfo
 TODO.md
+# secrets
+.env
+.env.*
+!.env.example
