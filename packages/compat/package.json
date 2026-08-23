@@ -1,6 +1,6 @@
 {
   "name": "@cyberspace/compat",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Runs grid-native programs from the original /terminal over the pty.",
   "type": "module",
   "exports": {

@@ -102,3 +102,9 @@
     - `browse` ticks as the selection moves, like the `cmail` mailbox
 - A new build is picked up on the next visit, with no force refresh
 - `reboot` takes a waiting build
+
+## v0.2.1
+
+- Fixed user programs bleeping per character and running slow (every write was paced, not just `ctx.type`)
+- Fixed a user program going on drawing for seconds after it was left (paced output still draining)
+- `ctx.setBlipHz` takes effect; `ctx.type` bleeps on non-space characters only

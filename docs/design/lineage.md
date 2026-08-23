@@ -45,6 +45,15 @@ parses it, `app/src/vt.ts` copies the changed cells into the same planes, and
 things: any producer of ANSI runs unmodified, and nothing below the host imports
 a display.
 
+That moves pacing too. There it belongs to one method and everything else is
+instant; here the stream is paced by default, at 240 cps, and the bleep is a
+side effect of a paced byte being released (`app/src/baud.ts`,
+`app/src/main.ts`). The shell and the coreutils want that. Keystroke echo
+(`Tty.echo`) and full-screen frames (`Tty.paint`) do not and are written whole.
+A program that draws rather than prints turns the rate off for its run with
+`Tty.setPaced(false)`, which is what the compat host does, leaving `ctx.type` as
+the only clock a user program is under.
+
 ## Processes
 
 There: `Command { run(ctx, args) }`, listed once in `commands/index.ts`, run one

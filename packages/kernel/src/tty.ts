@@ -35,6 +35,15 @@ export interface TtyControl {
    */
   paint(s: string): void
   /**
+   * Rate-limit this program's stdout, or do not. On by default.
+   *
+   * The rate models text arriving over a line, which is what a program printing
+   * text is doing. A program drawing its own frames is not, so it turns pacing
+   * off for its run and paces whatever it wants to pace itself. Restored by
+   * setCooked().
+   */
+  setPaced(on: boolean): void
+  /**
    * The keyboard. A full-screen program under a pipe has a pipe for stdin, so it
    * reads keys from here instead; equivalent to /dev/tty.
    */
@@ -53,6 +62,8 @@ export class Tty implements TtyControl {
   private quiet = new Set<string>()
 
   private raw = false
+  /** Whether stdout is rate-limited. See setPaced(). */
+  private paced = true
   private line = ''
   private readers = new Pipe()
   private out: (data: Uint8Array, urgent?: boolean) => void
@@ -74,6 +85,13 @@ export class Tty implements TtyControl {
     // Back to the shell, which plays no sounds of its own.
     this.caret = true
     this.quiet.clear()
+    // Restored here as well as by the program, so one that exits without
+    // tidying cannot leave the terminal unpaced for the shell.
+    this.paced = true
+  }
+
+  setPaced(on: boolean): void {
+    this.paced = on
   }
 
   silence(keys: string[]): void {
@@ -168,7 +186,7 @@ export class Tty implements TtyControl {
     return {
       write: (data: Uint8Array | string) => {
         const s = typeof data === 'string' ? data : dec.decode(data)
-        this.out(bytes(s.replace(/(?<!\r)\n/g, '\r\n')))
+        this.out(bytes(s.replace(/(?<!\r)\n/g, '\r\n')), !this.paced)
       },
       end() {},
     }

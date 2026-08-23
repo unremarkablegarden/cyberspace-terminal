@@ -133,7 +133,9 @@ export function runGridProgram(deps: CompatDeps): (p: Proc, source: string) => P
     const surface = new Surface(cols, rows)
     const screens: CompatScreen[] = []
     const ac = new AbortController()
+    // ctx.type's rate and pitch, reset every run because they are locals.
     let cps = 240 // baud 2400
+    let blipHz = 1400
     let inScreen = false
 
     const render = (): void => {
@@ -176,13 +178,25 @@ export function runGridProgram(deps: CompatDeps): (p: Proc, source: string) => P
       else lineWrite(s, attr)
     }
 
+    /**
+     * The only paced output a compat program has. Everything else it writes is
+     * instant, so this clock is the whole rate: characters owed since the start
+     * are released every 8ms, and a batch the event loop delayed is paid back
+     * on the next one rather than dropped.
+     */
     const type = async (s: string, attr = NORMAL): Promise<void> => {
-      const delay = Math.max(2, 1000 / cps)
-      for (const ch of s) {
+      const chars = [...s]
+      const t0 = performance.now()
+      let sent = 0
+      while (sent < chars.length) {
         throwIfAborted()
-        write(ch, attr)
-        deps.snd?.blip(1400)
-        await sleep(delay)
+        const due = Math.min(chars.length, Math.floor((performance.now() - t0) / 1000 * cps) + 1)
+        while (sent < due) {
+          const ch = chars[sent++]!
+          write(ch, attr)
+          if (ch !== ' ') deps.snd?.blip(blipHz)
+        }
+        if (sent < chars.length) await sleep(8)
       }
     }
 
@@ -234,8 +248,9 @@ export function runGridProgram(deps: CompatDeps): (p: Proc, source: string) => P
         else p.out('\x1b[2J\x1b[H')
       },
       sleep,
-      setBaud: (rate: number) => { cps = Math.max(30, rate / 10) },
-      setBlipHz: () => {},
+      // 8N1: ten bits to a byte, so a baud is a tenth of a character.
+      setBaud: (rate: number) => { cps = rate / 10 },
+      setBlipHz: (hz: number) => { blipHz = hz },
 
       get term() { return grid },
       snd,
@@ -303,6 +318,10 @@ export function runGridProgram(deps: CompatDeps): (p: Proc, source: string) => P
 
     // ^C aborts from anywhere; every other key goes to the top screen.
     p.tty?.setRaw()
+    // A program of this kind draws; it does not transmit text. Its own ctx.type
+    // is then the only thing that paces, as it is in the terminal these were
+    // written for.
+    p.tty?.setPaced(false)
     let pumping = true
     const pump = (async () => {
       while (pumping) {
@@ -329,6 +348,8 @@ export function runGridProgram(deps: CompatDeps): (p: Proc, source: string) => P
       if (e instanceof Aborted) return 130
       const at = whereInSource((e as Error)?.stack)
       leaveScreen()
+      // The machine reporting a fault is machine output, so it paces.
+      p.tty?.setPaced(true)
       p.err(`${p.argv[0]}: ${(e as Error)?.message ?? e}${at ? ` at ${at}` : ''}\n`)
       return 1
     } finally {
@@ -336,8 +357,10 @@ export function runGridProgram(deps: CompatDeps): (p: Proc, source: string) => P
       pumping = false
       p.stdin.interrupt?.()
       leaveScreen()
-      p.tty?.setCooked()
+      // Written before the terminal goes back to cooked, so the reset is part
+      // of the program's own unpaced output and does not bleep on its way out.
       if (!inScreen && !screens.length) p.out('\x1b[0m')
+      p.tty?.setCooked()
     }
   }
 }
