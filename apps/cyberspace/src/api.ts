@@ -7,6 +7,19 @@ export interface AuthStorage {
   set(value: string | null): void
 }
 
+/** What `page` returns; see it for what the cursor means. */
+export interface ApiPage<T> {
+  rows: T[]
+  cursor: string | null
+}
+
+/** What every route answers with. `cursor` is on list responses only. */
+interface Envelope<T> {
+  data?: T
+  cursor?: string | null
+  error?: { code?: string; message?: string }
+}
+
 export class ApiError extends Error {
   constructor(public code: string, message: string, public status: number) {
     super(message)
@@ -81,6 +94,19 @@ export class ApiClient {
     return this.request<T>('GET', path)
   }
 
+  /**
+   * One page of a list route: the rows, and the cursor for the page behind it.
+   *
+   * `cursor` is null on the last page and is the only end marker. A route that
+   * filters rows its query could not hands back a page that is short, or
+   * empty, with pages still behind it, so a client follows the cursor rather
+   * than stopping at the first short page. Pass it back verbatim as `before`.
+   */
+  async page<T>(path: string): Promise<ApiPage<T>> {
+    const env = await this.envelope<T[]>('GET', path)
+    return { rows: env.data ?? [], cursor: env.cursor ?? null }
+  }
+
   delete<T>(path: string): Promise<T> {
     return this.request<T>('DELETE', path)
   }
@@ -113,6 +139,16 @@ export class ApiClient {
     body?: unknown,
     opts: { auth?: boolean; retry?: boolean } = {},
   ): Promise<T> {
+    return (await this.envelope<T>(method, path, body, opts)).data as T
+  }
+
+  /** The whole envelope, for the callers that need more of it than `data`. */
+  private async envelope<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    opts: { auth?: boolean; retry?: boolean } = {},
+  ): Promise<Envelope<T>> {
     const { auth = true, retry = true } = opts
     const headers: Record<string, string> = {}
     if (body !== undefined) headers['Content-Type'] = 'application/json'
@@ -131,11 +167,10 @@ export class ApiClient {
 
     if (res.status === 401 && auth && retry && this.refreshToken) {
       await this.refresh().catch(() => { this.logout() })
-      if (this.idToken) return this.request<T>(method, path, body, { auth, retry: false })
+      if (this.idToken) return this.envelope<T>(method, path, body, { auth, retry: false })
     }
 
-    const json = await res.json().catch(() => null) as
-      { data?: T; error?: { code?: string; message?: string } } | null
+    const json = await res.json().catch(() => null) as Envelope<T> | null
     if (!res.ok) {
       throw new ApiError(
         json?.error?.code ?? 'ERROR',
@@ -143,7 +178,7 @@ export class ApiClient {
         res.status,
       )
     }
-    return json?.data as T
+    return json ?? {}
   }
   /**
    * Usernames matching an @-fragment, for autocomplete. Returns names only.

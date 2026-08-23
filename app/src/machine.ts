@@ -8,7 +8,7 @@ import { shellMain } from '@cyberspace/shell'
 import {
   type ApiClient, circProgram, cmailProgram, cyberspacePrograms, registryPrograms,
 } from '@cyberspace/apps'
-import { compatFileHandler } from '@cyberspace/compat'
+import { jsFileHandler } from '@cyberspace/compat'
 import type { Sound } from '@cyberspace/crt/audio'
 import type { ChatPictures } from './image'
 import { viewProgram } from './view'
@@ -18,8 +18,11 @@ import { ENV, HOME, RTDB_URL } from './config'
 import { writeMotd } from './motd'
 import { installSkel } from './skel'
 
-/** Example programs from the original machine, seeded into /bin/examples. */
-const EXAMPLES = ['hello', 'roll', 'clock', 'river', 'news']
+/**
+ * Seeded into /bin/examples. `count` is written for this machine; the rest come
+ * from the original one and run through the compat host.
+ */
+const EXAMPLES = ['hello', 'roll', 'clock', 'river', 'news', 'count']
 
 /** Programs the faceplate must supply, because they end the session. */
 export interface HostPrograms {
@@ -60,8 +63,9 @@ function registerPrograms(kernel: Kernel, { api, snd, host, pictures }: MachineD
   if (pictures) kernel.register('view', viewProgram(pictures))
   kernel.registerAll(registryPrograms(api, chatSnd))
 
-  // Programs from the original /terminal, dispatched by their default export.
-  kernel.fileHandlers.push(compatFileHandler({
+  // JS programs, dispatched by what their default export turns out to be:
+  // a function runs as a process, an object with run() on the grid.
+  kernel.fileHandlers.push(jsFileHandler({
     username: () => api.username ?? ENV.USER,
     version: VERSION,
     api: {

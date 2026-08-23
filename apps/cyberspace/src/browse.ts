@@ -18,6 +18,7 @@ import {
   NORMAL, BRIGHT, BOLD, DIM,
   type Grid, type Rect, type Span, type TextLine, type KeyInput, type Screen,
 } from '@cyberspace/tui'
+import type { Runtime } from '@cyberspace/compat/classify'
 import type { ApiClient } from './api.js'
 import { SILENT, type ChatSound } from './chat.js'
 import { ProgramStore, type PublishedProgram } from './programs-store.js'
@@ -32,7 +33,23 @@ type SortKey = 'name' | 'author' | 'publishedAt'
 const NAME_W = 16
 const AUTHOR_W = 13
 const VER_W = 4
+/** Fits the longest label KIND takes, `wasm`. */
+const KIND_W = 4
 const DATE_W = 10
+
+/**
+ * What the KIND column prints.
+ *
+ * Every row carries one rather than only the unusual kinds: a blank under a
+ * heading reads as a fact nobody recorded, and this machine runs all three.
+ */
+const KIND: Record<Runtime, string> = { web: 'web', term: 'term', wasm: 'wasm' }
+
+/** Said in the About box, where there is room to say what the kind means. */
+const ABOUT_KIND: Record<Exclude<Runtime, 'web'>, string> = {
+  term: 'Written for this machine. Not for the web terminal.',
+  wasm: 'A wasm binary. Nothing to read; S shows nothing.',
+}
 
 /** Blank columns between the frame and the table, each side. */
 const PAD = 1
@@ -111,7 +128,7 @@ const cut = (text: string, width: number): string =>
   text.length <= width ? text : text.slice(0, Math.max(0, width - 1)) + '…'
 
 /** Returned by the gallery to ask the caller to run a program and then reopen it. */
-interface TestRun { name: string; source: string }
+interface TestRun { name: string; bytes: Uint8Array }
 
 class BrowseScreen {
   private all: PublishedProgram[] = []
@@ -255,6 +272,7 @@ class BrowseScreen {
       // Padding rather than a separator: a right-aligned number against a date
       // would read as a single field.
       'VER'.padStart(VER_W) + ' ',
+      'KIND'.padEnd(KIND_W),
       mark('publishedAt', 'DATE').padEnd(DATE_W + 1),
       'DESCRIPTION',
     ].join(' ')
@@ -294,6 +312,7 @@ class BrowseScreen {
         (held ? '* ' : '  ') + cut(p.name, NAME_W - 2).padEnd(NAME_W - 2),
         cut(p.author, AUTHOR_W).padEnd(AUTHOR_W),
         `v${p.release}`.padStart(VER_W) + ' ',
+        KIND[p.runtime].padEnd(KIND_W),
         shortDate(p.publishedAt).padEnd(DATE_W + 1),
         // Not truncated here; the whole row passes through cut below, which
         // ellipsises at the box width. Space opens the full text.
@@ -461,6 +480,7 @@ class BrowseScreen {
       RULE,
       `By @${p.author}`,
       `Version ${p.release}, published ${shortDate(p.publishedAt)}`,
+      ...(p.runtime === 'web' ? [] : [ABOUT_KIND[p.runtime]]),
     ]
 
     return new Promise(done => {
@@ -500,11 +520,17 @@ class BrowseScreen {
    * anything is installed.
    */
   private async preview(p: PublishedProgram): Promise<void> {
+    if (p.runtime === 'wasm') {
+      this.status = `${p.name} is a binary — nothing to read`
+      this.snd.beep(220, 0.12)
+      this.paint()
+      return
+    }
     this.status = 'reading…'
     this.paint()
     let source: string
     try {
-      source = await this.store.source(p.id)
+      source = dec.decode((await this.store.fetch(p.id)).bytes)
     } catch (err) {
       this.status = (err as Error).message
       this.snd.beep(220, 0.12)
@@ -541,8 +567,8 @@ class BrowseScreen {
     this.status = 'fetching…'
     this.paint()
     try {
-      const source = await this.store.source(p.id)
-      this.test = { name: p.name, source }
+      const r = await this.store.fetch(p.id)
+      this.test = { name: p.name, bytes: r.bytes }
       this.finish()
     } catch (err) {
       this.status = (err as Error).message
@@ -579,21 +605,25 @@ class BrowseScreen {
     this.status = 'installing…'
     this.paint()
     try {
-      const source = await this.store.source(p.id)
+      const r = await this.store.fetch(p.id)
       // Refused before the file is written rather than at run time. The guard
       // would catch it either way, but a program that can never run should not
       // sit in ~/bin looking installed, and the reason is more useful now.
-      const { inspect } = await import('@cyberspace/compat/guard')
-      const hits = inspect(source)
-      if (hits.length) {
-        const first = hits[0]!
-        this.status = `refused — ${first.line}:${first.col} ${first.name}, press S to read it`
-        this.snd.beep(220, 0.12)
-        this.paint()
-        return
+      // A wasm module is not read: it cannot reach the page, having stdio and
+      // nothing else, and there is no JS in it to parse.
+      if (r.runtime !== 'wasm') {
+        const { inspect } = await import('@cyberspace/compat/guard')
+        const hits = inspect(dec.decode(r.bytes))
+        if (hits.length) {
+          const first = hits[0]!
+          this.status = `refused — ${first.line}:${first.col} ${first.name}, press S to read it`
+          this.snd.beep(220, 0.12)
+          this.paint()
+          return
+        }
       }
       await fs.promises.mkdir(paths.join(this.home, BIN_DIR)).catch(() => {})
-      await fs.promises.writeFile(dest, source, { mode: 0o755 })
+      await fs.promises.writeFile(dest, r.bytes, { mode: 0o755 })
       // Recorded with the copy; this is what marks the row installed on the next open.
       this.installed.set(p.id, `${BIN_DIR}/${p.name}`)
       await writeInstalled(this.home, this.installed)
@@ -795,7 +825,7 @@ class BrowseScreen {
  */
 async function runOnce(p: Proc, test: TestRun): Promise<void> {
   const path = paths.join('/tmp', test.name)
-  await fs.promises.writeFile(path, test.source, { mode: 0o755 })
+  await fs.promises.writeFile(path, test.bytes, { mode: 0o755 })
   try {
     const prog = await p.kernel.resolveExec(path, p.cwd, p.env)
     if (!prog) {

@@ -5,11 +5,12 @@
 // holds the line-mode forms, which do not take the grid, so a program can be
 // read, fetched or installed from a script or a pipe.
 
-import { fs, paths, type Proc, type Program } from '@cyberspace/kernel'
+import { dec, fs, paths, type Proc, type Program } from '@cyberspace/kernel'
 import { ApiClient, ApiError } from './api.js'
 import { SILENT, type ChatSound } from './chat.js'
 import { browseProgram } from './browse.js'
 import { publishProgram } from './publish.js'
+import { ProgramStore } from './programs-store.js'
 import { rememberInstalled } from './installed.js'
 
 interface Listing {
@@ -23,13 +24,12 @@ interface Listing {
   takenDown?: boolean
 }
 
-interface SourceResult {
-  id: string
+/** A program named on the command line: `author/name`, or `author/name@2`. */
+interface Ref {
+  author: string
   name: string
-  ownerUsername: string
-  description: string
-  release: number
-  source: string
+  /** Undefined asks for the current release. */
+  release?: number
 }
 
 const D = (s: string): string => `\x1b[2m${s}\x1b[0m`
@@ -45,17 +45,27 @@ function needsLogin(p: Proc, api: ApiClient, name: string): boolean {
   return true
 }
 
-/** Look up one `author/name` listing. Returns null after printing the error. */
-async function find(p: Proc, api: ApiClient, cmd: string, ref: string): Promise<Listing | null> {
-  const m = /^([^/]+)\/([^/]+)$/.exec(ref)
+/** Parse `author/name` or `author/name@3`. Null after printing the error. */
+function parseRef(p: Proc, cmd: string, raw: string): Ref | null {
+  const m = /^([^/@]+)\/([^/@]+)(?:@(\d+))?$/.exec(raw)
   if (!m) {
-    p.err(`${cmd}: use author/name\n`)
+    p.err(`${cmd}: use author/name or author/name@version\n`)
     return null
   }
+  const release = m[3] ? Number(m[3]) : undefined
+  if (release !== undefined && release < 1) {
+    p.err(`${cmd}: ${raw}: no such version\n`)
+    return null
+  }
+  return { author: m[1]!, name: m[2]!, release }
+}
+
+/** Look up one `author/name` listing. Returns null after printing the error. */
+async function find(p: Proc, api: ApiClient, cmd: string, ref: Ref): Promise<Listing | null> {
   const rows = await api.get<Listing[]>(
-    `/v1/programs?author=${encodeURIComponent(m[1])}&name=${encodeURIComponent(m[2])}`)
+    `/v1/programs?author=${encodeURIComponent(ref.author)}&name=${encodeURIComponent(ref.name)}`)
   if (!rows.length) {
-    p.err(`${cmd}: ${ref}: not found\n`)
+    p.err(`${cmd}: ${ref.author}/${ref.name}: not found\n`)
     return null
   }
   return rows[0]
@@ -64,49 +74,64 @@ async function find(p: Proc, api: ApiClient, cmd: string, ref: string): Promise<
 export function registryPrograms(api: ApiClient, snd: ChatSound = SILENT): Record<string, Program> {
   const gallery = browseProgram(api, snd)
 
-  // browse             list every published program
-  // browse author/name print that program's source
+  // browse               list every published program
+  // browse author/name    print that program's source
+  // browse author/name@2  print an earlier version of it
   const browse: Program = async p => {
     if (!p.argv[1]) return gallery(p)
     if (needsLogin(p, api, 'browse')) return 1
     try {
-      const hit = await find(p, api, 'browse', p.argv[1])
+      const ref = parseRef(p, 'browse', p.argv[1])
+      if (!ref) return 1
+      const hit = await find(p, api, 'browse', ref)
       if (!hit) return 1
-      const r = await api.get<SourceResult>(`/v1/programs/${hit.id}/source`)
-      p.out(D(`# ${r.ownerUsername}/${r.name} v${r.release} — ${r.description}`) + '\n')
-      p.out(r.source.endsWith('\n') ? r.source : r.source + '\n')
+      const r = await new ProgramStore(api, p).fetch(hit.id, ref.release)
+      if (r.runtime === 'wasm') {
+        p.err(`browse: ${r.name}: binary\n`)
+        return 1
+      }
+      const source = dec.decode(r.bytes)
+      p.out(D(`# ${r.author}/${r.name} v${r.release} — ${r.description}`) + '\n')
+      p.out(source.endsWith('\n') ? source : source + '\n')
       return 0
     } catch (e) {
       return fail(p, 'browse', e)
     }
   }
 
-  // install author/name fetch the release into ~/bin, mode 755
+  // install author/name    fetch the release into ~/bin, mode 755
+  // install author/name@2   fetch that version instead of the current one
   const install: Program = async p => {
     if (needsLogin(p, api, 'install')) return 1
     if (!p.argv[1]) {
-      p.err('usage: install author/name\n')
+      p.err('usage: install author/name[@version]\n')
       return 1
     }
     try {
-      const hit = await find(p, api, 'install', p.argv[1])
+      const ref = parseRef(p, 'install', p.argv[1])
+      if (!ref) return 1
+      const hit = await find(p, api, 'install', ref)
       if (!hit) return 1
-      const r = await api.get<SourceResult>(`/v1/programs/${hit.id}/source`)
+      const r = await new ProgramStore(api, p).fetch(hit.id, ref.release)
       // Refused before the file is written, as the gallery does: a program that
-      // can never run should not sit in ~/bin looking installed.
-      const { inspect, refusalLines } = await import('@cyberspace/compat/guard')
-      const hits = inspect(r.source)
-      if (hits.length) {
-        for (const line of refusalLines(r.name, hits)) p.err(line.text + '\n')
-        return 1
+      // can never run should not sit in ~/bin looking installed. A wasm module
+      // is not read — it has stdio and nothing else, and holds no JS to parse.
+      if (r.runtime !== 'wasm') {
+        const { inspect, refusalLines } = await import('@cyberspace/compat/guard')
+        const hits = inspect(dec.decode(r.bytes))
+        if (hits.length) {
+          for (const line of refusalLines(r.name, hits)) p.err(line.text + '\n')
+          return 1
+        }
       }
       const home = p.env.HOME ?? '/home/guest'
       const dest = paths.join(home, 'bin', r.name)
       await fs.promises.mkdir(paths.join(home, 'bin')).catch(() => {})
-      await fs.promises.writeFile(dest, r.source, { mode: 0o755 })
+      await fs.promises.writeFile(dest, r.bytes, { mode: 0o755 })
       // Recorded against the registry id, so browse marks the row installed.
       await rememberInstalled(home, hit.id, `bin/${r.name}`)
-      p.out(`Installed ${r.name} v${r.release} in ~/bin.  ` + D('Read it first: browse ' + p.argv[1]) + '\n')
+      const read = r.runtime === 'wasm' ? '' : '  ' + D('Read it first: browse ' + p.argv[1])
+      p.out(`Installed ${r.name} v${r.release} in ~/bin.${read}\n`)
       return 0
     } catch (e) {
       return fail(p, 'install', e)

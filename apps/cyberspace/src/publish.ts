@@ -12,17 +12,21 @@
 
 import { dec, paths, type Proc, type Program } from '@cyberspace/kernel'
 import {
-  Surface, ScreenStack, SelectPopup, ConfirmPopup, YES_NO, parseKeys,
+  Surface, ScreenStack, SelectPopup, ConfirmPopup, PromptPopup, YES_NO, parseKeys,
   type Screen,
 } from '@cyberspace/tui'
+import type { Runtime } from '@cyberspace/compat/classify'
 import type { ApiClient } from './api.js'
 import { SILENT, type ChatSound } from './chat.js'
-import { ProgramStore, type StoredProgram } from './programs-store.js'
+import { DESCRIPTION_MAX, ProgramStore, type StoredProgram } from './programs-store.js'
 
-type Verb = 'publish' | 'recall' | 'restore'
+type Verb = 'publish' | 'recall' | 'restore' | 'delete'
+
+/** The KIND column, as browse prints it. */
+const KIND: Record<Runtime, string> = { web: 'web', term: 'term', wasm: 'wasm' }
 
 /** Seeded into /bin/examples: read-only, and never in a member's ~/bin. */
-const EXAMPLES = ['hello', 'roll', 'clock', 'river', 'news']
+const EXAMPLES = ['hello', 'roll', 'clock', 'river', 'news', 'count']
 
 const B = (s: string): string => `\x1b[1m${s}\x1b[0m`
 const D = (s: string): string => `\x1b[2m${s}\x1b[0m`
@@ -30,19 +34,24 @@ const D = (s: string): string => `\x1b[2m${s}\x1b[0m`
 /** Actions available for this program in its current state, most likely first. */
 function verbs(p: StoredProgram): Verb[] {
   if (p.takenDown) return []
-  // Never published: publish is the only action.
+  // Never published: publish is the only action, and there is no record to
+  // delete — the registry has never heard of the file.
   if (p.release < 1) return ['publish']
-  if (p.published) {
+
+  const out: Verb[] = p.published
     // Live. Replace is offered only when the source has changed; otherwise the
     // publish would create a version identical to the last.
-    return p.changed ? ['publish', 'recall'] : ['recall']
-  }
-  // Recalled. Unchanged source can be restored as the same version; edited
-  // source can only be published as a new one.
-  return p.changed ? ['publish'] : ['restore', 'publish']
+    ? (p.changed ? ['publish', 'recall'] : ['recall'])
+    // Recalled. Unchanged source can be restored as the same version; edited
+    // source can only be published as a new one.
+    : (p.changed ? ['publish'] : ['restore', 'publish'])
+
+  // Last, because it is the only irreversible action on the list.
+  out.push('delete')
+  return out
 }
 
-/** One selector row, e.g. `starfield   v3   live`, which doubles as a status listing. */
+/** One selector row, e.g. `bin/starfield   v3  grid  live`, which doubles as a status listing. */
 function row(p: StoredProgram, width: number): string {
   const version = p.release > 0 ? `v${p.release}` : '—'
   const state = p.takenDown
@@ -55,7 +64,7 @@ function row(p: StoredProgram, width: number): string {
   // Keyed by path, because two programs may share a basename in different
   // directories and the picker must distinguish them. The gallery shows the
   // basename instead, being a public listing.
-  return `${p.path.padEnd(width)}  ${version.padStart(4)}   ${state}`
+  return `${p.path.padEnd(width)}  ${version.padStart(4)}  ${KIND[p.runtime].padEnd(4)}  ${state}`
 }
 
 /**
@@ -66,6 +75,12 @@ function row(p: StoredProgram, width: number): string {
  * states that rather than asking for confirmation over a name.
  */
 function consequences(p: StoredProgram, verb: Verb, author: string): string[] {
+  // Where a program is listed follows from its kind, and the web terminal runs
+  // grid programs only. Nothing else on screen states that.
+  const reach = p.runtime === 'web'
+    ? []
+    : ['', `Kind: ${KIND[p.runtime]}. It is listed on this machine`, 'only, not on the web terminal.']
+
   if (verb === 'publish') {
     const next = p.release + 1
     return p.release < 1
@@ -73,7 +88,8 @@ function consequences(p: StoredProgram, verb: Verb, author: string): string[] {
           `Publish ${p.name} as v${next}.`,
           '',
           `Anyone can find it in browse, under @${author},`,
-          'read its source and install a copy of it.',
+          p.runtime === 'wasm' ? 'and install a copy of it.' : 'read its source and install a copy of it.',
+          ...reach,
           '',
           'There is no unpublish. You can recall it, which',
           'hides it — but a copy somebody installed is theirs.',
@@ -83,9 +99,25 @@ function consequences(p: StoredProgram, verb: Verb, author: string): string[] {
           '',
           `This REPLACES v${p.release}. Nobody can install the`,
           'old version afterwards, including you.',
+          ...reach,
           '',
           'Copies already installed are unaffected.',
         ]
+  }
+
+  if (verb === 'delete') {
+    return [
+      `Delete ${p.name} from the registry.`,
+      '',
+      `The record goes, ${p.release > 1 ? `v1 to v${p.release}` : 'its one release'} with it.`,
+      'Nobody can install it or read it again, including you.',
+      '',
+      'This is what frees the slot it holds against your',
+      'program limit. Your file in ~/bin stays where it is,',
+      'and copies other members installed are theirs.',
+      '',
+      'It cannot be undone.',
+    ]
   }
   if (verb === 'recall') {
     return [
@@ -180,6 +212,7 @@ function chooseVerb(
     publish: `Publish v${target.release + 1}`,
     recall: 'Recall it',
     restore: `Restore v${target.release}`,
+    delete: 'Delete the record',
   }
   return box<Verb | null>(p, null, (s, stack, done) => new SelectPopup({
     title: target.name.toUpperCase(),
@@ -194,6 +227,30 @@ function chooseVerb(
       else if (kind === 'cancel') snd.blip(420, 0.09, 0)
     },
     onDone: (_item, index) => done(index >= 0 ? options[index] ?? null : null),
+  }))
+}
+
+/**
+ * Ask for the one line browse shows.
+ *
+ * Only a wasm program reaches this: every other kind states its description in
+ * its own source, which is where publish reads it, and a binary has nowhere to
+ * put one.
+ */
+function askDescription(p: Proc, snd: ChatSound, name: string): Promise<string | null> {
+  return box<string | null>(p, null, (_s, _stack, done) => new PromptPopup({
+    title: name.toUpperCase(),
+    hint: '↵ Publish   ESC Cancel',
+    width: 52,
+    rows: 0,
+    maxLength: DESCRIPTION_MAX,
+    shadow: true,
+    onFeedback: kind => {
+      if (kind === 'edge' || kind === 'inert') snd.beep(220, 0.04)
+      else if (kind === 'choose') snd.blip(660, 0.06, 0)
+      else if (kind === 'cancel') snd.blip(420, 0.09, 0)
+    },
+    onDone: value => done(value?.trim() || null),
   }))
 }
 
@@ -222,6 +279,11 @@ async function act(
   if (verb === 'restore') {
     await store.restore(target)
     p.out(`${target.name} v${target.release} is listed again\n`)
+    return
+  }
+  if (verb === 'delete') {
+    await store.purge(target.id)
+    p.out(`${target.name} deleted — ~/${target.path} is still yours\n`)
     return
   }
 
@@ -323,6 +385,17 @@ export function publishProgram(api: ApiClient, snd: ChatSound = SILENT): Program
       verb = picked
     }
 
+    // A binary has nowhere to carry a description, so it is asked for instead
+    // of refused. Everything else states it in its own source.
+    if (verb === 'publish' && program.runtime === 'wasm' && !program.description.trim()) {
+      const line = await askDescription(p, snd, program.name)
+      if (!line) {
+        p.out(D('nothing published') + '\n')
+        return 0
+      }
+      program = { ...program, description: line }
+    }
+
     // Refused before the consequences box rather than after, so a member cannot
     // read the warning and confirm only to be told the action was unavailable.
     // Only publish requires a note; recall and restore act on a program that
@@ -332,11 +405,15 @@ export function publishProgram(api: ApiClient, snd: ChatSound = SILENT): Program
       p.out(`${program.name} has no description\n`)
       p.out(D('every program in browse is found by its one line — write one') + '\n')
       p.out(D(`  edit ~/${program.path}`) + '\n')
-      p.out(D("  description: 'what it does',") + '\n')
+      // Where the line goes depends on the kind: a grid program has an object
+      // literal to put it in and a program for this machine exports a function.
+      p.out(D(program.runtime === 'term'
+        ? "  export const description = 'what it does'"
+        : "  description: 'what it does',") + '\n')
       return 1
     }
 
-    const title = verb === 'publish' ? 'PUBLISH' : verb === 'recall' ? 'RECALL' : 'RESTORE'
+    const title = verb.toUpperCase()
     if (!await ask(p, snd, title, consequences(program, verb, api.username ?? ''))) {
       p.out(D('nothing published') + '\n')
       return 0

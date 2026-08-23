@@ -29,18 +29,21 @@ interface UserProgram {
   run(ctx: unknown, args: string[]): void | Promise<void>
 }
 
-/** Import a string of source as an ES module. */
-async function importSource(source: string): Promise<UserProgram | null> {
+/** Import a string of source as an ES module and hand back its default export. */
+async function importDefault(source: string): Promise<unknown> {
   const url = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }))
   try {
     const mod = await import(/* @vite-ignore */ url)
-    const program = mod?.default
-    if (!program || typeof program !== 'object') return null
-    if (typeof (program as UserProgram).run !== 'function') return null
-    return program as UserProgram
+    return mod?.default
   } finally {
     URL.revokeObjectURL(url)
   }
+}
+
+/** A default export shaped like an original /terminal program, or null. */
+function asGridProgram(value: unknown): UserProgram | null {
+  if (!value || typeof value !== 'object') return null
+  return typeof (value as UserProgram).run === 'function' ? value as UserProgram : null
 }
 
 /** The position in the author's own source that a stack trace points at, or null. */
@@ -94,40 +97,17 @@ const SILENT_SND = {
   blip() {}, beep() {}, tick() {}, seek() {}, hiss() {},
 }
 
-export function runGridProgram(deps: CompatDeps): (p: Proc, source: string) => Promise<number> {
-  return async (p, source) => {
+/**
+ * Run an imported grid program against a virtual cell grid.
+ *
+ * Takes the module's default export rather than its source: the guard and the
+ * import belong to the file handler below, which has to look at what came back
+ * before it knows this is the runner to use.
+ */
+export function runGridProgram(deps: CompatDeps): (p: Proc, program: UserProgram) => Promise<number> {
+  return async (p, program) => {
     const cols = p.tty?.cols ?? (Number(p.env.COLUMNS) || 80)
     const rows = p.tty?.rows ?? (Number(p.env.LINES) || 25)
-
-    // Checked before running. The import below evaluates a real ES module in
-    // this page, so this check is the boundary; see guard.ts. Loaded on demand
-    // because the parser is ~130 KB and only a program run needs it.
-    try {
-      const { inspect, refusalLines } = await import('./guard.js')
-      const hits = inspect(source)
-      if (hits.length) {
-        for (const line of refusalLines(p.argv[0] ?? '?', hits)) p.err(line.text + '\n')
-        return 1
-      }
-    } catch (e) {
-      // A SyntaxError is treated as the program's. Source the guard cannot parse
-      // but the engine can would be a bypass, so it is refused.
-      p.err(`${p.argv[0]}: ${(e as Error)?.message ?? e}\n`)
-      return 1
-    }
-
-    let program: UserProgram | null
-    try {
-      program = await importSource(source)
-    } catch (e) {
-      const at = whereInSource((e as Error)?.stack)
-      p.err(`${p.argv[0]}: ${(e as Error)?.message ?? e}${at ? ` at ${at}` : ''}\n`)
-      return 1
-    }
-    if (!program) {
-      p.err(`${p.argv[0]}: not a program (missing export default { run })\n`)
-      return 1
-    }
 
     const grid = new CellGrid({ cellW: 8, cellH: 16 }, cols, rows)
     const surface = new Surface(cols, rows)
@@ -365,14 +345,67 @@ export function runGridProgram(deps: CompatDeps): (p: Proc, source: string) => P
   }
 }
 
-/** Kernel file handler for old-style JS programs, recognised by their default export. */
-export function compatFileHandler(deps: CompatDeps): (path: string, data: Uint8Array) => Program | null {
-  const run = runGridProgram(deps)
+/**
+ * Kernel file handler for JS programs, of either kind.
+ *
+ * The file is claimed on `export default` and the KIND is decided after the
+ * import, by what the default export turns out to be: a function is a program
+ * written for this machine and is called with the process; an object with a
+ * `run` method is an original /terminal program and goes to the grid runner.
+ * Reading the shape off the source instead would be guessing at a fact the
+ * import is about to state.
+ */
+export function jsFileHandler(deps: CompatDeps): (path: string, data: Uint8Array) => Program | null {
+  const runGrid = runGridProgram(deps)
   return (_path, data) => {
     if (data.length < 2 || data[0] === 0) return null
     const head = dec.decode(data.subarray(0, Math.min(data.length, 4096)))
     if (!/export\s+default/.test(head)) return null
     const source = dec.decode(data)
-    return p => run(p, source)
+
+    return async (p) => {
+      // Checked before the import, which evaluates a real ES module in this
+      // page — the boundary for both kinds; see guard.ts. Loaded on demand
+      // because the parser is ~130 KB and only a program run needs it.
+      try {
+        const { inspect, refusalLines } = await import('./guard.js')
+        const hits = inspect(source)
+        if (hits.length) {
+          for (const line of refusalLines(p.argv[0] ?? '?', hits)) p.err(line.text + '\n')
+          return 1
+        }
+      } catch (e) {
+        // A SyntaxError is treated as the program's. Source the guard cannot
+        // parse but the engine can would be a bypass, so it is refused.
+        p.err(`${p.argv[0]}: ${(e as Error)?.message ?? e}\n`)
+        return 1
+      }
+
+      let value: unknown
+      try {
+        value = await importDefault(source)
+      } catch (e) {
+        const at = whereInSource((e as Error)?.stack)
+        p.err(`${p.argv[0]}: ${(e as Error)?.message ?? e}${at ? ` at ${at}` : ''}\n`)
+        return 1
+      }
+
+      if (typeof value === 'function') {
+        try {
+          return await (value as Program)(p) ?? 0
+        } catch (e) {
+          const at = whereInSource((e as Error)?.stack)
+          p.err(`${p.argv[0]}: ${(e as Error)?.message ?? e}${at ? ` at ${at}` : ''}\n`)
+          return 1
+        }
+      }
+
+      const grid = asGridProgram(value)
+      if (!grid) {
+        p.err(`${p.argv[0]}: not a program (missing export default)\n`)
+        return 1
+      }
+      return runGrid(p, grid)
+    }
   }
 }

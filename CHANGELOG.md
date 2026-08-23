@@ -105,6 +105,19 @@
 
 ## v0.2.1
 
+- Programs
+    - A program in `~/bin` exporting a function runs as a process, with `argv`, stdin and stdout
+    - Programs written for the web terminal keep running as they did
+    - `/bin/examples/count` is one of the new kind: it takes an argument, or numbers what arrives on stdin
+- Registry
+    - `browse` and `publish` show which terminal a program is written for: `web`, `term` or `wasm`
+    - `install author/name@2` installs an earlier version, `browse author/name@2` reads one
+    - `publish` can delete a program's registry record, which frees the slot it holds against your limit
+    - wasm programs can be published and installed
+    - Programs written for this machine are not listed on the web terminal, which cannot run them
+    - Fixed `publish` finding nothing to publish after a reload (it looked for the execute bit, which the browser filesystem cannot keep)
+- Pictures
+    - Fixed the chat log shifting as photographs finished loading (their rows are now held from the moment the message appears)
 - Fixed user programs bleeping per character and running slow (every write was paced, not just `ctx.type`)
 - Fixed a user program going on drawing for seconds after it was left (paced output still draining)
 - `ctx.setBlipHz` takes effect; `ctx.type` bleeps on non-space characters only

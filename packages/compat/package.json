@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./guard": "./src/guard.ts"
+    "./guard": "./src/guard.ts",
+    "./classify": "./src/classify.ts"
   },
   "dependencies": {
     "@cyberspace/crt": "workspace:*",
