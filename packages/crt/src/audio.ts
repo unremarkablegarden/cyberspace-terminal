@@ -234,6 +234,26 @@ export class Sound {
     if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {})
   }
 
+  /**
+   * Resume and wait for the context to reach `running`.
+   *
+   * resume() returns before the state changes, and `live` gates one-shots on
+   * `state === 'running'`, so a sound fired in the same task as the unlocking
+   * gesture is still dropped. Callers with something to play immediately await
+   * this instead.
+   *
+   * Capped at `timeout` ms because a resume() with no gesture behind it stays
+   * pending indefinitely in Chromium rather than rejecting.
+   */
+  async unlock(timeout = 400): Promise<void> {
+    const ctx = this.ctx
+    if (!ctx || this.disposed || ctx.state === 'running') return
+    await Promise.race([
+      ctx.resume().catch(() => {}),
+      new Promise<void>(res => setTimeout(res, timeout)),
+    ])
+  }
+
   channel(name: SoundChannel): number {
     return this.levels[name]
   }

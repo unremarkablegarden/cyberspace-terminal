@@ -1,6 +1,6 @@
 {
   "name": "@cyberspace/crt",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "WebGL2 CRT with a text grid behind it.",
   "type": "module",
   "exports": {

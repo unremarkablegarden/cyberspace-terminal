@@ -7,7 +7,7 @@ import { SerializeAddon } from '@xterm/addon-serialize'
 import { mount, type CrtScreen } from '@cyberspace/crt'
 import { RENDER, GRID } from '@cyberspace/crt/config'
 import { Sound } from '@cyberspace/crt/audio'
-import { strike, implode, Aborted } from '@cyberspace/crt/effects'
+import { standby, strike, implode, Aborted } from '@cyberspace/crt/effects'
 import { bootSequence } from '@cyberspace/crt/boot'
 import { loadFamily, loadFallback, familyOf } from '@cyberspace/crt/fonts'
 import { Tty, bytes, type Proc, type Kernel } from '@cyberspace/kernel'
@@ -46,6 +46,21 @@ api.onAuthChange = user => {
   void writeMotd(user)
 }
 
+/** The browser's file chooser. Resolves null when dismissed. */
+function pickFile(accept: string): Promise<File | null> {
+  return new Promise(done => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = accept
+    input.style.display = 'none'
+    document.body.appendChild(input)
+    const finish = (value: File | null) => { input.remove(); done(value) }
+    input.addEventListener('cancel', () => finish(null), { once: true })
+    input.addEventListener('change', () => finish(input.files?.[0] ?? null), { once: true })
+    input.click()
+  })
+}
+
 const xt = new Terminal({ cols: COLS, rows: ROWS, scrollback: 1000, allowProposedApi: true })
 const ser = new SerializeAddon()
 xt.loadAddon(ser)
@@ -65,6 +80,8 @@ let shell: Proc | null = null
 let machine: Kernel | null = null
 /** Non-null only while the cold-boot sequence plays; ^C aborts it. */
 let bootAbort: AbortController | null = null
+/** Non-null only while the machine sits in standby; any key aborts it. */
+let standbyAbort: AbortController | null = null
 
 let screen: CrtScreen
 let config: ConfigBox | null = null
@@ -81,6 +98,11 @@ const keyboard = new Keyboard({
     bootAbort.abort()
     return true
   },
+  powerOn: () => {
+    if (!standbyAbort) return false
+    standbyAbort.abort()
+    return true
+  },
 })
 
 /** Resolves once the rate limiter has released everything queued. */
@@ -93,6 +115,8 @@ function waitForDrain(): Promise<void> {
 
 // --- halt and reboot ----------------------------------------------------------
 
+const sleep = (ms: number) => new Promise<void>(res => setTimeout(res, ms))
+
 async function shutdownProgram(p: Proc): Promise<number> {
   p.out('\nTHE SYSTEM IS HALTED\n')
   await waitForDrain()
@@ -104,7 +128,13 @@ async function shutdownProgram(p: Proc): Promise<number> {
 
 async function rebootProgram(p: Proc): Promise<number> {
   p.out('\nThe system is going down for reboot NOW.\n')
+  p.out('SHUTTING DOWN ...\n')
   await waitForDrain()
+  await sleep(300)
+  p.out('SYNCING BUILD ...\n')
+  await waitForDrain()
+  snd.beep(880, 0.08)
+  await sleep(400)
   halted = true
   await withGrid(() => implode(screen.term, snd))
   // Drop the mark that would make the reload a warm boot.
@@ -187,7 +217,6 @@ const program = {
       s.crt.setSource(s.term.w, s.term.h)
     }
 
-    snd.powerOn()
     // Cold start: first visit, or away longer than COLD_AFTER.
     const cold = Date.now() - Number(store.get('lastSeen', '0')) > COLD_AFTER
     // The kernel boots while the animation plays. bootMachine never touches the grid.
@@ -198,6 +227,7 @@ const program = {
       // Image decoding is faceplate-only, and the metrics depend on the font
       // loaded right now, which F1 can change under a running program.
       pictures: () => pictureHost(s.term),
+      pickFile,
     })
     // Resumed under the boot animation, capped at 5s so a dead network cannot
     // hold up the prompt.
@@ -206,10 +236,20 @@ const program = {
       : Promise.resolve(null)
 
     if (cold) {
-      void snd.bootup()
+      const gate = new AbortController()
       const abort = new AbortController()
-      bootAbort = abort
+      standbyAbort = gate
+      // One lock across standby and the boot: unlocking between them would let
+      // a few frames of pty sync and a blinking cursor onto a dark screen.
       await withGrid(async () => {
+        // Standby until a key or a tap. An AudioContext unlocks only on a user
+        // gesture, so a cold boot taken unprompted plays none of its sequence.
+        await standby(s.term, gate.signal)
+        standbyAbort = null
+        bootAbort = abort
+        await snd.unlock()
+        snd.powerOn()
+        void snd.bootup()
         try {
           await strike(s.term, snd, abort.signal)
           await bootSequence(s.term, snd, abort.signal, { version: VERSION })
@@ -220,8 +260,10 @@ const program = {
           s.term.clear()
         }
       })
+      standbyAbort = null
       bootAbort = null
     } else {
+      snd.powerOn()
       await withGrid(() => strike(s.term, snd))
     }
     store.set('lastSeen', String(Date.now()))
@@ -307,7 +349,7 @@ const canvas = document.getElementById('tube') as HTMLCanvasElement
 try {
   await mount(canvas, program)
   if (MOBILE) keyboard.wireSoftKeyboard(canvas)
-  else canvas.addEventListener('pointerdown', () => keyboard.wake())
+  else canvas.addEventListener('pointerdown', () => keyboard.pointer())
 } catch (err) {
   const fault = document.getElementById('fault')!
   fault.style.display = 'block'

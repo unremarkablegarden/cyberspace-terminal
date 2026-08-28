@@ -7,7 +7,7 @@
     },
     "app": {
       "name": "app",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "dependencies": {
         "@cyberspace/apps": "workspace:*",
         "@cyberspace/compat": "workspace:*",
@@ -30,16 +30,17 @@
     },
     "apps/cyberspace": {
       "name": "@cyberspace/apps",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "dependencies": {
         "@cyberspace/compat": "workspace:*",
         "@cyberspace/kernel": "workspace:*",
         "@cyberspace/tui": "workspace:*",
+        "@zenfs/core": "^2.6.3",
       },
     },
     "packages/compat": {
       "name": "@cyberspace/compat",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "dependencies": {
         "@cyberspace/crt": "workspace:*",
         "@cyberspace/kernel": "workspace:*",
@@ -51,22 +52,23 @@
     },
     "packages/coreutils": {
       "name": "@cyberspace/coreutils",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "dependencies": {
         "@cyberspace/kernel": "workspace:*",
+        "@cyberspace/shell": "workspace:*",
         "@cyberspace/tui": "workspace:*",
       },
     },
     "packages/crt": {
       "name": "@cyberspace/crt",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "dependencies": {
         "@cyberspace/tui": "workspace:*",
       },
     },
     "packages/kernel": {
       "name": "@cyberspace/kernel",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "dependencies": {
         "@bjorn3/browser_wasi_shim": "^0.4.2",
         "@zenfs/core": "^2.6.3",
@@ -74,14 +76,14 @@
     },
     "packages/shell": {
       "name": "@cyberspace/shell",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "dependencies": {
         "@cyberspace/kernel": "workspace:*",
       },
     },
     "packages/tui": {
       "name": "@cyberspace/tui",
-      "version": "0.2.0",
+      "version": "0.2.1",
     },
   },
   "packages": {

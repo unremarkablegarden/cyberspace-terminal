@@ -78,3 +78,14 @@ export const nullSink: Sink = { write() {}, end() {} }
 
 /** A Source that is immediately EOF. */
 export const nullSource: Source = { read: () => Promise.resolve(null) }
+
+/**
+ * Write text to a sink one line at a time, newlines kept.
+ *
+ * A faceplate may rate-limit output and treat a single large write as a screen
+ * repaint, emitting it whole and unpaced (app/src/baud.ts). Splitting on lines
+ * keeps a long block of text arriving at the terminal's own rate.
+ */
+export function writeLines(sink: Sink, text: string): void {
+  for (const line of text.split(/(?<=\n)/)) sink.write(line)
+}

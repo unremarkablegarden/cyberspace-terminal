@@ -25,7 +25,11 @@ type Verb = 'publish' | 'recall' | 'restore' | 'delete'
 /** The KIND column, as browse prints it. */
 const KIND: Record<Runtime, string> = { web: 'web', term: 'term', wasm: 'wasm' }
 
-/** Seeded into /bin/examples: read-only, and never in a member's ~/bin. */
+/**
+ * Seeded into ~/bin/examples, which store.list() skips along with every other
+ * subdirectory. Kept here rather than imported from the faceplate that owns the
+ * files (app/src/bin), which a package cannot reach.
+ */
 const EXAMPLES = ['hello', 'roll', 'clock', 'river', 'news', 'count']
 
 const B = (s: string): string => `\x1b[1m${s}\x1b[0m`
@@ -317,8 +321,8 @@ export function publishProgram(api: ApiClient, snd: ChatSound = SILENT): Program
     const store = new ProgramStore(api, p)
 
     // Everything returned is publishable. Recalled programs stay in the list,
-    // since publish is how they are restored. The examples are excluded: that
-    // directory is read-only and rebuilt from source on every boot.
+    // since publish is how they are restored. The examples are excluded: they
+    // are in a subdirectory, which list() skips.
     let programs: StoredProgram[]
     try {
       programs = await store.list()
@@ -348,11 +352,11 @@ export function publishProgram(api: ApiClient, snd: ChatSound = SILENT): Program
         ?? null
       if (!program) {
         snd.beep(220, 0.12)
-        // Reported as read-only rather than "no such program", which would be
-        // wrong about a file visible in `ls /bin/examples`.
+        // Named as an example rather than "no such program", which would be
+        // wrong about a file visible in `ls ~/bin/examples`.
         if (EXAMPLES.includes(target)) {
           p.out(`publish: ${target} is one of the examples\n`)
-          p.out(D(`open it with \`edit /bin/examples/${target}\``) + '\n')
+          p.out(D(`open it with \`edit ~/bin/examples/${target}\``) + '\n')
           p.out(D(`save it to ~/bin/${target} and it is yours to publish`) + '\n')
           return 1
         }

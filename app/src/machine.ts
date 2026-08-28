@@ -7,6 +7,7 @@ import { coreutils } from '@cyberspace/coreutils'
 import { shellMain } from '@cyberspace/shell'
 import {
   type ApiClient, circProgram, cmailProgram, cyberspacePrograms, registryPrograms,
+  mountPages, umountPages, type CsHooks,
 } from '@cyberspace/apps'
 import { jsFileHandler } from '@cyberspace/compat'
 import type { Sound } from '@cyberspace/crt/audio'
@@ -17,12 +18,7 @@ import { changelog, VERSION } from './changelog'
 import { ENV, HOME, RTDB_URL } from './config'
 import { writeMotd } from './motd'
 import { installSkel } from './skel'
-
-/**
- * Seeded into /bin/examples. `count` is written for this machine; the rest come
- * from the original one and run through the compat host.
- */
-const EXAMPLES = ['hello', 'roll', 'clock', 'river', 'news', 'count']
+import { installBin } from './bin'
 
 /** Programs the faceplate must supply, because they end the session. */
 export interface HostPrograms {
@@ -40,10 +36,12 @@ export interface MachineDeps {
    * in text rather than drawn. See image.ts.
    */
   pictures?: () => ChatPictures
+  /** The host's file chooser, for upload(1). Absent on a host without one. */
+  pickFile?: (accept: string) => Promise<File | null>
 }
 
 /** Register every program. A later registration replaces an earlier one of the same name. */
-function registerPrograms(kernel: Kernel, { api, snd, host, pictures }: MachineDeps): void {
+function registerPrograms(kernel: Kernel, { api, snd, host, pictures }: MachineDeps, hooks: CsHooks): void {
   kernel.registerAll(coreutils)
   kernel.register('sh', shellMain)
   kernel.register('changelog', changelog)
@@ -51,7 +49,7 @@ function registerPrograms(kernel: Kernel, { api, snd, host, pictures }: MachineD
   kernel.register('reboot', host.reboot)
   // Registered after coreutils so the network whoami, which reports the logged-in
   // user, replaces the local one.
-  kernel.registerAll(cyberspacePrograms(api))
+  kernel.registerAll(cyberspacePrograms(api, hooks))
   // The chat screens request sounds through this; they hold no audio bus themselves.
   const chatSnd = {
     tick: () => snd.tick(),
@@ -95,27 +93,53 @@ function registerPrograms(kernel: Kernel, { api, snd, host, pictures }: MachineD
   }))
 }
 
-/** Fetch the bundled examples and cowsay into /bin. Runs in the background; failures are ignored. */
+/**
+ * Fetch cowsay into /bin. Runs in the background; failures are ignored.
+ *
+ * Fetched rather than bundled: 2.6 MB of wasm in the JS bundle would be paid for
+ * on every boot. The service worker precaches it, so an offline machine has it.
+ */
 async function seedCargo(): Promise<void> {
-  await fs.promises.mkdir('/bin/examples').catch(() => {})
-  for (const name of EXAMPLES) {
-    void fetch(`/examples/${name}.js`)
-      .then(r => (r.ok ? r.text() : Promise.reject(new Error(String(r.status)))))
-      .then(text => fs.promises.writeFile(`/bin/examples/${name}`, text, { mode: 0o755 }))
-      .catch(() => {})
-  }
-
   void fetch('/wasm/cowsay.wasm')
     .then(r => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))))
     .then(buf => fs.promises.writeFile('/bin/cowsay', new Uint8Array(buf), { mode: 0o755 }))
     .catch(() => {})
 }
 
+/**
+ * ~/public_html is an ordinary directory until a supporter is logged in; then
+ * the site is mounted over it and every save goes to the server. Unmounted at
+ * logout. login(1) waits for the mount and says so; a boot resume is quiet.
+ */
+function wirePages(api: ApiClient): { onAuth: CsHooks['onAuth']; up(): void } {
+  // Set once the filesystems are mounted; a resume can finish before then.
+  let fsUp = false
+  const wanted = () => fsUp && api.authed && api.pagesAllowed
+  const mount = () => mountPages(api, HOME, wanted).catch(() => false)
+  const previous = api.onAuthChange
+  api.onAuthChange = user => {
+    previous?.(user)
+    if (user && api.pagesAllowed) void mount()
+    else umountPages(HOME)
+  }
+  return {
+    onAuth: async user => {
+      if (!user || !api.pagesAllowed) return
+      return (await mount()) ? `~/public_html on pages.cyberspace.online/${user}/` : undefined
+    },
+    up: () => {
+      fsUp = true
+      if (wanted()) void mount()
+    },
+  }
+}
+
 /** Bring the kernel up: programs, mounts, seed files. Never touches the grid. */
 export async function bootMachine(deps: MachineDeps): Promise<Kernel> {
   const kernel = new Kernel()
   kernel.release = VERSION
-  registerPrograms(kernel, deps)
+  const pages = wirePages(deps.api)
+  registerPrograms(kernel, deps, { onAuth: pages.onAuth, pickFile: deps.pickFile })
 
   const opfs = await navigator.storage.getDirectory()
   await mountAll({
@@ -128,6 +152,9 @@ export async function bootMachine(deps: MachineDeps): Promise<Kernel> {
 
   await writeMotd(deps.api.username)
   await installSkel(HOME)
+  await installBin(HOME)
+  await fs.promises.mkdir(`${HOME}/public_html`).catch(() => {})
+  pages.up()
   await seedCargo()
 
   return kernel

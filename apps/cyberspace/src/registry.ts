@@ -131,7 +131,7 @@ export function registryPrograms(api: ApiClient, snd: ChatSound = SILENT): Recor
       // Recorded against the registry id, so browse marks the row installed.
       await rememberInstalled(home, hit.id, `bin/${r.name}`)
       const read = r.runtime === 'wasm' ? '' : '  ' + D('Read it first: browse ' + p.argv[1])
-      p.out(`Installed ${r.name} v${r.release} in ~/bin.${read}\n`)
+      p.out(`Installed ${r.name} v${r.release} in ~/bin — run it with ${r.name}.${read}\n`)
       return 0
     } catch (e) {
       return fail(p, 'install', e)

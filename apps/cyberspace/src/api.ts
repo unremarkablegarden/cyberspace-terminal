@@ -20,15 +20,44 @@ interface Envelope<T> {
   error?: { code?: string; message?: string }
 }
 
+interface RequestOpts {
+  auth?: boolean
+  retry?: boolean
+  /** For a Uint8Array body. */
+  contentType?: string
+}
+
+/** A site-relative path as URL path segments. */
+const segments = (path: string): string => path.split('/').map(encodeURIComponent).join('/')
+
 export class ApiError extends Error {
   constructor(public code: string, message: string, public status: number) {
     super(message)
   }
 }
 
+/** One object under the site, as GET /v1/pages/files lists it. */
+export interface PagesFile {
+  path: string
+  size: number
+  lastModified: string
+  url: string
+}
+
+export interface PagesSite {
+  hasIndex: boolean
+  takenDown: boolean
+  title?: string
+  button?: string
+  url: string
+  usage: { bytes: number; files: number }
+}
+
 export class ApiClient {
   username: string | null = null
   userId: string | null = null
+  /** Supporter, subscriber or admin: the tier that gets ~/public_html. */
+  pagesAllowed = false
   onAuthChange: ((username: string | null) => void) | null = null
 
   private idToken: string | null = null
@@ -74,6 +103,7 @@ export class ApiClient {
     this.refreshToken = null
     this.username = null
     this.userId = null
+    this.pagesAllowed = false
     this.storage.set(null)
     this.onAuthChange?.(null)
   }
@@ -115,6 +145,32 @@ export class ApiClient {
     return this.request<T>('POST', path, body)
   }
 
+  patch<T>(path: string, body: unknown): Promise<T> {
+    return this.request<T>('PATCH', path, body)
+  }
+
+  /** PUT with a raw body and the given Content-Type. */
+  async putBytes<T>(path: string, body: Uint8Array, contentType: string): Promise<T> {
+    return (await this.envelope<T>('PUT', path, body, { contentType })).data as T
+  }
+
+  /**
+   * /v1/pages: the homepage at pages.cyberspace.online. Paths are site-relative
+   * and go into the URL one segment at a time, slashes kept.
+   */
+  readonly pages = {
+    site: () => this.get<PagesSite>('/v1/pages/site'),
+    createSite: () => this.post<{ url: string; hasIndex: boolean }>('/v1/pages/site', {}),
+    patchSite: (body: { title?: string | null; button?: string | null }) =>
+      this.patch<{ updated: true }>('/v1/pages/site', body),
+    listFiles: () => this.get<PagesFile[]>('/v1/pages/files'),
+    readText: (path: string) =>
+      this.get<{ path: string; content: string }>(`/v1/pages/files/${segments(path)}`),
+    putFile: (path: string, bytes: Uint8Array, contentType: string) =>
+      this.putBytes<{ path: string; size: number; url: string }>(`/v1/pages/files/${segments(path)}`, bytes, contentType),
+    deleteFile: (path: string) => this.delete<void>(`/v1/pages/files/${segments(path)}`),
+  }
+
   private async refresh(): Promise<void> {
     if (!this.refreshToken) throw new ApiError('UNAUTHORIZED', 'not logged in', 401)
     const r = await this.request<{ idToken: string; refreshToken?: string }>(
@@ -127,9 +183,13 @@ export class ApiClient {
   }
 
   private async loadMe(): Promise<void> {
-    const me = await this.get<{ username?: string; userId?: string }>('/v1/users/me')
+    const me = await this.get<{
+      username?: string; userId?: string
+      isSupporter?: boolean; isSubscriber?: boolean; isSiteAdmin?: boolean
+    }>('/v1/users/me')
     this.username = me.username ?? null
     this.userId = me.userId ?? null
+    this.pagesAllowed = me.isSupporter === true || me.isSubscriber === true || me.isSiteAdmin === true
     this.onAuthChange?.(this.username)
   }
 
@@ -137,7 +197,7 @@ export class ApiClient {
     method: string,
     path: string,
     body?: unknown,
-    opts: { auth?: boolean; retry?: boolean } = {},
+    opts: RequestOpts = {},
   ): Promise<T> {
     return (await this.envelope<T>(method, path, body, opts)).data as T
   }
@@ -147,11 +207,13 @@ export class ApiClient {
     method: string,
     path: string,
     body?: unknown,
-    opts: { auth?: boolean; retry?: boolean } = {},
+    opts: RequestOpts = {},
   ): Promise<Envelope<T>> {
-    const { auth = true, retry = true } = opts
+    const { auth = true, retry = true, contentType } = opts
     const headers: Record<string, string> = {}
-    if (body !== undefined) headers['Content-Type'] = 'application/json'
+    // A Uint8Array goes out as it is; anything else is JSON.
+    const raw = body instanceof Uint8Array
+    if (body !== undefined) headers['Content-Type'] = raw ? contentType ?? 'application/octet-stream' : 'application/json'
     if (auth && this.idToken) headers['Authorization'] = `Bearer ${this.idToken}`
 
     let res: Response
@@ -159,7 +221,7 @@ export class ApiClient {
       res = await fetch(this.base + path, {
         method,
         headers,
-        body: body !== undefined ? JSON.stringify(body) : undefined,
+        body: body === undefined ? undefined : raw ? (body as Uint8Array<ArrayBuffer>) : JSON.stringify(body),
       })
     } catch {
       throw new ApiError('NO_CARRIER', 'NO CARRIER', 0)
@@ -167,7 +229,7 @@ export class ApiClient {
 
     if (res.status === 401 && auth && retry && this.refreshToken) {
       await this.refresh().catch(() => { this.logout() })
-      if (this.idToken) return this.envelope<T>(method, path, body, { auth, retry: false })
+      if (this.idToken) return this.envelope<T>(method, path, body, { ...opts, retry: false })
     }
 
     const json = await res.json().catch(() => null) as Envelope<T> | null

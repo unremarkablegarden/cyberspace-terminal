@@ -2,7 +2,7 @@
 
 import { dec, type Proc, type Program, readText } from '@cyberspace/kernel'
 import { Surface, TextBuffer, drawBuffer, parseKeys, DIM, BOLD, NORMAL } from '@cyberspace/tui'
-import { fsp, resolve } from './util.js'
+import { fsp, resolve, strerror } from './util.js'
 
 export const edit: Program = async p => {
   if (!p.tty) {
@@ -55,8 +55,8 @@ export const edit: Program = async p => {
       notice = `Wrote ${buf.text.length} bytes to ${name}`
       return true
     } catch (e) {
-      notice = `edit: ${name}: write failed`
-      void e
+      // A mount that forwards writes (public_html) puts the server's reason here.
+      notice = `edit: ${name}: ${strerror(e)}`
       return false
     }
   }

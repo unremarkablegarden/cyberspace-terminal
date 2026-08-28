@@ -1,13 +1,14 @@
-// The display powering on and off. strike() is implode() in reverse.
+// The display in standby, powering on and powering off. strike() is implode()
+// in reverse.
 //
-// Both draw directly onto the Term planes. The host must stop feeding the grid
-// while either runs, and repaint afterwards.
+// All three draw directly onto the Term planes. The host must stop feeding the
+// grid while one runs, and repaint afterwards.
 //
 // Phases are paced by wall clock rather than step count, so a throttled tab,
 // where timers are clamped to 1s, skips frames instead of stretching the
 // sequence.
 
-import { BRIGHT, BOLD, NORMAL } from './term.js'
+import { BRIGHT, BOLD, DIM, NORMAL } from './term.js'
 import type { Sound } from './audio.js'
 
 interface TermLike {
@@ -16,6 +17,7 @@ interface TermLike {
   dirty: boolean
   clear(): void
   put(x: number, y: number, ch: string | number, attr?: number, inv?: number): void
+  text(x: number, y: number, str: string, attr?: number, inv?: number): number
 }
 
 /** Thrown when an effect is skipped. The caller handles the end state. */
@@ -47,6 +49,43 @@ function line(term: TermLike, midX: number, midY: number, half: number): void {
   for (let col = Math.max(0, midX - half); col <= Math.min(term.cols - 1, midX + half); col++) {
     term.put(col, midY, '█', BRIGHT | BOLD)
   }
+  term.dirty = true
+}
+
+const STANDBY_HEAD = 'CYBERSPACE  ·  STANDBY'
+const STANDBY_HINT = 'PRESS ANY KEY TO POWER ON'
+/** Standby blink period in ms. Slower than the cursor's, so the two do not read alike. */
+const STANDBY_BLINK = 900
+
+/**
+ * Standby: the machine off, waiting to be switched on. Resolves when `signal`
+ * aborts, which the host does on the first keypress or tap.
+ *
+ * A cold start waits here because an AudioContext unlocks only on a user
+ * gesture, and every sound strike() and the boot sequence make is dropped while
+ * it is suspended. Booting unprompted therefore boots silent.
+ *
+ * DIM rather than FAINT: FAINT (level 100) is a fill for shadows and panels,
+ * and these two lines are read on an unlit screen.
+ */
+export async function standby(term: TermLike, signal: AbortSignal): Promise<void> {
+  const mid = term.rows >> 1
+  const draw = (lit: boolean) => {
+    term.clear()
+    term.text((term.cols - STANDBY_HEAD.length) >> 1, mid - 1, STANDBY_HEAD, DIM)
+    if (lit) term.text((term.cols - STANDBY_HINT.length) >> 1, mid + 2, STANDBY_HINT, DIM)
+    term.dirty = true
+  }
+
+  let lit = true
+  draw(lit)
+  while (!signal.aborted) {
+    // Aborted here is the power switch, not a failure.
+    await sleep(STANDBY_BLINK, signal).catch(() => {})
+    if (signal.aborted) break
+    draw(lit = !lit)
+  }
+  term.clear()
   term.dirty = true
 }
 

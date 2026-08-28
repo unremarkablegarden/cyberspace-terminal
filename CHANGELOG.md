@@ -116,8 +116,28 @@
     - wasm programs can be published and installed
     - Programs written for this machine are not listed on the web terminal, which cannot run them
     - Fixed `publish` finding nothing to publish after a reload (it looked for the execute bit, which the browser filesystem cannot keep)
+- Pages
+    - `~/public_html` is a homepage at pages.cyberspace.online/<user>/ while a supporter is logged in: `edit`, `cp`, `rm` write straight to the site, `cat` reads it back; the first save creates it
+    - `upload ~/public_html/<file>` puts a file from this computer on the site
+    - `pages` shows the URL and usage; `pages title`, `pages button` set the directory entry
+    - `mv` inside `~/public_html` is refused
 - Pictures
     - Fixed the chat log shifting as photographs finished loading (their rows are now held from the moment the message appears)
+- A cold start waits in standby until a key is pressed, so the boot plays with its sound
 - Fixed user programs bleeping per character and running slow (every write was paced, not just `ctx.type`)
 - Fixed a user program going on drawing for seconds after it was left (paced output still draining)
 - `ctx.setBlipHz` takes effect; `ctx.type` bleeps on non-space characters only
+
+## v0.3
+
+- Boot
+    - The machine comes up on a CYBER/OS nameplate with the address, what to type, and where the manual is
+    - Logged out, it says to `login`
+    - `reboot` syncs the build before it goes
+    - No mouse pointer over the tube
+- Programs
+    - `~/bin` carries a manual: `README.txt` on the directory, `API.txt` on writing a program, `NETWORK.txt` on the Cyberspace API
+    - The examples moved to `~/bin/examples`, beside the manual
+    - `~/bin` is on `PATH`, so an installed program runs by its name
+    - `import` takes a `.js` or `.wasm` off this computer into `~/bin`
+    - `help` lists programs first and the shell under them

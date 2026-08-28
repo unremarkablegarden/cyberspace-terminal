@@ -34,13 +34,22 @@ const ERRNO: Record<string, string> = {
   EISDIR: 'Is a directory',
   EACCES: 'Permission denied',
   EIO: 'Input/output error',
+  EPERM: 'Operation not permitted',
 }
 
-/** The usual message for an errno. Anything else reports itself. */
+/**
+ * The message for an error. A filesystem that gives a reason of its own
+ * (public_html forwards the server's) wins over the errno text: as a `reason`
+ * property, or wrapped by ZenFS as `ECODE: text, syscall 'path' (reason)`.
+ */
 export function strerror(e: unknown): string {
-  const { code, message } = e as { code?: string; message?: string }
-  if (code) return ERRNO[code] ?? code
-  return message || 'Error'
+  const { code, message = '', reason } = e as { code?: string; message?: string; reason?: string }
+  if (reason) return reason
+  if (!code) return message || 'Error'
+  const wrapped = message.match(/\((.+)\)$/)?.[1]
+  if (wrapped) return wrapped
+  if (message && !message.startsWith(code)) return message
+  return ERRNO[code] ?? code
 }
 
 /** Concatenated text of the given files, or stdin when none. */

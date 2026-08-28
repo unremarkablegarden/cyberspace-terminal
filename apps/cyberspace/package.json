@@ -1,6 +1,6 @@
 {
   "name": "@cyberspace/apps",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Cyberspace network programs: login, finger, feed, circ.",
   "type": "module",
   "exports": {
@@ -9,6 +9,7 @@
   "dependencies": {
     "@cyberspace/compat": "workspace:*",
     "@cyberspace/kernel": "workspace:*",
-    "@cyberspace/tui": "workspace:*"
+    "@cyberspace/tui": "workspace:*",
+    "@zenfs/core": "^2.6.3"
   }
 }

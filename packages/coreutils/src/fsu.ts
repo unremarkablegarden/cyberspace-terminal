@@ -1,7 +1,7 @@
 // File tools: ls cat cp mv rm mkdir rmdir touch.
 
 import { paths, type Proc, type Program } from '@cyberspace/kernel'
-import { fsp, resolve, flags, inputText } from './util.js'
+import { fsp, resolve, flags, inputText, strerror } from './util.js'
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
@@ -120,8 +120,13 @@ export const mv: Program = async p => {
     const to = await destFor(p, src, dst)
     try {
       await fsp.rename(src, to)
-    } catch {
-      // Cross-mount: copy then remove.
+    } catch (e) {
+      // EPERM is a mount refusing renames outright; anything else is
+      // cross-mount, so copy then remove.
+      if ((e as { code?: string })?.code === 'EPERM') {
+        p.err(`mv: ${arg}: ${strerror(e)}\n`)
+        return 1
+      }
       await copyTree(src, to)
       await removeTree(src)
     }
@@ -157,7 +162,12 @@ export const rm: Program = async p => {
       code = 1
       continue
     }
-    await removeTree(target)
+    try {
+      await removeTree(target)
+    } catch (e) {
+      p.err(`rm: ${arg}: ${strerror(e)}\n`)
+      code = 1
+    }
   }
   return code
 }

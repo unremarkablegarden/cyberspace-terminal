@@ -31,7 +31,10 @@ export const ENV = {
   USER: 'guest',
   HOME,
   HOSTNAME: 'cyberspace',
-  PATH: '/bin',
+  // ~/bin first so an installed program runs by name. Builtins resolve before
+  // the PATH walk (packages/kernel/src/kernel.ts), so nothing here can shadow
+  // ls or cat. resolveExec does not expand ~, hence the literal.
+  PATH: `${HOME}/bin:/bin`,
   SHELL: '/bin/sh',
   TERM: 'xterm',
   COLUMNS: String(COLS),

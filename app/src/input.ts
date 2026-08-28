@@ -18,7 +18,12 @@ export interface KeyboardDeps {
   config: () => ConfigBox | null
   /** ^C during the cold boot skips it. Answers whether it took the key. */
   skipBoot: () => boolean
+  /** Any key switches a machine in standby on. Answers whether it took the key. */
+  powerOn: () => boolean
 }
+
+/** Keys that are only a modifier, which do not count as a keypress in standby. */
+const MODIFIERS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'CapsLock'])
 
 export class Keyboard {
   private woken = false
@@ -32,6 +37,12 @@ export class Keyboard {
       this.woken = true
       this.d.snd.start()
     }
+  }
+
+  /** A pointer press on the canvas: unlocks audio and, in standby, switches the machine on. */
+  pointer(): void {
+    this.wake()
+    this.d.powerOn()
   }
 
   /**
@@ -60,6 +71,7 @@ export class Keyboard {
 
   /** A key by name, from the soft keyboard or from the config box's own handling. */
   press(name: string, ctrl = false, shift = false): void {
+    if (this.d.powerOn()) return
     const config = this.d.config()
     if (!config?.open && this.d.scroll.key(name, ctrl, shift)) return
     if (config?.open) {
@@ -76,6 +88,13 @@ export class Keyboard {
   /** A key from the real keyboard, event and all. */
   key(e: KeyboardEvent): void {
     this.wake()
+    // Standby takes the key and nothing else acts on it. No key sound: the audio
+    // context is still suspended here, and the press is answered by powerOn().
+    // Bare modifiers and browser chords (Cmd-R, ^W) are not the switch.
+    if (!MODIFIERS.has(e.key) && !e.metaKey && !e.ctrlKey && this.d.powerOn()) {
+      e.preventDefault()
+      return
+    }
     this.click(e)
     // ^C skips the cold boot. Kept out of the tty: no shell exists yet.
     if (e.ctrlKey && e.key === 'c' && this.d.skipBoot()) {
@@ -137,10 +156,10 @@ export class Keyboard {
     }
 
     canvas.addEventListener('pointerdown', () => {
-      this.wake()
+      this.pointer()
       field.focus()
     })
-    field.addEventListener('pointerdown', () => this.wake())
+    field.addEventListener('pointerdown', () => this.pointer())
 
     field.addEventListener('keydown', e => {
       if (!softKeydownWanted(e)) return

@@ -1,0 +1,361 @@
+CYBER/OS — WRITING A PROGRAM                               ~/bin/API.txt
+
+HOW A PROGRAM RUNS
+
+A word typed at the prompt resolves in three ways: a shell builtin
+first, then a file found on PATH, then the path itself if the word
+contains a slash. PATH is ~/bin then /bin.
+
+A file is claimed as a program when `export default` appears in its
+first 4096 bytes. Before anything runs, the source is parsed and checked
+against REFUSED NAMES below. It is then imported as an ES module.
+
+What the default export turns out to be decides how it is called:
+
+  a function          called with the process. See A PROGRAM FOR THIS
+                      MACHINE.
+  an object with run  called with ctx and a cell grid. See A WEB
+                      PROGRAM.
+
+Anything else is refused with `not a program (missing export default)`.
+
+
+THE LOOP
+
+A web program is given an 80x25 grid of cells, 44x20 on a phone. A
+ticker diffs that grid to the terminal every 33 milliseconds, and only
+when something has changed it. The first pushScreen takes the alternate
+screen; popScreen back to an empty stack returns to line mode, where
+ctx.write goes out as ordinary text.
+
+draw() is never called. Repaint in the program's own loop:
+
+  export default {
+    name: 'spin',
+    description: 'spins',
+    async run(ctx) {
+      let quit = false
+      ctx.pushScreen({
+        onKey: (e) => { if (e.key === 'Escape') quit = true },
+      })
+      while (!quit) {
+        ctx.term.clear()
+        ctx.term.text(2, 2, String(Date.now()), ctx.attr.BRIGHT)
+        ctx.term.dirty = true
+        await ctx.sleep(40)
+      }
+      ctx.popScreen()
+    },
+  }
+
+ctx.type is the only paced output. Everything else is written at once,
+because a program painting frames is not text arriving over a line.
+
+Ctrl-C aborts at an await. Every ctx.sleep and ctx.type then throws. Do
+not catch that: let it end the program, and put anything owed back in a
+finally. Code containing no await cannot be interrupted and will freeze
+the tab.
+
+Exit codes: 0 on return, 130 on Ctrl-C, 1 on a throw. A throw is
+reported as `name: message at LINE:COL`, pointing into the source as
+written.
+
+
+A WEB PROGRAM
+
+  export default {
+    name: 'mine',
+    description: 'says hello',
+    async run(ctx, args) {
+      await ctx.typeln('hello, ' + ctx.username)
+    },
+  }
+
+args holds the words after the program name.
+
+
+A PROGRAM FOR THIS MACHINE
+
+  export const description = 'says hello'
+
+  export default async function (p) {
+    p.out('hello, ' + (p.env.USER ?? 'guest') + '\n')
+    return 0
+  }
+
+The return value is the exit code.
+
+
+ctx — OUTPUT
+
+  ctx.write(s, attr)              at the cursor, at once
+  ctx.writeln(s, attr)            a line, at once
+  await ctx.type(s, attr)         at the current baud, bleeping
+  await ctx.typeln(s, attr)       the same, ending the line
+  ctx.clear()                     clear the screen
+  await ctx.sleep(ms)             pause, MILLISECONDS
+  ctx.setBaud(rate)               characters per second is rate / 10
+  ctx.setBlipHz(hz)               pitch of the per-character bleep
+
+Baud and pitch start at 2400 and 1400 for every run.
+
+
+ctx.attr — THE BEAM
+
+  BRIGHT    brightest
+  NORMAL    ordinary text
+  MUTED     below normal, for a column of chrome
+  DIM       for one small thing beside content
+  FAINT     below DIM, and safe only as a fill
+  BOLD      thicker
+  ITALIC    slanted, where the face has one
+  ALT       a second face; none is loaded in this build
+  BG        lights the pixels the glyph misses, making a panel
+
+Combine with | — BRIGHT | BOLD is a header.
+
+In line mode only two of these reach the terminal: BRIGHT or BOLD comes
+out bold, and DIM, MUTED or FAINT comes out dim. The rest take effect on
+the grid, after pushScreen.
+
+
+ctx.snd — SOUND
+
+  ctx.snd.blip(hz, time, jitter)  short, for keys and ticks
+  ctx.snd.beep(freq, time)        flat tone; 220 Hz is the refusal
+  ctx.snd.tick()                  one click
+  ctx.snd.seek(count)             a drive looking for something
+  ctx.snd.hiss(time, gain)        noise
+
+time is in SECONDS: beep(880, 0.09) is 90 milliseconds. gain and jitter
+run 0 to 1.
+
+
+ctx.term — THE GRID
+
+  ctx.term.cols                   80, or 44 on a phone
+  ctx.term.rows                   25, or 20 on a phone
+  ctx.term.clear()
+  ctx.term.put(x, y, ch, attr, inv)
+  ctx.term.text(x, y, str, attr, inv)
+  ctx.term.write(str, attr)       at the grid cursor
+  ctx.term.cx, ctx.term.cy        the grid cursor
+  ctx.term.dirty                  set it to true to be redrawn
+
+Pass 1 as inv to swap the cell: dark letters on a lit block. The
+attribute then sets the block, not the letters, so add BOLD to keep them
+readable. DIM | BOLD is usually the pair wanted.
+
+
+FULL SCREEN
+
+  ctx.pushScreen(screen)          take the grid and the keyboard
+  ctx.popScreen()                 give them back
+
+A screen is an object with one method:
+
+  onKey(e)      e is { key, ctrlKey, metaKey, altKey }
+
+Key names are the browser's: ArrowUp, Enter, Escape, Backspace, Tab,
+PageUp, Home. Ordinary characters arrive as themselves. metaKey and
+altKey are always false, and the return value is ignored. Ctrl-C never
+arrives; it aborts the program.
+
+There is no draw, no silentKey, no onKeyUp, no onPaste and no dispose.
+
+
+ctx.tui — DRAWING
+
+Everything takes a rect: { x, y, w, h }.
+
+  frame(term, r, attr, weight, clip)    -> the rect INSIDE the border
+  label(term, r, text, opts)            opts: edge, align, attr, max
+  hline(term, y, x0, x1, attr, weight)
+  vline(term, x, y0, y1, attr, weight)
+  clear(term, r)
+  shadow(term, r, clip)                 under it, down and right
+  ground(term, r)                       LAST, over the lot
+  inside(clip, x, y)                    -> boolean
+  cells(s)                              -> width in COLUMNS
+
+Draw into what frame() returns, not into r. Box drawing merges, so a
+line run into a frame makes its own junction. weight is 'single' or
+'double'; never mix them in one box.
+
+ground() lights the pixels the glyphs miss, so a box reads as a panel
+rather than a hole. It must be the last thing drawn into that rect.
+
+Use cells() rather than .length to lay out a row: one character can be
+two columns wide.
+
+The grid as a 160x100 bitmap:
+
+  const c = new ctx.tui.DotCanvas(ctx.term)
+  c.clear()
+  c.line(0, 0, 159, 99)
+  c.plot(80, 50)
+  c.blit(ctx.term, ctx.attr.NORMAL)
+
+  ctx.tui.drawEdges(c, ctx.tui.teapot(), view)
+
+That is the whole of ctx.tui. There are no popups, no input line, no
+list or log widget and no halftones here, whatever a program copied from
+the website terminal expects.
+
+
+ctx.gfx — PIXELS
+
+  ctx.gfx.canvas(w, h)          an OffscreenCanvas, attached to nothing
+
+Somewhere to decode or scale an image before drawing it on the grid.
+getContext('2d'), putImageData, getImageData and drawImage all work, and
+it is a valid source for drawImage and createImageBitmap in turn.
+
+
+WHO IS RUNNING IT
+
+  ctx.username                    the signed-in member, or 'guest'
+  ctx.version                     the CYBER/OS version
+  ctx.cwd                         working directory, an absolute path
+  ctx.root                        always false
+  ctx.signal                      AbortSignal, for its own loops
+
+
+ctx.api — THE NETWORK
+
+  await ctx.api.get(path)
+  await ctx.api.post(path, body)
+  await ctx.api.del(path)
+
+  const posts = await ctx.api.get('/v1/posts?limit=5')
+
+Paths must start with /v1/ or the call throws. The request goes out as
+the member running the program, and the server enforces their identity
+and their rate limits. What comes back is the data, unwrapped. A dead
+line throws NO CARRIER.
+
+See ~/bin/NETWORK.txt.
+
+
+WHAT IS INERT
+
+Present on ctx, and does nothing useful:
+
+  print and send nothing    ctx.chat.send   ctx.feed.reply
+  always empty              ctx.chat.rooms  ctx.chat.searchUsers
+                            ctx.feed.byUser  ctx.feed.replies
+                            ctx.feed.searchUsers
+  no-ops                    ctx.chat.open   ctx.chat.presence
+                            ctx.chat.enter  ctx.feed.watch
+                            ctx.setCwd      ctx.config
+                            ctx.cyclePhosphor  ctx.setDecay
+                            ctx.toggleMute  ctx.toggleFullscreen
+                            ctx.reboot      ctx.shutdown
+                            ctx.setResume   ctx.setState  ctx.takeState
+  a fixed string            ctx.fortune()
+
+Live: ctx.api, ctx.feed.page(limit, after) and ctx.chat.roll(notation).
+roll takes NdM, NdM+K, NdM-K and d%, at most 100 dice.
+
+A web program does not resume: setResume and setState do nothing here.
+See COMING BACK.
+
+Not present at all: ctx.fs, ctx.mail, ctx.compose, ctx.upload,
+ctx.world, ctx.programs.
+
+
+p — THE PROCESS
+
+A program for this machine receives the process instead of ctx.
+
+  p.argv                    the command word, then its arguments
+  p.env                     a copy: USER HOME HOSTNAME PATH SHELL TERM
+                            COLUMNS LINES PWD
+  p.cwd                     working directory
+  p.out(s)                  write to standard output
+  p.err(s)                  write to standard error
+  await p.stdin.read()      a chunk of bytes, or null at end of input
+  p.stdout, p.stderr        write(bytes | string), end()
+  p.signal                  AbortSignal, aborted by Ctrl-C
+  p.tty                     the terminal, ABSENT under a pipe
+  p.kernel                  the kernel
+
+  p.tty.cols, p.tty.rows    the size
+  p.tty.setRaw()            keys as they are pressed
+  p.tty.setCooked()         back to lines
+  p.tty.echo(s)             write without pacing it
+  p.tty.paint(s)            write a whole frame without pacing it
+
+There is no p.api. A program for this machine has fetch and no token, so
+it reaches the API only as a stranger.
+
+
+COMING BACK
+
+  p.setResume(line)         the line that restarts this program
+  p.setState(value)         park anything that survives JSON
+  p.takeState()             read it back, ONCE
+
+A reload within ten minutes restores the screen and runs that line
+again. Programs for this machine only.
+
+
+A WASM PROGRAM
+
+wasm32-wasi, Preview 1, starting at _start. It is given argv, the
+environment, and file descriptors 0, 1 and 2.
+
+There are no preopens. There is no filesystem: opening a path fails.
+
+Standard input depends on where it comes from. Under a pipe or from a
+file it is read in full before the program starts. At the keyboard it
+blocks, in a worker, until there is something to read. Where the page is
+not cross-origin isolated, the keyboard reads as empty.
+
+  cowsay                    reads the keyboard until Ctrl-D
+  echo moo | cowsay         reads the pipe
+
+import puts a .wasm from this computer into ~/bin.
+
+
+REFUSED NAMES
+
+Naming one of these stops the program before it starts:
+
+  localStorage    the store the session token is kept in
+  sessionStorage  a store the session token could be copied into
+  indexedDB       the browser database a session token is kept in
+  caches          a store the page keeps responses in
+  cookieStore     the cookie jar
+  window globalThis self top parent frames opener
+                  the page itself, from which the token is reachable
+  document        the page document, from which it is also reachable
+  eval Function   run or build code this check never read
+  Worker SharedWorker importScripts
+                  start or load code this check never read
+
+  .constructor    reaches the Function constructor
+  .__proto__      reaches the Function constructor
+  import()        loads code this check never read
+  import          a program is one file; there is nothing to import
+  import.meta     describes a module this check never read
+  with            hides which name is being read
+
+Only free identifiers count. `const self = players.find(...)` declares a
+variable and is allowed; `let phase = 'fetch'` is a string, not a call.
+
+Do this instead:
+
+  a canvas to draw on     ctx.gfx.canvas(w, h)
+  a second file           there is none; a program is one file
+  a network call          ctx.api, or fetch
+  a saved setting         p.setState, for a program of this machine.
+                          There is nowhere else: both browser stores are
+                          refused.
+
+fetch, XMLHttpRequest, WebSocket, AudioContext, createImageBitmap,
+ImageData, WebCodecs and every plain builtin are allowed.
+
+The check runs at install and again at every run. A wasm binary is never
+inspected. It is a filter and not a sandbox: it stops copied snippets
+and direct token grabs, not a determined author.

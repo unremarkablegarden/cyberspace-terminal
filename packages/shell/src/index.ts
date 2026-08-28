@@ -4,6 +4,8 @@ import { fs, paths, type Proc, type Program, readText } from '@cyberspace/kernel
 import { Readline, type Completion } from './readline.js'
 import { runLine, ShellExit, setHistoryBuiltin, builtinNames, type ShellState } from './run.js'
 
+export { builtinNames } from './run.js'
+
 const HISTFILE = '.sh_history'
 const HISTMAX = 500
 // Lines tolerated on disk before the file is compacted. Compaction truncates,

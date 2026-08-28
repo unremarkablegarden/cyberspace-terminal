@@ -627,7 +627,7 @@ class BrowseScreen {
       // Recorded with the copy; this is what marks the row installed on the next open.
       this.installed.set(p.id, `${BIN_DIR}/${p.name}`)
       await writeInstalled(this.home, this.installed)
-      this.status = `installed as ~/${BIN_DIR}/${p.name} — run it with ~/${BIN_DIR}/${p.name}`
+      this.status = `installed as ~/${BIN_DIR}/${p.name} — run it with ${p.name}`
       this.snd.blip(660, 0.06, 0)
     } catch (err) {
       this.status = (err as Error).message

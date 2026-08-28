@@ -9,7 +9,7 @@
 // This module holds the format, the validator and the shell loop. main.ts
 // decides where the bytes are stored.
 
-import { readText, type Kernel, type Proc, type Tty } from '@cyberspace/kernel'
+import { readText, writeLines, type Kernel, type Proc, type Tty } from '@cyberspace/kernel'
 import { shellMain } from '@cyberspace/shell'
 import { ENV, HOME } from './config'
 
@@ -103,7 +103,7 @@ export async function runSession(host: SessionHost, saved: TerminalSession | nul
   while (!host.halted()) {
     if (!quiet) {
       const motd = await readText('/etc/motd').catch(() => '')
-      tty.stdout.write(String(motd))
+      writeLines(tty.stdout, String(motd))
       await host.drained()
     }
     quiet = false

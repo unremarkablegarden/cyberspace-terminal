@@ -1,6 +1,7 @@
 // System tools: date uname whoami hostname env which clear sleep true false help.
 
-import { readText, type Program } from '@cyberspace/kernel'
+import { readText, writeLines, type Program } from '@cyberspace/kernel'
+import { builtinNames } from '@cyberspace/shell'
 import { fsp } from './util.js'
 
 export const date: Program = p => {
@@ -64,23 +65,47 @@ export const sleep: Program = async p => {
 export const trueCmd: Program = () => 0
 export const falseCmd: Program = () => 1
 
-export const help: Program = async p => {
-  p.out('Programs:\n')
-  const names = p.kernel.names()
-  const cols = p.tty?.cols ?? 80
+/**
+ * The plumbing, listed under Shell rather than among the programs somebody came
+ * here to run. Membership is by name, so a program registered later is listed
+ * as a program without being named anywhere.
+ */
+const SHELL = new Set([
+  'cat', 'clear', 'cp', 'date', 'echo', 'env', 'false', 'grep', 'head', 'hostname',
+  'less', 'ls', 'mkdir', 'motd', 'mv', 'reboot', 'rm', 'rmdir', 'sh', 'sleep',
+  'sort', 'tail', 'touch', 'true', 'uname', 'uniq', 'wc', 'which', 'whoami',
+])
+
+/** Not listed: help is what is being read, and nano and more are aliases. */
+const HIDDEN = new Set(['help', 'nano', 'more'])
+
+/** Names in rows, padded to the longest, filling the width of the terminal. */
+function columns(out: (s: string) => void, names: string[], cols: number): void {
   const w = Math.max(...names.map(n => n.length)) + 2
   const per = Math.max(1, Math.floor((cols - 2) / w))
   for (let i = 0; i < names.length; i += per) {
-    p.out('  ' + names.slice(i, i + per).map(s => s.padEnd(w)).join('').trimEnd() + '\n')
+    out('  ' + names.slice(i, i + per).map(s => s.padEnd(w)).join('').trimEnd() + '\n')
   }
-  p.out('Shell builtins:\n  cd  pwd  export  unset  exit  history\n')
+}
+
+export const help: Program = async p => {
+  const cols = p.tty?.cols ?? 80
+  const names = p.kernel.names().filter(n => !HIDDEN.has(n))
+  // builtinNames() rather than a list here, so the two cannot drift.
+  const shell = [...names.filter(n => SHELL.has(n)), ...builtinNames()].sort()
+
+  p.out('Programs:\n')
+  columns(s => p.out(s), names.filter(n => !SHELL.has(n)), cols)
+  p.out('Shell:\n')
+  columns(s => p.out(s), shell, cols)
+  p.out('Own programs:\n  cd bin then less README.txt\n')
   p.out('Keys:\n  [UP/DOWN] recall\n  [TAB] complete\n  [CTRL-SHIFT-UP/DOWN] and [SHIFT-PGUP/PGDN] scroll\n')
   return 0
 }
 
 export const motd: Program = async p => {
   try {
-    p.out(await readText('/etc/motd'))
+    writeLines(p.stdout, await readText('/etc/motd'))
   } catch {}
   return 0
 }
