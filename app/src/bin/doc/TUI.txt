@@ -1,0 +1,264 @@
+CYBER/OS — THE TUI                                     ~/bin/docs/TUI.txt
+
+How a web program draws. How a program runs is in ~/bin/docs/API.txt.
+
+ctx.attr, ctx.term, pushScreen and ctx.tui exist for a WEB PROGRAM only.
+A PROGRAM FOR THIS MACHINE has none of them; it draws with ANSI. See the
+last section.
+
+
+ctx.attr — THE BEAM
+
+  BRIGHT    brightest
+  NORMAL    ordinary text
+  MUTED     below normal, for a column of chrome
+  DIM       for one small thing beside content
+  FAINT     below DIM, and safe only as a fill
+  BOLD      thicker
+  ITALIC    slanted, where the face has one
+  ALT       a second face; none is loaded in this build
+  BG        lights the pixels the glyph misses, making a panel
+
+Combine with | — BRIGHT | BOLD is a header.
+
+  const { BRIGHT, NORMAL, DIM, BOLD } = ctx.attr
+  ctx.writeln('STATUS', BRIGHT | BOLD)
+  ctx.writeln('all lines up', NORMAL)
+  ctx.writeln('(checked 09:12)', DIM)
+
+In line mode only two of these reach the terminal: BRIGHT or BOLD comes
+out bold, and DIM, MUTED or FAINT comes out dim. The rest take effect on
+the grid, after pushScreen.
+
+
+ctx.term — THE GRID
+
+  ctx.term.cols                   80, or 44 on a phone
+  ctx.term.rows                   25, or 20 on a phone
+  ctx.term.clear()
+  ctx.term.put(x, y, ch, attr, inv)
+  ctx.term.text(x, y, str, attr, inv)
+  ctx.term.write(str, attr)       at the grid cursor
+  ctx.term.cx, ctx.term.cy        the grid cursor
+  ctx.term.dirty                  set it to true to be redrawn
+
+Cells are addressed x across, y down, from 0. ch is a code point.
+
+  const term = ctx.term
+  term.clear()
+  term.text(2, 1, 'HELLO', ctx.attr.BRIGHT)
+  term.put(2, 3, 0x2588, ctx.attr.NORMAL)          a full block
+  term.text(2, 5, ' SELECTED ', ctx.attr.DIM | ctx.attr.BOLD, 1)
+
+Pass 1 as inv to swap the cell: dark letters on a lit block. The
+attribute then sets the block, not the letters, so add BOLD to keep them
+readable. DIM | BOLD is usually the pair wanted.
+
+text() and put() mark the grid dirty. Writing into the planes any other
+way needs ctx.term.dirty = true or nothing is redrawn.
+
+The grid is drawn 30 times a second while a screen is pushed. Nothing on
+it is visible before pushScreen.
+
+
+FULL SCREEN
+
+  ctx.pushScreen(screen)          take the grid and the keyboard
+  ctx.popScreen()                 give them back
+
+A screen is an object with one method:
+
+  onKey(e)      e is { key, ctrlKey, metaKey, altKey }
+
+Key names are the browser's: ArrowUp, Enter, Escape, Backspace, Tab,
+PageUp, Home. Ordinary characters arrive as themselves. metaKey and
+altKey are always false, and the return value is ignored. Ctrl-C never
+arrives; it aborts the program.
+
+There is no draw, no silentKey, no onKeyUp, no onPaste and no dispose.
+
+The whole of a full-screen program:
+
+  export default {
+    name: 'dot',
+    description: 'move a dot with the arrows',
+    async run(ctx) {
+      const term = ctx.term
+      let x = term.cols >> 1, y = term.rows >> 1, quit = false
+      ctx.pushScreen({
+        onKey(e) {
+          if (e.key === 'Escape') quit = true
+          if (e.key === 'ArrowLeft') x--
+          if (e.key === 'ArrowRight') x++
+          if (e.key === 'ArrowUp') y--
+          if (e.key === 'ArrowDown') y++
+        },
+      })
+      try {
+        while (!quit) {
+          term.clear()
+          term.text(x, y, '@', ctx.attr.BRIGHT)
+          await ctx.sleep(33)
+        }
+      } finally {
+        ctx.popScreen()
+      }
+    },
+  }
+
+Pop in a finally. Ctrl-C throws out of sleep(), and a screen left on
+the stack keeps the keyboard.
+
+Screens stack. A second pushScreen takes the keys until it pops; the
+grid stays as it is, so a popup draws over what is there and the program
+beneath repaints when the popup is gone.
+
+
+ctx.tui — BOXES
+
+Everything takes a rect: { x, y, w, h }.
+
+  frame(term, r, attr, weight, clip)    -> the rect inside the border
+  label(term, r, text, opts)            opts: edge, align, attr, max
+  hline(term, y, x0, x1, attr, weight)
+  vline(term, x, y0, y1, attr, weight)
+  clear(term, r)
+  shadow(term, r, clip)                 under it, down and right
+  ground(term, r)                       last; see below
+  inside(clip, x, y)                    -> boolean
+  cells(s)                              -> width in columns
+
+A box with a title and a key hint:
+
+  const { frame, label, clear, ground, shadow } = ctx.tui
+  const { DIM, BRIGHT, BOLD } = ctx.attr
+  const box = { x: 10, y: 5, w: 40, h: 10 }
+
+  clear(term, box)
+  shadow(term, box)
+  const inner = frame(term, box, DIM, 'double')
+  label(term, box, 'REPORT', { attr: BRIGHT | BOLD })
+  label(term, box, 'ESC Close', { edge: 'bottom', align: 'right', attr: DIM })
+  term.text(inner.x + 1, inner.y + 1, 'nothing to report', NORMAL)
+  ground(term, box)
+
+Draw into what frame() returns, not into r. Box drawing merges, so a
+line run into a frame makes its own junction:
+
+  const inner = frame(term, box)
+  hline(term, inner.y + 2, box.x, box.x + box.w - 1)      a rule, tee'd
+  vline(term, box.x + 20, box.y, box.y + box.h - 1)       a column
+
+weight is 'single' or 'double'; never mix them in one box.
+
+label() puts a blank either side, so pass the bare text. text may also
+be spans, for a keycap or a badge in a rule:
+
+  label(term, box, [
+    { text: ' ↵ ', inverse: true, attr: DIM },
+    { text: ' Open ' },
+    { text: ' ESC ', inverse: true, attr: DIM },
+    { text: ' Close' },
+  ], { edge: 'bottom', align: 'right' })
+
+max clips a label to a number of columns.
+
+ground() ORs BG into every cell of the rect, picture cells excepted,
+so the box has a lit background. Draw the contents first: anything
+written after it lands without the bit and shows as a dark hole.
+
+shadow() falls outside the rect, down and right, so ground() never
+reaches it. Pass clip to keep it inside a pane.
+
+Use cells() rather than .length to lay out a row: one character can be
+two columns wide.
+
+  const s = '日本語'
+  term.text(box.x + box.w - 2 - cells(s), y, s)          right-aligned
+
+inside() answers whether a cell is within a clip rect, for a drawing
+routine that takes one.
+
+There are no popups, no input line, no list or log widget and no
+halftones. The legacy web terminal has them; a program copied from it
+that calls them throws. A list is a loop over text(); a selection is
+inv 1 on one row.
+
+
+ctx.tui — DOTS
+
+The grid as a bitmap, two dots across and four down per cell:
+
+  new DotCanvas(term, cols, rows)     cols, rows default to the grid
+  c.w, c.h                            size in dots
+  c.clear()
+  c.plot(x, y)
+  c.line(x0, y0, x1, y1)
+  c.blit(term, attr)                  onto the grid, at 0,0
+
+  const c = new ctx.tui.DotCanvas(term)          160 x 100 on a desktop
+  c.clear()
+  c.line(0, 0, c.w - 1, c.h - 1)
+  c.line(0, c.h - 1, c.w - 1, 0)
+  c.plot(c.w >> 1, c.h >> 1)
+  c.blit(term, ctx.attr.NORMAL)
+
+A canvas smaller than the grid draws in the top-left; a picture inside a
+box is a canvas the size of the box's inside, blitted and then framed.
+
+Wireframes: an edge is a pair of [x, y, z] points, a view says how to
+look at them.
+
+  drawEdges(c, edges, view)
+  teapot()                            -> the edges of one
+
+  const edges = ctx.tui.teapot()
+  let yaw = 0
+  while (!quit) {
+    c.clear()
+    ctx.tui.drawEdges(c, edges, {
+      yaw, pitch: 0.4,                 radians
+      scale: 18,                       dots per model unit
+      ox: c.w >> 1, oy: c.h >> 1,      centre, in dots
+      focal: 6,                        eye distance, model units; large
+                                       is near orthographic
+    })
+    c.blit(term, ctx.attr.BRIGHT)
+    yaw += 0.05
+    await ctx.sleep(33)
+  }
+
+
+A PROGRAM FOR THIS MACHINE
+
+It receives the process, not ctx: no attr, no grid, no screens, no tui.
+The terminal is a byte stream; a frame is text with ANSI escapes. p.tty.paint(s) sends a whole frame at once, unpaced; p.tty.setRaw()
+delivers keys as bytes through p.stdin.
+
+  export const description = 'a box, drawn in ANSI'
+
+  export default async function (p) {
+    if (!p.tty) { p.err('no tty\n'); return 1 }
+    const { cols, rows } = p.tty
+    const at = (x, y) => `\x1b[${y + 1};${x + 1}H`
+    p.tty.setRaw()
+    p.out('\x1b[?1049h\x1b[?25l')                 alt screen, no caret
+    try {
+      const x = (cols - 20) >> 1, y = (rows - 3) >> 1
+      p.tty.paint(
+        '\x1b[2J' +
+        at(x, y)     + '┌──────────────────┐' +
+        at(x, y + 1) + '│ \x1b[1mHELLO\x1b[0m            │' +
+        at(x, y + 2) + '└──────────────────┘' +
+        at(x, y + 4) + '\x1b[2many key\x1b[0m')
+      await p.stdin.read()
+      return 0
+    } finally {
+      p.out('\x1b[?1049l\x1b[?25h')
+      p.tty.setCooked()
+    }
+  }
+
+SGR: 1 bold, 2 dim, 3 italic, 7 inverse, 0 reset. Keys arrive as bytes:
+'\x1b[A' up, '\x1b[B' down, '\r' Enter, '\x1b' Escape, '\x7f' Backspace.
+Ctrl-C aborts; p.signal reports it.

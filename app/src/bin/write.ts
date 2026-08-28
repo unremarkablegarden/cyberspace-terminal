@@ -31,10 +31,14 @@ export async function writeBin(
 ): Promise<void> {
   const bin = `${home}/bin`
   await fs.promises.mkdir(bin).catch(() => {})
+  await fs.promises.mkdir(`${bin}/docs`).catch(() => {})
   await fs.promises.mkdir(`${bin}/examples`).catch(() => {})
 
   for (const [path, text] of Object.entries(doc)) {
-    await writeIfChanged(`${bin}/${basename(path)}`, text, 0o644)
+    await writeIfChanged(`${bin}/docs/${basename(path)}`, text, 0o644)
+    // Before v0.3 the manual was written to ~/bin itself. That copy was
+    // rewritten on every boot, so removing it loses nothing of the operator's.
+    await fs.promises.unlink(`${bin}/${basename(path)}`).catch(() => {})
   }
   for (const [path, source] of Object.entries(examples)) {
     await writeIfChanged(`${bin}/examples/${basename(path).replace(/\.js$/, '')}`, source, 0o755)

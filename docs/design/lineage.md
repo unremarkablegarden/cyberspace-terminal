@@ -63,8 +63,8 @@ at a time by `Shell.dispatch`. A command that reaches the site sets
 Here: `Program = (p: Proc) => number` (`packages/kernel/src/proc.ts`). A `Proc`
 carries pid, argv, env, cwd, stdin/stdout/stderr, an `AbortSignal` and a tty when
 it has one. Pipes are real (`packages/kernel/src/pipe.ts`), exit codes are real,
-^C is a signal. There is no auth flag: `login` prompts, then spawns a child shell
-as that user, and `exit` returns to the guest.
+^C is a signal. There is no auth flag: `login` prompts and returns; the host
+renames the running shell's `USER`, and `logout` puts it back to guest.
 
 ## Executing a file
 

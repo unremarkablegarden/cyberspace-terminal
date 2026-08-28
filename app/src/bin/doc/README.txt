@@ -1,9 +1,9 @@
-CYBER/OS — YOUR PROGRAMS                                ~/bin/README.txt
+CYBER/OS — YOUR PROGRAMS                                ~/bin/docs/README.txt
 
 WHAT THIS IS
 
-~/bin holds programs: the ones written here, and the ones installed from
-the gallery. Both run by name, because ~/bin is on PATH.
+~/bin holds programs written here and programs installed from the
+gallery. ~/bin is on PATH, so either runs by name.
 
 The directory lives in this browser and nowhere else. It is not backed
 up. It does not follow to another machine. Nothing in it reaches the
@@ -30,7 +30,7 @@ without installing, SPACE opens the description, ESC leaves.
 
 THE EXAMPLES
 
-  ls ~/bin/examples     six programs, one idea each
+  ls ~/bin/examples     six programs
   ./examples/clock      run one where it sits
 
   hello   printing, arguments, sound, Ctrl-C
@@ -40,24 +40,22 @@ THE EXAMPLES
   news    reading the feed
   count   argv, stdin, exit codes, pipelines
 
-Work on a copy:
+The examples are rewritten at every boot. Work on a copy:
 
   cp ~/bin/examples/clock ~/bin/clock
   edit ~/bin/clock
-
-That copy is yours: editable, runnable, deletable, publishable.
 
 
 THREE KINDS
 
   web    an object with a run(). Draws on a cell grid. Runs here and on
-         the website terminal.
+         the legacy web terminal at cyberspace.online/terminal.
   term   a function. A process: argv, stdin, stdout, an exit code. Runs
-         here only.
+         on this machine only (terminal.cyberspace.online).
   wasm   a wasm32-wasi binary. Standard input, output and error, and no
          filesystem.
 
-What the file exports decides which. There is nothing to declare.
+The default export decides which; nothing is declared.
 
 
 PUBLISHING
@@ -66,7 +64,7 @@ PUBLISHING
 
 publish puts a program in the gallery under the author's name, where any
 member can read its source, run it once, or install a copy. The gallery
-is one library, shared with the website terminal.
+is one library, shared with the legacy web terminal.
 
 A description is required, 256 characters at most. It is read out of the
 source, and it is the one line the gallery shows:
@@ -82,8 +80,8 @@ belongs to whoever installed it and stays. delete removes the record.
 LIMITS
 
 Twenty programs, 128 KB each. Supporters get a hundred at 1 MB.
-Three publishes a minute, forty a day.
 
 
-  less ~/bin/API.txt        how to write one
-  less ~/bin/NETWORK.txt    the Cyberspace API
+  less ~/bin/docs/API.txt        how to write one
+  less ~/bin/docs/TUI.txt        how one draws
+  less ~/bin/docs/NETWORK.txt    the Cyberspace API

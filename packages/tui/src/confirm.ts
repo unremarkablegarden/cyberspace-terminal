@@ -1,14 +1,15 @@
 // A centred modal that asks one question and takes one answer.
 //
 // SelectPopup without the list, so there is nothing to move through and nothing
-// to select by accident. The answer is a letter rather than Enter, because a
-// reader who has just pressed Escape or Ctrl-C is already leaving and a box
-// that read the next keystroke as yes would not be asking anything.
+// to select by accident. The default answer is a letter rather than Enter,
+// because a reader who has just pressed Escape or Ctrl-C is already leaving and
+// a box that read the next keystroke as yes would not be asking anything. A box
+// opened by a deliberate command (^O in edit) takes Enter; see `answer`.
 //
 // A Screen, so the grid beneath is snapshotted on push and restored on pop; the
 // program behind is not notified and does not redraw.
 
-import { NORMAL, BRIGHT, BOLD } from './attrs.js'
+import { NORMAL, BRIGHT, BOLD, DIM } from './attrs.js'
 import type { Grid } from './surface.js'
 import type { Screen } from './screen.js'
 import type { KeyInput } from './keys.js'
@@ -27,6 +28,12 @@ export interface ConfirmOptions {
   onFeedback?: (kind: 'confirm' | 'cancel' | 'inert', e: KeyInput) => void
   /** Shown in the bottom rule, as plain text. */
   hint?: string | Span[]
+  /**
+   * Which keys answer. 'yn' (default): Y and N. 'enter': Enter is yes, so a
+   * box that confirms an ordinary action (a save) does not need a letter;
+   * Y/N are then inert. Escape and Ctrl-C are no in either mode.
+   */
+  answer?: 'yn' | 'enter'
   /** Region to centre within. Defaults to the whole grid. */
   bounds?: Rect
   /**
@@ -46,6 +53,13 @@ export interface ConfirmOptions {
 
 /** The two answers, as a hint. Shared so every call site words it identically. */
 export const YES_NO: Span[] = [{ text: 'Y/N' }]
+/** The hint for answer: 'enter'. */
+export const ENTER_ESC: Span[] = [
+  { text: ' ↵ ', inverse: true, attr: DIM },
+  { text: ' OK ' },
+  { text: ' ESC ', inverse: true, attr: DIM },
+  { text: ' Cancel' },
+]
 
 const MIN_W = 18
 /**
@@ -80,6 +94,7 @@ export class ConfirmPopup implements Screen {
   silentKey(e: KeyInput): boolean {
     if (e.metaKey || e.altKey) return false
     if (e.ctrlKey) return e.key === 'c' || e.key === 'C'
+    if (this.opts.answer === 'enter') return e.key === 'Escape' || e.key === 'Enter'
     return e.key === 'Escape' || 'ynYN'.includes(e.key)
   }
 
@@ -96,6 +111,11 @@ export class ConfirmPopup implements Screen {
     }
     if (e.ctrlKey) return false
 
+    if (this.opts.answer === 'enter') {
+      if (e.key === 'Enter') this.finish(true, e)
+      else this.opts.onFeedback?.('inert', e)
+      return true
+    }
     if (e.key === 'y' || e.key === 'Y') {
       this.finish(true, e)
       return true

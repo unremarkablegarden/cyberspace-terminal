@@ -43,6 +43,9 @@ const api = new ApiClient(API_URL, {
 })
 api.onAuthChange = user => {
   ENV.USER = user ?? 'guest'
+  // The running shell keeps its own copy of the environment, so rename it too:
+  // the prompt is drawn from it on every line.
+  if (shell) shell.env.USER = ENV.USER
   void writeMotd(user)
 }
 

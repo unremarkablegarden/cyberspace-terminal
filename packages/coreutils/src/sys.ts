@@ -98,7 +98,7 @@ export const help: Program = async p => {
   columns(s => p.out(s), names.filter(n => !SHELL.has(n)), cols)
   p.out('Shell:\n')
   columns(s => p.out(s), shell, cols)
-  p.out('Own programs:\n  cd bin then less README.txt\n')
+  p.out('Own programs:\n  cd bin/docs then less README.txt\n')
   p.out('Keys:\n  [UP/DOWN] recall\n  [TAB] complete\n  [CTRL-SHIFT-UP/DOWN] and [SHIFT-PGUP/PGDN] scroll\n')
   return 0
 }

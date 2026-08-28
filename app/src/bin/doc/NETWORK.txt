@@ -1,10 +1,9 @@
-CYBER/OS — THE NETWORK                                 ~/bin/NETWORK.txt
+CYBER/OS — THE NETWORK                                 ~/bin/docs/NETWORK.txt
 
 WHAT IT IS
 
-One REST API at https://api.cyberspace.online. This terminal is built on
-it: login, circ, cmail, feed, browse and publish are all clients of it,
-and a program can be another.
+One REST API at https://api.cyberspace.online. login, circ, cmail,
+feed, browse and publish are clients of it. A program can be another.
 
 login(1) is POST /v1/auth/login. It holds the session and renews the
 token; nothing on this machine asks for it again.
@@ -17,22 +16,22 @@ FROM A PROGRAM
 
 Paths must start with /v1/. The request carries the identity of the
 member running the program, and the server enforces their permissions
-and their rate limits, so there is no token to handle and none to leak.
-A dead line throws NO CARRIER.
+and their rate limits. No token is handled by the program. A failed
+connection throws NO CARRIER.
 
-Only web programs have this. A program written for this machine gets
-fetch and no credential, and reaches the API as a stranger.
+Web programs only. A program for this machine has fetch and no
+credential; its API calls are unauthenticated.
 
 
 WHAT IS THERE
 
   /v1/auth            log in, refresh, verify
-  /v1/users           members, profiles, the reader's own account
+  /v1/users           members, profiles, the caller's own account
   /v1/posts           the feed
   /v1/replies         threads
   /v1/follows         who follows whom
   /v1/bookmarks       saved posts
-  /v1/notifications   what happened while away
+  /v1/notifications   notifications
   /v1/circ            rooms, messages, presence
   /v1/cmail           conversations
   /v1/guilds          groups
@@ -40,18 +39,18 @@ WHAT IS THERE
   /v1/search          members and posts
   /v1/programs        the gallery browse and publish use
   /v1/pages           ~/public_html
-  /v1/settings        the reader's own preferences
+  /v1/settings        the caller's own preferences
   /v1/notes           private notes
   /v1/watches         subscriptions
 
-Every route, every field and every error code is in the spec. This list
-will go stale before the spec does.
+Every route, field and error code is in the spec, which is the
+reference; this list is a summary.
 
 
 ENVELOPES
 
-A route answers { data }. A list adds { cursor }, and a null cursor is
-the end. A failure answers { error: { code, message } }.
+A route answers { data }. A list adds { cursor }; a null cursor is
+the last page. A failure answers { error: { code, message } }.
 
 ctx.api hands back the data alone, so a cursor is not reachable through
 it. A filtered page can come back short, or empty, with more behind it.
@@ -73,8 +72,7 @@ No AI systems: no training, fine-tuning, embedding or evaluation on
 Cyberspace content, and no agent reading or writing through the API on
 a member's behalf.
 
-Cyberspace is a small human network. A personal client that a real
-person drives is what the API is for.
+The API is for personal clients driven by a person.
 
 
 THE SPEC

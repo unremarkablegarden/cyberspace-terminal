@@ -1,4 +1,4 @@
-CYBER/OS — WRITING A PROGRAM                               ~/bin/API.txt
+CYBER/OS — WRITING A PROGRAM                               ~/bin/docs/API.txt
 
 HOW A PROGRAM RUNS
 
@@ -48,12 +48,11 @@ draw() is never called. Repaint in the program's own loop:
     },
   }
 
-ctx.type is the only paced output. Everything else is written at once,
-because a program painting frames is not text arriving over a line.
+ctx.type is the only paced output. Everything else is written at once.
 
 Ctrl-C aborts at an await. Every ctx.sleep and ctx.type then throws. Do
-not catch that: let it end the program, and put anything owed back in a
-finally. Code containing no await cannot be interrupted and will freeze
+not catch it; let it end the program, and release the screen and any
+timers in a finally. Code containing no await cannot be interrupted and will freeze
 the tab.
 
 Exit codes: 0 on return, 130 on Ctrl-C, 1 on a throw. A throw is
@@ -93,121 +92,35 @@ ctx — OUTPUT
   await ctx.type(s, attr)         at the current baud, bleeping
   await ctx.typeln(s, attr)       the same, ending the line
   ctx.clear()                     clear the screen
-  await ctx.sleep(ms)             pause, MILLISECONDS
+  await ctx.sleep(ms)             pause, in milliseconds
   ctx.setBaud(rate)               characters per second is rate / 10
   ctx.setBlipHz(hz)               pitch of the per-character bleep
 
 Baud and pitch start at 2400 and 1400 for every run.
 
 
-ctx.attr — THE BEAM
-
-  BRIGHT    brightest
-  NORMAL    ordinary text
-  MUTED     below normal, for a column of chrome
-  DIM       for one small thing beside content
-  FAINT     below DIM, and safe only as a fill
-  BOLD      thicker
-  ITALIC    slanted, where the face has one
-  ALT       a second face; none is loaded in this build
-  BG        lights the pixels the glyph misses, making a panel
-
-Combine with | — BRIGHT | BOLD is a header.
-
-In line mode only two of these reach the terminal: BRIGHT or BOLD comes
-out bold, and DIM, MUTED or FAINT comes out dim. The rest take effect on
-the grid, after pushScreen.
-
-
 ctx.snd — SOUND
 
   ctx.snd.blip(hz, time, jitter)  short, for keys and ticks
-  ctx.snd.beep(freq, time)        flat tone; 220 Hz is the refusal
+  ctx.snd.beep(freq, time)        flat tone; 220 Hz is the error tone
   ctx.snd.tick()                  one click
-  ctx.snd.seek(count)             a drive looking for something
+  ctx.snd.seek(count)             disk seeks
   ctx.snd.hiss(time, gain)        noise
 
-time is in SECONDS: beep(880, 0.09) is 90 milliseconds. gain and jitter
+time is in seconds: beep(880, 0.09) is 90 milliseconds. gain and jitter
 run 0 to 1.
 
 
-ctx.term — THE GRID
+THE SCREEN
 
-  ctx.term.cols                   80, or 44 on a phone
-  ctx.term.rows                   25, or 20 on a phone
-  ctx.term.clear()
-  ctx.term.put(x, y, ch, attr, inv)
-  ctx.term.text(x, y, str, attr, inv)
-  ctx.term.write(str, attr)       at the grid cursor
-  ctx.term.cx, ctx.term.cy        the grid cursor
-  ctx.term.dirty                  set it to true to be redrawn
-
-Pass 1 as inv to swap the cell: dark letters on a lit block. The
-attribute then sets the block, not the letters, so add BOLD to keep them
-readable. DIM | BOLD is usually the pair wanted.
-
-
-FULL SCREEN
-
-  ctx.pushScreen(screen)          take the grid and the keyboard
-  ctx.popScreen()                 give them back
-
-A screen is an object with one method:
-
-  onKey(e)      e is { key, ctrlKey, metaKey, altKey }
-
-Key names are the browser's: ArrowUp, Enter, Escape, Backspace, Tab,
-PageUp, Home. Ordinary characters arrive as themselves. metaKey and
-altKey are always false, and the return value is ignored. Ctrl-C never
-arrives; it aborts the program.
-
-There is no draw, no silentKey, no onKeyUp, no onPaste and no dispose.
-
-
-ctx.tui — DRAWING
-
-Everything takes a rect: { x, y, w, h }.
-
-  frame(term, r, attr, weight, clip)    -> the rect INSIDE the border
-  label(term, r, text, opts)            opts: edge, align, attr, max
-  hline(term, y, x0, x1, attr, weight)
-  vline(term, x, y0, y1, attr, weight)
-  clear(term, r)
-  shadow(term, r, clip)                 under it, down and right
-  ground(term, r)                       LAST, over the lot
-  inside(clip, x, y)                    -> boolean
-  cells(s)                              -> width in COLUMNS
-
-Draw into what frame() returns, not into r. Box drawing merges, so a
-line run into a frame makes its own junction. weight is 'single' or
-'double'; never mix them in one box.
-
-ground() lights the pixels the glyphs miss, so a box reads as a panel
-rather than a hole. It must be the last thing drawn into that rect.
-
-Use cells() rather than .length to lay out a row: one character can be
-two columns wide.
-
-The grid as a 160x100 bitmap:
-
-  const c = new ctx.tui.DotCanvas(ctx.term)
-  c.clear()
-  c.line(0, 0, 159, 99)
-  c.plot(80, 50)
-  c.blit(ctx.term, ctx.attr.NORMAL)
-
-  ctx.tui.drawEdges(c, ctx.tui.teapot(), view)
-
-That is the whole of ctx.tui. There are no popups, no input line, no
-list or log widget and no halftones here, whatever a program copied from
-the website terminal expects.
+ctx.attr, ctx.term, pushScreen and ctx.tui are in ~/bin/docs/TUI.txt.
 
 
 ctx.gfx — PIXELS
 
   ctx.gfx.canvas(w, h)          an OffscreenCanvas, attached to nothing
 
-Somewhere to decode or scale an image before drawing it on the grid.
+For decoding or scaling an image before drawing it on the grid.
 getContext('2d'), putImageData, getImageData and drawImage all work, and
 it is a valid source for drawImage and createImageBitmap in turn.
 
@@ -231,10 +144,10 @@ ctx.api — THE NETWORK
 
 Paths must start with /v1/ or the call throws. The request goes out as
 the member running the program, and the server enforces their identity
-and their rate limits. What comes back is the data, unwrapped. A dead
-line throws NO CARRIER.
+and their rate limits. The data is returned unwrapped. A failed
+connection throws NO CARRIER.
 
-See ~/bin/NETWORK.txt.
+See ~/bin/docs/NETWORK.txt.
 
 
 WHAT IS INERT
@@ -277,7 +190,7 @@ A program for this machine receives the process instead of ctx.
   await p.stdin.read()      a chunk of bytes, or null at end of input
   p.stdout, p.stderr        write(bytes | string), end()
   p.signal                  AbortSignal, aborted by Ctrl-C
-  p.tty                     the terminal, ABSENT under a pipe
+  p.tty                     the terminal; undefined under a pipe
   p.kernel                  the kernel
 
   p.tty.cols, p.tty.rows    the size
@@ -286,15 +199,16 @@ A program for this machine receives the process instead of ctx.
   p.tty.echo(s)             write without pacing it
   p.tty.paint(s)            write a whole frame without pacing it
 
-There is no p.api. A program for this machine has fetch and no token, so
-it reaches the API only as a stranger.
+There is no p.api. A program for this machine has fetch and no token,
+so its API calls are unauthenticated.
 
 
 COMING BACK
 
   p.setResume(line)         the line that restarts this program
-  p.setState(value)         park anything that survives JSON
-  p.takeState()             read it back, ONCE
+  p.setState(value)         store a JSON-serialisable value
+  p.takeState()             read it back; the second call returns
+                            undefined
 
 A reload within ten minutes restores the screen and runs that line
 again. Programs for this machine only.
@@ -337,9 +251,9 @@ Naming one of these stops the program before it starts:
   .constructor    reaches the Function constructor
   .__proto__      reaches the Function constructor
   import()        loads code this check never read
-  import          a program is one file; there is nothing to import
+  import          a program is one file
   import.meta     describes a module this check never read
-  with            hides which name is being read
+  with            makes the name being read undecidable
 
 Only free identifiers count. `const self = players.find(...)` declares a
 variable and is allowed; `let phase = 'fetch'` is a string, not a call.
@@ -347,7 +261,7 @@ variable and is allowed; `let phase = 'fetch'` is a string, not a call.
 Do this instead:
 
   a canvas to draw on     ctx.gfx.canvas(w, h)
-  a second file           there is none; a program is one file
+  a second file           none; a program is one file
   a network call          ctx.api, or fetch
   a saved setting         p.setState, for a program of this machine.
                           There is nowhere else: both browser stores are
@@ -355,7 +269,3 @@ Do this instead:
 
 fetch, XMLHttpRequest, WebSocket, AudioContext, createImageBitmap,
 ImageData, WebCodecs and every plain builtin are allowed.
-
-The check runs at install and again at every run. A wasm binary is never
-inspected. It is a filter and not a sandbox: it stops copied snippets
-and direct token grabs, not a determined author.

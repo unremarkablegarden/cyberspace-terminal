@@ -531,6 +531,12 @@ export function circProgram(
       }
 
       drawLog(s, logRect, printing(lines, logRect.h, print.count), scroll)
+      // Placeholder while the pane is empty. Cleared by the first feed(), which
+      // sets primed.
+      if (!primed) {
+        s.text(logRect.x + Math.floor((logRect.w - 7) / 2),
+          logRect.y + Math.floor(logRect.h / 2), 'LOADING', DIM)
+      }
 
       drawSuggest()
 

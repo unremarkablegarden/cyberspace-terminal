@@ -32,6 +32,14 @@ export function encodeKeyName(key: string, ctrl = false): string | null {
 }
 
 export function encodeKey(e: KeyboardEvent): string | null {
+  // Cmd+Left/Right is the macOS line-edge chord on a keyboard with no Home/End.
+  // Windows and Linux have the keys, and Super+arrow there is a window-manager
+  // shortcut the page never sees. Every other Cmd chord stays with the browser.
+  if (e.metaKey && !e.altKey && !e.ctrlKey) {
+    if (e.key === 'ArrowLeft') return NAMED.Home
+    if (e.key === 'ArrowRight') return NAMED.End
+    return null
+  }
   if (e.metaKey || e.altKey) return null
   return encodeKeyName(e.key, e.ctrlKey)
 }

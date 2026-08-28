@@ -4,7 +4,7 @@
 // Output follows the POSIX conventions: login(1) prompts, "Login incorrect",
 // finger(1) layout with the bio as Plan, and silence on success.
 
-import { dec, fs, paths, type Proc, type Program, readText, writeLines } from '@cyberspace/kernel'
+import { dec, fs, paths, type Proc, type Program } from '@cyberspace/kernel'
 import { wrap } from '@cyberspace/tui'
 import { ApiClient, ApiError } from './api.js'
 import { PAGES_QUOTA, PAGES_TYPES, isPagesButton, normalisePagesPath } from './pages.js'
@@ -12,7 +12,7 @@ import { PAGES_QUOTA, PAGES_TYPES, isPagesButton, normalisePagesPath } from './p
 export interface CsHooks {
   /**
    * Called when auth state changes. Awaited before login continues; a string
-   * comes back as a line under the motd.
+   * comes back as a line printed by login(1).
    */
   onAuth?(username: string | null): void | string | Promise<void | string>
   /**
@@ -121,26 +121,10 @@ export function cyberspacePrograms(api: ApiClient, hooks?: CsHooks): Record<stri
       }
       return fail(p, 'login', e)
     }
+    // Silent on success. The host renames the running shell's user (main.ts
+    // onAuthChange), so the prompt follows without a nested shell.
     const note = await hooks?.onAuth?.(username)
-
-    // As login(1): print the motd, then run a shell as the user. Exiting that
-    // shell returns to the one that ran login.
-    const motd = await readText('/etc/motd').catch(() => '')
-    if (motd) writeLines(p.stdout, String(motd))
     if (note) p.out(note + '\n')
-    const sh = p.kernel.resolveProgram('sh')
-    if (sh && p.tty) {
-      const task = p.kernel.spawn(sh, {
-        argv: ['sh'],
-        env: { ...p.env, USER: username },
-        cwd: p.env.HOME ?? p.cwd,
-        stdin: p.stdin,
-        stdout: p.stdout,
-        stderr: p.stderr,
-        tty: p.tty,
-      })
-      await task.wait
-    }
     return 0
   }
 

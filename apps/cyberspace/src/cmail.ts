@@ -210,7 +210,8 @@ export function cmailProgram(
       if (unread) label(s, outer, `UNREAD (${unread})`)
 
       if (loading) {
-        s.text(listRect.x, listRect.y, 'Reading mailbox…', DIM)
+        s.text(listRect.x + Math.floor((listRect.w - 7) / 2),
+          listRect.y + Math.floor(listRect.h / 2), 'LOADING', DIM)
       } else if (!convs.length) {
         s.text(listRect.x, listRect.y, 'No mail. Press N to write to somebody.', DIM)
       } else {
@@ -256,11 +257,16 @@ export function cmailProgram(
       try {
         // Folded on arrival: a name or preview with wide characters would cost
         // every row after it a column. See plain.ts.
-        convs = (await api.get<Conversation[]>('/v1/cmail')).map(c => ({
-          ...c,
-          otherUser: { ...c.otherUser, username: plain(c.otherUser.username) },
-          lastMessage: plain(c.lastMessage ?? ''),
-        }))
+        // A conversation exists from the moment a thread is opened, before
+        // anything is sent. The site's inbox hides those (blank lastMessage);
+        // the same rule here, or the mailbox lists empty threads.
+        convs = (await api.get<Conversation[]>('/v1/cmail'))
+          .filter(c => (c.lastMessage ?? '') !== '')
+          .map(c => ({
+            ...c,
+            otherUser: { ...c.otherUser, username: plain(c.otherUser.username) },
+            lastMessage: plain(c.lastMessage ?? ''),
+          }))
       } catch (e) {
         convs = []
         p.err(`cmail: ${e instanceof ApiError ? e.message : e}\n`)
@@ -522,6 +528,12 @@ export function cmailProgram(
       }
 
       drawLog(s, logRect, printing(lines, logRect.h, print.count), scroll)
+      // Placeholder until the thread arrives, as in circ. Cleared by the first
+      // feed(), which sets primed.
+      if (!primed) {
+        s.text(logRect.x + Math.floor((logRect.w - 7) / 2),
+          logRect.y + Math.floor(logRect.h / 2), 'LOADING', DIM)
+      }
 
       hline(s, threadSplitY, 1, cols - 2)
       if (status) s.text(cols - 4 - cells(status), threadSplitY, ` ${status} `, BRIGHT)

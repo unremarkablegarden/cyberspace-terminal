@@ -74,7 +74,7 @@ function welcome(user: string | null): Span[][] {
      cmd('shutdown')],
     [],
     [say('To write your own programs;')],
-    [cmd('cd bin'), say(' then '), cmd('less README.txt'), say(' and '), cmd('less API.txt')],
+    [cmd('cd bin/docs'), say(' then '), cmd('less README.txt'), say(' and '), cmd('less API.txt')],
     [say('User program repo: '), cmd('browse'), say(' and '), cmd('publish')],
     [],
   )

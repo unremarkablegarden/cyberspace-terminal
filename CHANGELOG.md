@@ -136,8 +136,14 @@
     - `reboot` syncs the build before it goes
     - No mouse pointer over the tube
 - Programs
-    - `~/bin` carries a manual: `README.txt` on the directory, `API.txt` on writing a program, `NETWORK.txt` on the Cyberspace API
+    - `~/bin/docs` carries a manual: `README.txt` on the directory, `API.txt` on writing a program, `TUI.txt` on drawing, `NETWORK.txt` on the Cyberspace API
     - The examples moved to `~/bin/examples`, beside the manual
     - `~/bin` is on `PATH`, so an installed program runs by its name
     - `import` takes a `.js` or `.wasm` off this computer into `~/bin`
     - `help` lists programs first and the shell under them
+    - `edit`: `^O` asks before it writes (↵ / ESC), new file included, and says `Saving...` while the write is in flight
+- `circ` and `cmail` say LOADING in the pane until the backlog is in
+- Fixed `cmail` listing conversations with no messages (threads opened but never written to; the site hides them)
+- ⌘← / ⌘→ move to the start and end of the line (shell, `edit`, chat input), as Home/End do
+- `login` no longer reprints the motd and no longer runs a nested shell
+- Fixed the prompt keeping the old name after `logout` (it now follows the login)
