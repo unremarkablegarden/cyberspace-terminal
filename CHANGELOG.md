@@ -178,7 +178,7 @@
 - Fixed `export` (bare `export` lists the environment; `export NAME` before the assignment now reaches programs)
 - Deleted skel files stay deleted
 - Fixed a visit after a deploy booting the previous build until a hard refresh
-- Standby screen: a grid picture over `CYBERSPACE TERMINAL`, the hint blinks between faint and bright
-- Boot: hex address on the memory count, device values in bold, a kernel load bar, a hex burst, lit `OK`s
-- A globe beside the nameplate on the front page
+- New standby screen
+- New BIOS screen
+- A globe beside the nameplate on the motd
 - Fixed pictures rendering about a third too narrow (the face stretches the raster; chat, `view` and braille drawings all corrected)
