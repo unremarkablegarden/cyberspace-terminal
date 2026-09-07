@@ -158,15 +158,13 @@
     - Fixed `cat`, `less` and every write to `~` failing on Safari and iPad
     - Fixed paste and Option-layer characters from an external keyboard
 
-## v0.4.1
+## v0.5
 
 - `download <file>` saves a file from the machine to this computer
 - Fixed `export` (bare `export` lists the environment; `export NAME` before the assignment now reaches programs)
-
-## v0.5
-
-- Home sync (supporters)
-    - `~` follows the account between devices, end-to-end encrypted
+- Sync 
+    - Home directory syncs to Cloudflare R2
+    - End-to-end encrypted
     - Automatic after login, every minute, and on `logout`, `shutdown`, `reboot`
     - `sync`: run now, list what moved
     - `sync reset`: discard the server copy
@@ -174,5 +172,8 @@
     - Edits win over deletes
     - `~/.sync`: last agreed state, plain text
     - Key wrapped under the login password; `Previous password:` prompt after a password change
+    - _Limited to Cyberspace supporters_
+        - Total 5 Mb
+        - Max 256 files
+        - Max 1 Mb file size
 - Deleted skel files stay deleted
-- Fixed modem log printing a fake login exchange
