@@ -13,6 +13,7 @@ import { jsFileHandler } from '@cyberspace/compat'
 import type { Sound } from '@cyberspace/crt/audio'
 import type { ChatPictures } from './image'
 import { viewProgram } from './view'
+import { downloadProgram, type SaveFile } from './download'
 import { OpfsHome } from './opfs'
 import { changelog, VERSION } from './changelog'
 import { ENV, HOME, IMAGE_HOSTS, RTDB_URL, homeOf } from './config'
@@ -42,10 +43,12 @@ export interface MachineDeps {
   pictures?: () => ChatPictures
   /** The host's file chooser, for upload(1). Absent on a host without one. */
   pickFile?: (accept: string) => Promise<File | null>
+  /** The host's file save, for download(1). Absent on a host without one. */
+  saveFile?: SaveFile
 }
 
 /** Register every program. A later registration replaces an earlier one of the same name. */
-function registerPrograms(kernel: Kernel, { api, snd, host, pictures }: MachineDeps, hooks: CsHooks): void {
+function registerPrograms(kernel: Kernel, { api, snd, host, pictures, saveFile }: MachineDeps, hooks: CsHooks): void {
   kernel.registerAll(coreutils)
   kernel.register('sh', shellMain)
   kernel.register('changelog', changelog)
@@ -65,6 +68,7 @@ function registerPrograms(kernel: Kernel, { api, snd, host, pictures }: MachineD
   kernel.register('circ', circProgram(api, RTDB_URL, chatSnd, pictures))
   kernel.register('cmail', cmailProgram(api, RTDB_URL, chatSnd, pictures))
   if (pictures) kernel.register('view', viewProgram(pictures))
+  if (saveFile) kernel.register('download', downloadProgram(saveFile))
   kernel.registerAll(registryPrograms(api, chatSnd))
 
   // JS programs, dispatched by what their default export turns out to be:

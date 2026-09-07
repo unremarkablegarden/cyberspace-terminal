@@ -15,3 +15,5 @@ export const coreutils: Record<string, Program> = {
   true: trueCmd,
   false: falseCmd,
 }
+
+export { strerror } from './util.js'

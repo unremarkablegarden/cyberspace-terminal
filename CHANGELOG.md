@@ -157,3 +157,8 @@
     - § and Cmd+. act as Escape, Ctrl+Opt+1..9 as F1..F9
     - Fixed `cat`, `less` and every write to `~` failing on Safari and iPad
     - Fixed paste and Option-layer characters from an external keyboard
+
+## v0.4.1
+
+- `download <file>` saves a file from the machine to this computer
+- Fixed `export` (bare `export` lists the environment; `export NAME` before the assignment now reaches programs)

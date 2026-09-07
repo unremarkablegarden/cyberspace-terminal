@@ -14,7 +14,18 @@ export class ShellExit {
 export interface ShellState {
   proc: Proc
   vars: Record<string, string>
+  /**
+   * Names marked for export. A name can be marked before it has a value
+   * (`export FOO` then `FOO=bar`), so the mark cannot live in proc.env.
+   */
+  exported: Set<string>
   status: number
+}
+
+/** Set a shell variable, publishing it to the environment when it is exported. */
+export function setVar(sh: ShellState, name: string, value: string): void {
+  sh.vars[name] = value
+  if (sh.exported.has(name)) sh.proc.env[name] = value
 }
 
 const ctxOf = (sh: ShellState): ExpandCtx => ({
@@ -48,7 +59,7 @@ async function runPipeline(sh: ShellState, cmds: Cmd[]): Promise<number> {
   // Pure assignment: set shell variables.
   if (cmds.length === 1 && !cmds[0].words.length) {
     for (const a of cmds[0].assigns) {
-      sh.vars[a.name] = await expandOne(ctxOf(sh), a.value)
+      setVar(sh, a.name, await expandOne(ctxOf(sh), a.value))
     }
     return 0
   }
@@ -200,17 +211,29 @@ const BUILTINS: Record<string, Builtin> = {
     return 0
   },
 
-  async export(sh, p) {
-    for (const arg of p.argv.slice(1)) {
+  export(sh, p) {
+    const names = p.argv.slice(1).filter(a => a !== '-p')
+    if (!names.length) {
+      for (const name of Object.keys(sh.proc.env).sort()) {
+        p.out(`export ${name}="${sh.proc.env[name].replace(/(["\\])/g, '\\$1')}"\n`)
+      }
+      return 0
+    }
+    for (const arg of names) {
       const eq = arg.indexOf('=')
-      if (eq > 0) sh.proc.env[arg.slice(0, eq)] = arg.slice(eq + 1)
-      else if (sh.vars[arg] !== undefined) sh.proc.env[arg] = sh.vars[arg]
+      const name = eq > 0 ? arg.slice(0, eq) : arg
+      sh.exported.add(name)
+      if (eq > 0) sh.vars[name] = arg.slice(eq + 1)
+      // A name marked before it has a value publishes nothing now; the
+      // assignment that follows goes through setVar and finds the mark.
+      if (sh.vars[name] !== undefined) sh.proc.env[name] = sh.vars[name]
     }
     return 0
   },
 
   unset(sh, p) {
     for (const arg of p.argv.slice(1)) {
+      sh.exported.delete(arg)
       delete sh.vars[arg]
       delete sh.proc.env[arg]
     }

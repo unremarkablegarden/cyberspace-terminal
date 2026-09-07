@@ -71,6 +71,22 @@ function pickFile(accept: string): Promise<File | null> {
   })
 }
 
+/**
+ * The browser's own download. The object URL is revoked late: the click only
+ * starts the save, and revoking in the same tick cancels it in some browsers.
+ */
+function saveFile(name: string, bytes: Uint8Array, type: string): void {
+  const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type }))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = name
+  a.rel = 'noopener'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 30_000)
+}
+
 const xt = new Terminal({ cols: COLS, rows: ROWS, scrollback: 1000, allowProposedApi: true })
 const ser = new SerializeAddon()
 xt.loadAddon(ser)
@@ -329,6 +345,7 @@ const program = {
       // loaded right now, which F1 can change under a running program.
       pictures: () => pictureHost(s.term),
       pickFile,
+      saveFile,
     })
     // A kernel that fails while the animation plays would otherwise surface
     // only after standby ends on a keypress. Cut the animation; the await

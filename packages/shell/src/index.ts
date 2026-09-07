@@ -16,6 +16,9 @@ export const shellMain: Program = async (p: Proc) => {
   const sh: ShellState = {
     proc: p,
     vars: {},
+    // The inherited environment is exported by definition, so bare `export`
+    // lists it and a reassignment keeps reaching children.
+    exported: new Set(Object.keys(p.env)),
     status: 0,
   }
 
