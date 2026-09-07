@@ -19,3 +19,5 @@ TODO.md
 tools/vim/vim/
 tools/wasi-sdk/
 tools/vim/build/
+
+VERBOSE_CHANGELOG.md
