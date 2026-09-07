@@ -6,6 +6,7 @@
 // This file holds every registry call the two screens need, so browse and
 // publish contain no HTTP of their own.
 
+import { sha256, base64, unbase64 } from './hash.js'
 import { dec, fs, paths, type Proc } from '@cyberspace/kernel'
 import type { Runtime } from '@cyberspace/compat/classify'
 import type { ApiClient, ApiPage } from './api.js'
@@ -97,27 +98,6 @@ const PAGE = 50
 export const DESCRIPTION_MAX = 256
 
 const enc = new TextEncoder()
-
-async function sha256(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', bytes as BufferSource)
-  return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('')
-}
-
-/** Chunked: String.fromCharCode is applied to the array, and a 2 MB one overflows the stack. */
-function base64(bytes: Uint8Array): string {
-  let out = ''
-  for (let i = 0; i < bytes.length; i += 0x8000) {
-    out += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
-  }
-  return btoa(out)
-}
-
-function unbase64(text: string): Uint8Array {
-  const raw = atob(text)
-  const out = new Uint8Array(raw.length)
-  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i)
-  return out
-}
 
 /**
  * Extract `description` from the module source, best-effort.

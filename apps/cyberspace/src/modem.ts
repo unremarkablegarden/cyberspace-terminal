@@ -20,7 +20,7 @@ const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
 /** DTMF-like tones for the digits, one beep per digit. */
 const DIAL_HZ = [941, 1336, 852, 1209, 697, 1477, 770, 1336, 852, 1477]
 
-export async function dial(line: LineWriter, snd: ChatSound, username: string): Promise<void> {
+export async function dial(line: LineWriter, snd: ChatSound): Promise<void> {
   await line('ATDT 1-800-CYBERSPACE')
   for (const hz of DIAL_HZ) {
     snd.beep(hz, 0.06)
@@ -45,12 +45,6 @@ export async function dial(line: LineWriter, snd: ChatSound, username: string): 
   await line("Escape character is '^]'.")
   await line('')
   await sleep(350)
-  await line(`Cyberspace Node 1 (${HOST}) (ttyp0)`)
-  await line('')
-  await sleep(200)
-  await line(`login: ${username}`)
-  await line('Password:')
-  await sleep(450)
   await line(`Last login: ${stamp(new Date())} from ${NODE}`)
 }
 

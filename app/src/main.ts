@@ -11,7 +11,7 @@ import { standby, strike, implode, Aborted } from '@cyberspace/crt/effects'
 import { bootSequence } from '@cyberspace/crt/boot'
 import { loadFamily, loadFallback, familyOf } from '@cyberspace/crt/fonts'
 import { Tty, bytes, type Proc, type Kernel } from '@cyberspace/kernel'
-import { ApiClient } from '@cyberspace/apps'
+import { ApiClient, HomeKey } from '@cyberspace/apps'
 import { fs } from '@zenfs/core'
 import { syncTerm } from './vt'
 import { Baud } from './baud'
@@ -42,6 +42,14 @@ const api = new ApiClient(API_URL, {
   get: () => localStorage.getItem('csterm.auth'),
   set: v => (v ? localStorage.setItem('csterm.auth', v) : localStorage.removeItem('csterm.auth')),
 })
+// The home's master key, beside the refresh token: the same trust boundary.
+const homeKey = new HomeKey({
+  get: () => localStorage.getItem('csterm.homekey'),
+  set: v => (v ? localStorage.setItem('csterm.homekey', v) : localStorage.removeItem('csterm.homekey')),
+})
+// The last home sync before the session ends; set once the machine is up.
+let flushHome: () => Promise<void> = () => Promise.resolve()
+
 api.onAuthChange = user => {
   const home = homeOf(user)
   ENV.USER = user ?? 'guest'
@@ -180,6 +188,7 @@ const sleep = (ms: number) => new Promise<void>(res => setTimeout(res, ms))
 
 async function shutdownProgram(p: Proc): Promise<number> {
   p.out('\nTHE SYSTEM IS HALTED\n')
+  await flushHome()
   await waitForDrain()
   halted = true
   live = false
@@ -242,6 +251,7 @@ async function rebootProgram(p: Proc): Promise<number> {
   await waitForDrain()
   await sleep(300)
   p.out('SYNCING BUILD ...\n')
+  await flushHome()
   await waitForDrain()
   snd.beep(880, 0.08)
   await sleep(400)
@@ -339,6 +349,7 @@ const program = {
     // The kernel boots while the animation plays. bootMachine never touches the grid.
     const kernelP = bootMachine({
       api,
+      homeKey,
       snd,
       host: { shutdown: shutdownProgram, reboot: rebootProgram, reset: resetProgram, screensaver: screensaverProgram },
       // Image decoding is faceplate-only, and the metrics depend on the font
@@ -346,6 +357,7 @@ const program = {
       pictures: () => pictureHost(s.term),
       pickFile,
       saveFile,
+      onHome: flush => { flushHome = flush },
     })
     // A kernel that fails while the animation plays would otherwise surface
     // only after standby ends on a keypress. Cut the animation; the await

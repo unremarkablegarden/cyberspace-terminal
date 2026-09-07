@@ -9,7 +9,8 @@ No account required. Guest machines are fully local; `login` connects to the
 Cyberspace API.
 
 - Shell: pipelines, redirection, globs, `$?`, history, tab completion
-- Filesystem: ZenFS on OPFS; the home directory persists in the browser
+- Filesystem: ZenFS on OPFS; the home directory persists in the browser, and
+  follows a supporter between devices, encrypted on the machine (`sync`)
 - Programs: JS modules, wasm32-wasi binaries and `#!` scripts run as
   processes. Each wasm program gets its own worker, reads the keyboard while
   it runs and works on the files named on its command line

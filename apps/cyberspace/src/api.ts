@@ -2,6 +2,9 @@
 // {data}/{error:{code,message}} envelopes, refresh via /v1/auth/refresh.
 // Rate limits and content rules are enforced server-side.
 
+import { unbase64 } from './hash.js'
+import type { HomeWrap } from './homekey.js'
+
 export interface AuthStorage {
   get(): string | null
   set(value: string | null): void
@@ -30,6 +33,21 @@ interface RequestOpts {
 /** A site-relative path as URL path segments. */
 const segments = (path: string): string => path.split('/').map(encodeURIComponent).join('/')
 
+/** One manifest entry as the server stores it; `e` is opaque to it. See homesync.ts. */
+export interface HomeEntry {
+  blob?: string
+  size: number
+  deleted?: boolean
+  e: string
+}
+
+export interface HomeManifest {
+  rev: number
+  key: HomeWrap | null
+  files: HomeEntry[]
+  usage: { bytes: number; files: number }
+}
+
 export class ApiError extends Error {
   constructor(public code: string, message: string, public status: number) {
     super(message)
@@ -56,8 +74,8 @@ export interface PagesSite {
 export class ApiClient {
   username: string | null = null
   userId: string | null = null
-  /** Supporter, subscriber or admin: the tier that gets ~/public_html. */
-  pagesAllowed = false
+  /** Supporter, subscriber or admin: the tier that gets ~/public_html and home sync. */
+  supporter = false
   onAuthChange: ((username: string | null) => void) | null = null
 
   // Private at runtime, not only in the type system: the page shares its realm
@@ -106,7 +124,7 @@ export class ApiClient {
     this.#refreshToken = null
     this.username = null
     this.userId = null
-    this.pagesAllowed = false
+    this.supporter = false
     this.storage.set(null)
     this.onAuthChange?.(null)
   }
@@ -174,6 +192,17 @@ export class ApiClient {
     deleteFile: (path: string) => this.delete<void>(`/v1/pages/files/${segments(path)}`),
   }
 
+  /** /v1/home: the encrypted mirror of $HOME. Blobs are keyed by ciphertext hash. */
+  readonly home = {
+    manifest: () => this.get<HomeManifest>('/v1/home'),
+    readBlob: async (hash: string) =>
+      unbase64((await this.get<{ content: string }>(`/v1/home/blobs/${hash}`)).content),
+    putBlob: (hash: string, bytes: Uint8Array) =>
+      this.putBytes<{ hash: string; size: number }>(`/v1/home/blobs/${hash}`, bytes, 'application/octet-stream'),
+    commit: (base: number, files: HomeEntry[], key?: HomeWrap) =>
+      this.post<HomeManifest>('/v1/home/commit', key ? { base, files, key } : { base, files }),
+  }
+
   private async refresh(): Promise<void> {
     if (!this.#refreshToken) throw new ApiError('UNAUTHORIZED', 'not logged in', 401)
     const r = await this.request<{ idToken: string; refreshToken?: string }>(
@@ -192,7 +221,7 @@ export class ApiClient {
     }>('/v1/users/me')
     this.username = me.username ?? null
     this.userId = me.userId ?? null
-    this.pagesAllowed = me.isSupporter === true || me.isSubscriber === true || me.isSiteAdmin === true
+    this.supporter = me.isSupporter === true || me.isSubscriber === true || me.isSiteAdmin === true
     this.onAuthChange?.(this.username)
   }
 

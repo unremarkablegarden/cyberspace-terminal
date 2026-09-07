@@ -210,7 +210,7 @@ let mounted: string | null = null
 let mounting: Promise<boolean> | null = null
 
 /** Every file under `dir`, as [absolute path, relative path]. */
-async function walk(dir: string, rel = ''): Promise<[string, string][]> {
+export async function walk(dir: string, rel = ''): Promise<[string, string][]> {
   const out: [string, string][] = []
   for (const name of await fs.promises.readdir(dir).catch(() => [] as string[])) {
     const abs = `${dir}/${name}`

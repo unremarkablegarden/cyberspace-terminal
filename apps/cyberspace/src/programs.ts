@@ -11,6 +11,8 @@ import { SILENT, type ChatSound } from './chat.js'
 import { box } from './modal.js'
 import { dial, hangup } from './modem.js'
 import { PAGES_QUOTA, PAGES_TYPES, isPagesButton, normalisePagesPath } from './pages.js'
+import type { HomeKey } from './homekey.js'
+import { rewrapHome, unlockHome } from './homesync.js'
 
 export interface CsHooks {
   /**
@@ -23,6 +25,10 @@ export interface CsHooks {
    * the caller must reach it before any other await after the keypress.
    */
   pickFile?(accept: string): Promise<File | null>
+  /** Awaited by logout(1) before the token goes: the host's last home sync. */
+  onLeave?(): Promise<void>
+  /** The home's master key; login(1) unlocks it, logout(1) clears it. */
+  homeKey?: HomeKey
 }
 
 const ACCEPT = Object.keys(PAGES_TYPES).map(e => `.${e}`).join(',')
@@ -111,6 +117,15 @@ export function cyberspacePrograms(api: ApiClient, hooks?: CsHooks, snd: ChatSou
       return 1
     }
     let username: string | null
+    // Set when the password no longer opens the home's key: the previous one is asked for below.
+    let previous = false
+    let typed = ''
+    const unlock = async (password: string) => {
+      if (!api.supporter || !hooks?.homeKey) return
+      typed = password
+      // A home that cannot be unlocked now is not a failed login; sync(1) says so.
+      previous = await unlockHome(api, hooks.homeKey, password).then(r => r === 'previous', () => false)
+    }
     if (p.tty) {
       username = await box<string | null>(p, null, (s, stack, done) => {
         const tty = p.tty!
@@ -139,7 +154,7 @@ export function cyberspacePrograms(api: ApiClient, hooks?: CsHooks, snd: ChatSou
           // The upper half, so the log fits beneath.
           bounds: { x: 0, y: 0, w: tty.cols, h: Math.floor(tty.rows / 2) },
           onSubmit: ([email, password]) => api.login(email.trim(), password).then(
-            () => dial(line, snd, email.trim()).then(() => null),
+            () => unlock(password).then(() => dial(line, snd)).then(() => null),
             e => ({
               message: e instanceof ApiError && e.status === 401
                 ? 'Login incorrect'
@@ -174,6 +189,16 @@ export function cyberspacePrograms(api: ApiClient, hooks?: CsHooks, snd: ChatSou
         }
         return fail(p, 'login', e)
       }
+      await unlock(password)
+    }
+    if (previous && hooks?.homeKey) {
+      // The password changed since this key was wrapped. Empty skips; the
+      // home stays local until a device that holds the key logs in.
+      const old = await readLine(p, 'Previous password: ', '*')
+      if (old) {
+        const ok = await rewrapHome(api, hooks.homeKey, old, typed).catch(() => false)
+        if (!ok) p.err('Previous password incorrect\n')
+      }
     }
     // The host renames the running shell's user (main.ts onAuthChange), so the
     // prompt follows without a nested shell.
@@ -187,6 +212,9 @@ export function cyberspacePrograms(api: ApiClient, hooks?: CsHooks, snd: ChatSou
       p.err('logout: not logged in\n')
       return 1
     }
+    // The last sync needs the token; the key goes with the session.
+    await hooks?.onLeave?.().catch(() => {})
+    hooks?.homeKey?.clear()
     api.logout()
     void hooks?.onAuth?.(null)
     if (p.tty) await hangup(p, snd)
@@ -256,7 +284,7 @@ export function cyberspacePrograms(api: ApiClient, hooks?: CsHooks, snd: ChatSou
 
   const gate = (p: Proc, name: string): boolean => {
     if (!api.authed) { p.err(`${name}: not logged in\n`); return false }
-    if (!api.pagesAllowed) { p.err(`${name}: public_html is for supporters\n`); return false }
+    if (!api.supporter) { p.err(`${name}: public_html is for supporters\n`); return false }
     return true
   }
 
@@ -302,7 +330,7 @@ export function cyberspacePrograms(api: ApiClient, hooks?: CsHooks, snd: ChatSou
       p.err('import: bad name (letters, digits, . _ -, max 32)\n')
       return 1
     }
-    const max = api.pagesAllowed ? PROGRAM_MAX.supporter : PROGRAM_MAX.default
+    const max = api.supporter ? PROGRAM_MAX.supporter : PROGRAM_MAX.default
     if (file.size > max) {
       p.err(`import: too big — ${Math.ceil(file.size / 1024)}KB of ${max / 1024}KB\n`)
       return 1

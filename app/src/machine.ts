@@ -7,7 +7,7 @@ import { coreutils } from '@cyberspace/coreutils'
 import { shellMain } from '@cyberspace/shell'
 import {
   type ApiClient, circProgram, cmailProgram, cyberspacePrograms, registryPrograms,
-  mountPages, umountPages, type CsHooks,
+  mountPages, umountPages, syncHome, syncedPaths, syncProgram, type CsHooks, type HomeKey,
 } from '@cyberspace/apps'
 import { jsFileHandler } from '@cyberspace/compat'
 import type { Sound } from '@cyberspace/crt/audio'
@@ -33,6 +33,8 @@ export interface HostPrograms {
 
 export interface MachineDeps {
   api: ApiClient
+  /** The home's master key, kept by the host beside the session. */
+  homeKey: HomeKey
   snd: Sound
   host: HostPrograms
   /**
@@ -45,10 +47,12 @@ export interface MachineDeps {
   pickFile?: (accept: string) => Promise<File | null>
   /** The host's file save, for download(1). Absent on a host without one. */
   saveFile?: SaveFile
+  /** Receives the bounded final home sync, for shutdown and reboot. */
+  onHome?: (flush: () => Promise<void>) => void
 }
 
 /** Register every program. A later registration replaces an earlier one of the same name. */
-function registerPrograms(kernel: Kernel, { api, snd, host, pictures, saveFile }: MachineDeps, hooks: CsHooks): void {
+function registerPrograms(kernel: Kernel, { api, homeKey, snd, host, pictures, saveFile }: MachineDeps, hooks: CsHooks): void {
   kernel.registerAll(coreutils)
   kernel.register('sh', shellMain)
   kernel.register('changelog', changelog)
@@ -70,6 +74,7 @@ function registerPrograms(kernel: Kernel, { api, snd, host, pictures, saveFile }
   if (pictures) kernel.register('view', viewProgram(pictures))
   if (saveFile) kernel.register('download', downloadProgram(saveFile))
   kernel.registerAll(registryPrograms(api, chatSnd))
+  kernel.register('sync', syncProgram(api, homeKey))
 
   // JS programs, dispatched by what their default export turns out to be:
   // a function runs as a process, an object with run() on the grid.
@@ -137,9 +142,16 @@ async function seedCargo(): Promise<void> {
 /** The skeleton and the manual, into a home that may already have them. */
 const installHome = async (home: string): Promise<void> => {
   await fs.promises.mkdir(home, { recursive: true }).catch(() => {})
-  await installSkel(home)
+  await installSkel(home, await syncedPaths(home))
   await installBin(home)
 }
+
+/** Between automatic runs. Each one hashes the home and reads the manifest. */
+const SYNC_EVERY_MS = 60_000
+/** After NO CARRIER, no automatic run for this long. */
+const OFFLINE_HOLD_MS = 5 * 60_000
+/** A run that ends the session (logout, shutdown) waits this long at most. */
+const FLUSH_MS = 3000
 
 /**
  * A member's home is set up on login and on a boot resume, as guest's is at
@@ -147,22 +159,38 @@ const installHome = async (home: string): Promise<void> => {
  * mount creates it, and umount removes it again when empty. Every save goes to
  * the server. login(1) waits for the home and the mount and says so; a boot
  * resume is quiet.
+ *
+ * The home sync runs after the home is up, then every SYNC_EVERY_MS while the
+ * tab is visible, and once more, bounded, when the session ends. Quiet: its
+ * report is dropped; sync(1) is the way to see one.
  */
-function wireHome(api: ApiClient): { onAuth: CsHooks['onAuth']; up(): void } {
+function wireHome(api: ApiClient, key: HomeKey): { onAuth: CsHooks['onAuth']; up(): void; flush(): Promise<void> } {
   // Set once the filesystems are mounted; a resume can finish before then.
   let fsUp = false
   // The home the mount went under: the user is already null when umount runs.
   let mounted = HOME
   let installed: Promise<void> = Promise.resolve()
-  const wanted = () => fsUp && api.authed && api.pagesAllowed
+  let offlineUntil = 0
+  const wanted = () => fsUp && api.authed && api.supporter
   const mount = () => {
     mounted = homeOf(api.username)
     return mountPages(api, mounted, wanted).catch(() => false)
   }
+  const syncNow = async (): Promise<void> => {
+    if (!wanted() || !key.present || !api.username) return
+    try {
+      await syncHome(api, key, homeOf(api.username))
+    } catch (e) {
+      if ((e as { code?: string }).code === 'NO_CARRIER') offlineUntil = Date.now() + OFFLINE_HOLD_MS
+    }
+  }
   const arrive = () => {
     if (!fsUp || !api.username) return
     installed = installHome(homeOf(api.username))
-    if (wanted()) void mount()
+    if (wanted()) {
+      void mount()
+      void installed.then(syncNow)
+    }
   }
   const previous = api.onAuthChange
   api.onAuthChange = user => {
@@ -170,16 +198,23 @@ function wireHome(api: ApiClient): { onAuth: CsHooks['onAuth']; up(): void } {
     if (user) arrive()
     else umountPages(mounted)
   }
+  setInterval(() => {
+    if (document.hidden || Date.now() < offlineUntil) return
+    void installed.then(syncNow)
+  }, SYNC_EVERY_MS)
   return {
     onAuth: async user => {
       await installed
-      if (!user || !api.pagesAllowed) return
+      if (!user || !api.supporter) return
+      // login(1) unlocked the key after the auth change fired, so the first run is here.
+      void syncNow()
       return (await mount()) ? `~/public_html on pages.cyberspace.online/${user}/` : undefined
     },
     up: () => {
       fsUp = true
       arrive()
     },
+    flush: () => Promise.race([syncNow(), new Promise<void>(res => setTimeout(res, FLUSH_MS))]),
   }
 }
 
@@ -187,8 +222,9 @@ function wireHome(api: ApiClient): { onAuth: CsHooks['onAuth']; up(): void } {
 export async function bootMachine(deps: MachineDeps): Promise<Kernel> {
   const kernel = new Kernel()
   kernel.release = VERSION
-  const home = wireHome(deps.api)
-  registerPrograms(kernel, deps, { onAuth: home.onAuth, pickFile: deps.pickFile })
+  const home = wireHome(deps.api, deps.homeKey)
+  registerPrograms(kernel, deps, { onAuth: home.onAuth, onLeave: home.flush, homeKey: deps.homeKey, pickFile: deps.pickFile })
+  deps.onHome?.(home.flush)
 
   // OPFS exists only in a secure context: https, or http on localhost. A LAN
   // address or 127.0.0.1 over plain http has no navigator.storage at all.

@@ -22,11 +22,14 @@ export const SKEL: Record<string, string> = Object.fromEntries(
 /**
  * Copy the skeleton into `root`, writing only files that are not already there.
  *
- * A home directory persists across visits, so a file the operator has edited or
- * deleted is left alone.
+ * A home directory persists across visits, so an edited file is left alone. A
+ * missing one is written again, except the paths in `skip`: those the home
+ * sync has recorded (~/.sync), so a member's deletion holds across boots and
+ * devices instead of being reinstalled and pushed back.
  */
-export async function installSkel(root: string): Promise<void> {
+export async function installSkel(root: string, skip: Set<string> = new Set()): Promise<void> {
   for (const [rel, text] of Object.entries(SKEL)) {
+    if (skip.has(rel)) continue
     const path = `${root}/${rel}`
     const dir = path.slice(0, path.lastIndexOf('/'))
     if (dir !== root) await fs.promises.mkdir(dir, { recursive: true }).catch(() => {})
