@@ -177,3 +177,4 @@
         - Max 256 files
         - Max 1 Mb file size
 - Deleted skel files stay deleted
+- Fixed a visit after a deploy booting the previous build until a hard refresh

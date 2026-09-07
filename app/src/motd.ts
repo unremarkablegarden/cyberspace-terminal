@@ -79,6 +79,8 @@ function welcome(user: string | null): Span[][] {
     [cmd('cd bin/docs'), say(' then '), cmd('less README.txt'), say(' and '), cmd('less API.txt')],
     [say('User program repo: '), cmd('browse'), say(' and '), cmd('publish')],
     [],
+    [say('Supporters can sync their home directory to the mainframe with '), cmd('sync'), say(' for regular users files live in your browser storage.')],
+    [],
   )
   return lines
 }

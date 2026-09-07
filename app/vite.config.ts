@@ -24,9 +24,13 @@ export default defineConfig({
   preview: { headers: { ...isolation, 'Content-Security-Policy': csp } },
   plugins: [
     mkcert(),
-    // Offline machine: the shell, fonts, sounds, wasm and example programs are
-    // precached, so a booted install works with no network. A new service
-    // worker WAITS — it activates when every tab is gone, never mid-session.
+    // Offline machine: the chunks, fonts, sounds, wasm and example programs are
+    // precached, so a booted install works with no network. The document
+    // itself is network-first with a short timeout: it names the build's
+    // chunks, so a visit that is online boots the latest deploy even while
+    // the old worker is still in charge, and one that is offline boots the
+    // cached copy. A new service worker waits: it activates when every tab is
+    // gone, or on reboot, never mid-session.
     VitePWA({
       registerType: 'prompt',
       manifest: {
@@ -43,9 +47,14 @@ export default defineConfig({
         ],
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,bdf,wasm,wav,mp3,png}'],
+        globPatterns: ['**/*.{js,css,bdf,wasm,wav,mp3,png}'],
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
-        navigateFallback: '/index.html',
+        navigateFallback: null,
+        runtimeCaching: [{
+          urlPattern: ({ request }) => request.mode === 'navigate',
+          handler: 'NetworkFirst',
+          options: { cacheName: 'document', networkTimeoutSeconds: 3 },
+        }],
       },
     }),
   ],
