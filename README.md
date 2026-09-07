@@ -11,9 +11,10 @@ Cyberspace API.
 - Shell: pipelines, redirection, globs, `$?`, history, tab completion
 - Filesystem: ZenFS on OPFS; the home directory persists in the browser
 - Programs: JS modules, wasm32-wasi binaries and `#!` scripts run as
-  processes. Each wasm program gets its own worker and reads the keyboard
-  while it runs
-- Editor: `edit` (nano key bindings), full-screen over ANSI
+  processes. Each wasm program gets its own worker, reads the keyboard while
+  it runs and works on the files named on its command line
+- Editors: `vim` (Vim 9, compiled to wasm) and `edit` (nano key bindings),
+  full-screen over ANSI
 - Display: beam-intensity CRT simulation, phosphor and screen presets,
   BDF bitmap fonts, machine audio
 - Network: `login`, `logout`, `whoami`, `finger`, `feed`

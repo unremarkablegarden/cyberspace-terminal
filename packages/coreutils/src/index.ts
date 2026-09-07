@@ -8,6 +8,7 @@ import { date, uname, whoami, hostname, env, which, clear, sleep, trueCmd, false
 export const coreutils: Record<string, Program> = {
   ls, cat, cp, mv, rm, mkdir, rmdir, touch, edit, less,
   nano: edit,
+  pico: edit,
   more: less,
   grep, head, tail, sort, uniq, wc, echo,
   date, uname, whoami, hostname, env, which, clear, sleep, help, motd,

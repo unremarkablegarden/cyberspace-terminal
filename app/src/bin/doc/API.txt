@@ -116,13 +116,33 @@ THE SCREEN
 ctx.attr, ctx.term, pushScreen and ctx.tui are in ~/bin/docs/TUI.txt.
 
 
+ctx.tui.InputLine — TEXT INPUT
+
+  const field = new ctx.tui.InputLine({ maxLength: 80 })
+  ctx.pushScreen({
+    onKey: k => { if (field.onKey(k)) return; if (k.key === 'Enter') done() },
+    draw: () => field.draw(ctx.term, { x: 2, y: 2, w: 40, h: 1 }),
+  })
+
+Feed keys to field.onKey and read field.value. Shift+arrows select, cmd or
+ctrl+shift C and X copy and cut, and paste replaces the selection. ctx.tui.
+TextBuffer is the same for multiple lines. Both come with selection and the
+clipboard already wired.
+
+
 ctx.gfx — PIXELS
 
   ctx.gfx.canvas(w, h)          an OffscreenCanvas, attached to nothing
+  await ctx.image(url)          an ImageBitmap from a whitelisted host
 
 For decoding or scaling an image before drawing it on the grid.
 getContext('2d'), putImageData, getImageData and drawImage all work, and
 it is a valid source for drawImage and createImageBitmap in turn.
+
+A program has no network of its own; ctx.image is the only way to load a
+remote image. The host fetches it, https only, and only from an allowed
+list of hosts. A blocked host throws. Draw the bitmap onto a gfx canvas
+to read its pixels.
 
 
 WHO IS RUNNING IT

@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
+import mkcert from 'vite-plugin-mkcert'
 
 // COOP/COEP from day one: SharedArrayBuffer is needed for blocking process I/O.
 const isolation = {
@@ -7,10 +8,22 @@ const isolation = {
   'Cross-Origin-Embedder-Policy': 'require-corp',
 }
 
+// Mirrors app/vercel.json. img-src omits remote hosts, so an injected
+// <img src=…> beacon cannot leave; the machine draws images to a canvas, never
+// an <img>. connect-src stays broad because view(1) and chat fetch images from
+// arbitrary hosts; user-program egress is bounded by the worker realm and a
+// brokered image capability, not by this header. Preview only: the dev server
+// keeps just the isolation headers so HMR's inline scripts and eval still run.
+const csp = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self'; connect-src 'self' https: wss:; manifest-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+
 export default defineConfig({
-  server: { headers: isolation },
-  preview: { headers: isolation },
+  // https on the LAN: OPFS and the isolation headers need a secure context,
+  // and only localhost is exempt. The mkcert root CA must be trusted on the
+  // client device.
+  server: { headers: isolation, host: true },
+  preview: { headers: { ...isolation, 'Content-Security-Policy': csp } },
   plugins: [
+    mkcert(),
     // Offline machine: the shell, fonts, sounds, wasm and example programs are
     // precached, so a booted install works with no network. A new service
     // worker WAITS — it activates when every tab is gone, never mid-session.

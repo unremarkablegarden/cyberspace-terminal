@@ -731,7 +731,7 @@ class BrowseScreen {
     // first: move() on a row that has not arrived would put the bar on an empty row.
     if (this.reveal.running) this.reveal.finish()
 
-    if (e.ctrlKey && (e.key === 'c' || e.key === 'C')) return this.finish()
+    if (e.ctrlKey && !e.shiftKey && (e.key === 'c' || e.key === 'C')) return this.finish()
 
     // In filter mode every key is a character. That is why the sort keys are
     // single letters and the filter is a mode rather than an always-live field.

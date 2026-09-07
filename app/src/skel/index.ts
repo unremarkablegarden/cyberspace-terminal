@@ -30,7 +30,10 @@ export async function installSkel(root: string): Promise<void> {
     const path = `${root}/${rel}`
     const dir = path.slice(0, path.lastIndexOf('/'))
     if (dir !== root) await fs.promises.mkdir(dir, { recursive: true }).catch(() => {})
-    if (await fs.promises.stat(path).catch(() => null)) continue
+    // A zero-byte skel file is a failed first write (WebKit before the OPFS
+    // worker); treat it as missing so it is filled on the next boot.
+    const st = await fs.promises.stat(path).catch(() => null)
+    if (st && st.size > 0) continue
     await fs.promises.writeFile(path, text).catch(() => {})
   }
 }

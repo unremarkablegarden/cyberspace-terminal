@@ -9,9 +9,10 @@
 // This module holds the format, the validator and the shell loop. main.ts
 // decides where the bytes are stored.
 
+import type { Arrival } from './baud'
 import { readText, writeLines, type Kernel, type Proc, type Tty } from '@cyberspace/kernel'
 import { shellMain } from '@cyberspace/shell'
-import { ENV, HOME } from './config'
+import { ENV } from './config'
 
 /** Bump when the shape changes. A mismatch is discarded, never migrated. */
 export const SESSION_VERSION = 1
@@ -86,6 +87,10 @@ export interface SessionHost {
   halted: () => boolean
   /** Wait for queued output to drain, so the motd is not written over it. */
   drained: () => Promise<void>
+  /** Release the motd a line at a time; everything after it arrives by the character. */
+  arrival?: (mode: Arrival) => void
+  /** Called when the shell is about to read the tty, and input may be accepted. */
+  open?: () => void
   /** Reports the running shell, for the parked session's cwd and for shutdown. */
   onShell: (shell: Proc | null, kill: (() => void) | null) => void
 }
@@ -97,16 +102,19 @@ export interface SessionHost {
  */
 export async function runSession(host: SessionHost, saved: TerminalSession | null): Promise<void> {
   const { kernel, tty } = host
-  let cwd = saved?.cwd ?? HOME
+  let cwd = saved?.cwd ?? ENV.HOME
   // A restored screen already contains the motd, so the first shell skips it.
   let quiet = !!saved
   while (!host.halted()) {
     if (!quiet) {
       const motd = await readText('/etc/motd').catch(() => '')
+      host.arrival?.('line')
       writeLines(tty.stdout, String(motd))
       await host.drained()
+      host.arrival?.('char')
     }
     quiet = false
+    host.open?.()
     const task = kernel.spawn(shellMain, {
       argv: ['sh'],
       env: { ...ENV, PWD: cwd },
@@ -119,7 +127,7 @@ export async function runSession(host: SessionHost, saved: TerminalSession | nul
     host.onShell(task.proc, () => task.kill())
     await task.wait
     host.onShell(null, null)
-    cwd = task.proc.env.PWD || HOME
+    cwd = task.proc.env.PWD || ENV.HOME
     tty.stdout.write('\n')
   }
 }

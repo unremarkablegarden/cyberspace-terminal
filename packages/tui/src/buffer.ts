@@ -8,10 +8,48 @@
 
 import { Surface, type Rect } from './surface.js'
 import { NORMAL } from './attrs.js'
+import { wordLeft, wordRight, selRange } from './edits.js'
 import type { KeyInput } from './keys.js'
 
 /** One drawn row of the folded text: its start offset and length. */
 export interface Fold { start: number; len: number }
+
+const TAB = 4
+
+/**
+ * Cells a tab occupies at column `w`: to the next 4-column stop, but never
+ * fewer than 2, so a tab one column short of a stop still reads as a tab.
+ */
+function tabWidth(w: number): number {
+  return Math.max(2, TAB - (w % TAB))
+}
+
+/** Display width of `s` drawn from column 0. */
+export function textWidth(s: string): number {
+  let w = 0
+  for (const ch of s) w += ch === '\t' ? tabWidth(w) : 1
+  return w
+}
+
+/** `s` with tabs expanded to spaces, for drawing; the grid has no tab glyph. */
+export function expandTabs(s: string): string {
+  if (!s.includes('\t')) return s
+  let out = ''
+  for (const ch of s) out += ch === '\t' ? ' '.repeat(tabWidth(out.length)) : ch
+  return out
+}
+
+/** Index of the character in `s` at or after display column `col`. */
+function indexAtCol(s: string, col: number): number {
+  let w = 0
+  let i = 0
+  for (const ch of s) {
+    if (w >= col) return i
+    w += ch === '\t' ? tabWidth(w) : 1
+    i++
+  }
+  return i
+}
 
 /**
  * Fold a string to `width`, keeping every character. The caret indexes the same
@@ -33,7 +71,8 @@ export function fold(text: string, width: number, wrap = true): Fold[] {
     }
     let i = 0
     do {
-      let take = Math.min(width, line.length - i)
+      // Characters that fit the width, counting a tab at its stop.
+      let take = indexAtCol(line.slice(i), width)
       if (i + take < line.length) {
         const space = line.slice(i, i + take + 1).lastIndexOf(' ')
         if (space > 0) take = space + 1
@@ -55,6 +94,8 @@ export interface BufferOptions {
   width?: number
   /** Called when a key could not act: the caret is at an end, or a limit was hit. */
   onReject?: () => void
+  /** Write the selected text to the clipboard, for copy and cut. */
+  clipboard?: (text: string) => void
 }
 
 const DEFAULT_MAX = 65536
@@ -63,12 +104,36 @@ const DEFAULT_WIDTH = 56
 export class TextBuffer {
   private str: string
   private at = 0
+  /** Other end of the selection, or null when nothing is selected. */
+  private anchor: number | null = null
   /** First visible row of the folded text. Owned by the caller that draws. */
   top = 0
   private cols = 0
 
   constructor(private opts: BufferOptions = {}) {
     this.str = opts.initial ?? ''
+  }
+
+  /** The selection low/high, or null. Read by drawBuffer to highlight it. */
+  selection(): [number, number] | null {
+    return selRange(this.anchor, this.at)
+  }
+
+  /** Move the caret; a shifted move extends the selection, a plain one drops it. */
+  private moveTo(to: number, shift: boolean): boolean {
+    to = Math.max(0, Math.min(to, this.str.length))
+    if (shift) { if (this.anchor === null) this.anchor = this.at; this.at = to }
+    else { this.anchor = null; this.at = to }
+    return true
+  }
+
+  private deleteSel(): boolean {
+    const s = this.selection()
+    if (!s) return false
+    this.str = this.str.slice(0, s[0]) + this.str.slice(s[1])
+    this.at = s[0]
+    this.anchor = null
+    return true
   }
 
   get text(): string {
@@ -92,6 +157,7 @@ export class TextBuffer {
     this.str = text
     this.at = 0
     this.top = 0
+    this.anchor = null
   }
 
   rows(): Fold[] {
@@ -106,8 +172,40 @@ export class TextBuffer {
 
   /** Handle one editing key. False if it is not one this buffer handles. */
   key(e: KeyInput): boolean {
-    if (e.metaKey || e.altKey) return false
+    if (e.metaKey) return false
 
+    // Copy and cut. The host maps cmd+C/cmd+X and ctrl+shift+C/X to this.
+    if (e.ctrlKey && e.shiftKey && (e.key === 'c' || e.key === 'x')) {
+      const s = this.selection()
+      if (s) {
+        this.opts.clipboard?.(this.str.slice(s[0], s[1]))
+        if (e.key === 'x') this.deleteSel()
+      }
+      return true
+    }
+
+    const shift = e.shiftKey
+    // Ctrl or Alt with an arrow means word granularity; the host sends the same
+    // sequence for both.
+    const word = e.ctrlKey || e.altKey
+
+    if (e.key === 'ArrowLeft') {
+      const s = this.selection()
+      if (s && !shift) { this.at = s[0]; this.anchor = null; return true }
+      return this.moveTo(word ? wordLeft(this.str, this.at) : this.at - 1, shift)
+    }
+    if (e.key === 'ArrowRight') {
+      const s = this.selection()
+      if (s && !shift) { this.at = s[1]; this.anchor = null; return true }
+      return this.moveTo(word ? wordRight(this.str, this.at) : this.at + 1, shift)
+    }
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      return this.step(e.key === 'ArrowUp' ? -1 : 1, shift)
+    }
+    if (e.key === 'Home' || e.key === 'End') return this.toLineEdge(e.key === 'Home', shift)
+
+    // Remaining Alt/Ctrl chords are not editing keys, save ^K.
+    if (e.altKey) return false
     if (e.ctrlKey) {
       // ^K follows nano: cuts the whole hard line, not the tail from the caret.
       if (e.key === 'k') return this.killLine()
@@ -116,25 +214,19 @@ export class TextBuffer {
 
     if (e.key === 'Enter') { this.insert('\n'); return true }
     if (e.key === 'Backspace') {
+      if (this.deleteSel()) return true
       if (!this.at) return this.reject()
       this.str = this.str.slice(0, this.at - 1) + this.str.slice(this.at)
       this.at--
       return true
     }
     if (e.key === 'Delete') {
+      if (this.deleteSel()) return true
       if (this.at >= this.str.length) return this.reject()
       this.str = this.str.slice(0, this.at) + this.str.slice(this.at + 1)
       return true
     }
 
-    if (e.key === 'ArrowLeft') return this.at ? (this.at--, true) : this.reject()
-    if (e.key === 'ArrowRight') {
-      return this.at < this.str.length ? (this.at++, true) : this.reject()
-    }
-    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-      return this.step(e.key === 'ArrowUp' ? -1 : 1)
-    }
-    if (e.key === 'Home' || e.key === 'End') return this.toLineEdge(e.key === 'Home')
     if (e.key === 'PageUp' || e.key === 'PageDown') return true
 
     if ([...e.key].length === 1) { this.insert(e.key); return true }
@@ -143,12 +235,14 @@ export class TextBuffer {
 
   /** Insert a run of text at the caret. Refused rather than truncated if it does not fit. */
   insert(s: string): void {
+    // Typing or pasting over a selection replaces it.
+    this.deleteSel()
     const max = this.opts.maxLength ?? DEFAULT_MAX
     if (this.str.length + s.length > max) { this.opts.onReject?.(); return }
 
     const next = this.str.slice(0, this.at) + s + this.str.slice(this.at)
     if (this.opts.wrap === false
-      && next.split('\n').some(line => line.length > this.width)) {
+      && next.split('\n').some(line => textWidth(line) > this.width)) {
       this.opts.onReject?.()
       return
     }
@@ -157,11 +251,10 @@ export class TextBuffer {
   }
 
   /** Home/End on the folded row rather than the hard line. */
-  toLineEdge(start: boolean): boolean {
+  toLineEdge(start: boolean, shift = false): boolean {
     const rows = this.rows()
     const row = rows[this.rowAt(rows)]
-    this.at = start ? row.start : row.start + row.len
-    return true
+    return this.moveTo(start ? row.start : row.start + row.len, shift)
   }
 
   /**
@@ -183,14 +276,14 @@ export class TextBuffer {
   }
 
   /** Move up or down one visual row, preserving the column where possible. */
-  step(delta: number): boolean {
+  step(delta: number, shift = false): boolean {
     const rows = this.rows()
     const i = this.rowAt(rows)
     const next = rows[i + delta]
     if (!next) return this.reject()
-    const col = this.at - rows[i].start
-    this.at = next.start + Math.min(col, next.len)
-    return true
+    const col = textWidth(this.str.slice(rows[i].start, this.at))
+    const to = this.str.slice(next.start, next.start + next.len)
+    return this.moveTo(next.start + Math.min(indexAtCol(to, col), next.len), shift)
   }
 
   private reject(): boolean {
@@ -212,15 +305,28 @@ export function drawBuffer(s: Surface, buf: TextBuffer, r: Rect, attr = NORMAL):
   if (caret >= buf.top + r.h) buf.top = caret - r.h + 1
   buf.top = Math.max(0, Math.min(buf.top, Math.max(0, rows.length - r.h)))
 
+  const sel = buf.selection()
   for (let i = 0; i < r.h; i++) {
     const row = rows[buf.top + i]
     if (!row) break
-    const text = buf.text.slice(row.start, row.start + row.len)
+    const end = row.start + row.len
+    const text = expandTabs(buf.text.slice(row.start, end))
     s.text(r.x, r.y + i, text.slice(0, r.w), attr)
+    // Overlay the part of the selection that falls on this row, inverse.
+    if (sel) {
+      const lo = Math.max(sel[0], row.start)
+      const hi = Math.min(sel[1], end)
+      if (hi > lo) {
+        const c0 = Math.min(expandTabs(buf.text.slice(row.start, lo)).length, r.w)
+        const c1 = Math.min(expandTabs(buf.text.slice(row.start, hi)).length, r.w)
+        if (c1 > c0) s.text(r.x + c0, r.y + i, text.slice(c0, c1), attr, 1)
+      }
+    }
   }
 
   const row = rows[caret]
-  s.cx = r.x + Math.min(buf.caret - (row?.start ?? 0), r.w)
+  const before = row ? buf.text.slice(row.start, buf.caret) : ''
+  s.cx = r.x + Math.min(textWidth(before), r.w)
   s.cy = r.y + caret - buf.top
   return rows
 }

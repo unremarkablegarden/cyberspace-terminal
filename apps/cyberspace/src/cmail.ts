@@ -288,7 +288,7 @@ export function cmailProgram(
     const threadSplitY = rows - 3
     const logRect: Rect = { x: 2, y: 1, w: cols - 4, h: threadSplitY - 1 }
     const inputRect: Rect = { x: 2, y: threadSplitY + 1, w: cols - 4, h: 1 }
-    const input = new InputLine({ maxLength: 2048 })
+    const input = new InputLine({ maxLength: 2048, clipboard: t => tty.copy(t) })
 
     let convId = ''
     let threadOther = ''
@@ -738,7 +738,7 @@ export function cmailProgram(
     const indexKey = (k: KeyInput): void => {
       // Any key finishes the reveal and then acts as it normally would.
       reveal.finish()
-      if (k.key === 'Escape' || (k.ctrlKey && k.key === 'c')) { askExit(drawIndex); return }
+      if (k.key === 'Escape' || (k.ctrlKey && !k.shiftKey && k.key === 'c')) { askExit(drawIndex); return }
       if (k.ctrlKey && k.key === 'h') { openIndexHelp(); return }
       if (k.key === 'n' || k.key === 'N') { compose(); return }
       const move = (to: number): void => {
@@ -774,7 +774,7 @@ export function cmailProgram(
       // Checked first: the scroll keys measure against the whole log.
       print.finish()
       // Ctrl-C asks for confirmation; Escape goes back one level without asking.
-      if (k.ctrlKey && k.key === 'c') { askExit(drawThread); return }
+      if (k.ctrlKey && !k.shiftKey && k.key === 'c') { askExit(drawThread); return }
       if (k.key === 'Escape') { backToIndex(); return }
       if (k.ctrlKey && k.key === 'h') { openThreadHelp(); return }
       if (k.key === 'Enter') {

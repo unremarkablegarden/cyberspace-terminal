@@ -15,7 +15,7 @@ import type { ChatPictures } from './image'
 import { viewProgram } from './view'
 import { OpfsHome } from './opfs'
 import { changelog, VERSION } from './changelog'
-import { ENV, HOME, RTDB_URL } from './config'
+import { ENV, HOME, IMAGE_HOSTS, RTDB_URL, homeOf } from './config'
 import { writeMotd } from './motd'
 import { installSkel } from './skel'
 import { installBin } from './bin'
@@ -24,6 +24,10 @@ import { installBin } from './bin'
 export interface HostPrograms {
   shutdown: Program
   reboot: Program
+  /** Guest only, unlisted: wipe every trace of the machine on this browser. */
+  reset: Program
+  /** The saver picker. Lives on the faceplate: it draws on the CRT grid, not the pty. */
+  screensaver: Program
 }
 
 export interface MachineDeps {
@@ -47,15 +51,17 @@ function registerPrograms(kernel: Kernel, { api, snd, host, pictures }: MachineD
   kernel.register('changelog', changelog)
   kernel.register('shutdown', host.shutdown)
   kernel.register('reboot', host.reboot)
+  kernel.register('reset', host.reset)
+  kernel.register('screensaver', host.screensaver)
   // Registered after coreutils so the network whoami, which reports the logged-in
   // user, replaces the local one.
-  kernel.registerAll(cyberspacePrograms(api, hooks))
   // The chat screens request sounds through this; they hold no audio bus themselves.
   const chatSnd = {
     tick: () => snd.tick(),
     beep: (hz?: number, dur?: number) => snd.beep(hz, dur),
     blip: (hz?: number, dur?: number, jitter?: number) => snd.blip(hz, dur, jitter),
   }
+  kernel.registerAll(cyberspacePrograms(api, hooks, chatSnd))
   kernel.register('circ', circProgram(api, RTDB_URL, chatSnd, pictures))
   kernel.register('cmail', cmailProgram(api, RTDB_URL, chatSnd, pictures))
   if (pictures) kernel.register('view', viewProgram(pictures))
@@ -90,46 +96,85 @@ function registerPrograms(kernel: Kernel, { api, snd, host, pictures }: MachineD
         }))
       },
     },
+    image: async (url: string): Promise<Uint8Array> => {
+      let u: URL
+      try { u = new URL(url) } catch { throw new Error('image: bad url') }
+      if (u.protocol !== 'https:') throw new Error('image: https only')
+      const host = u.hostname.toLowerCase()
+      if (!IMAGE_HOSTS.some(s => host === s || host.endsWith('.' + s))) {
+        throw new Error(`image: host not allowed (${host})`)
+      }
+      const res = await fetch(u.href, { mode: 'cors' })
+      if (!res.ok) throw new Error(`image ${res.status}`)
+      return new Uint8Array(await res.arrayBuffer())
+    },
   }))
 }
 
 /**
- * Fetch cowsay into /bin. Runs in the background; failures are ignored.
+ * Fetch the wasm programs into /bin. Runs in the background; failures are
+ * ignored.
  *
- * Fetched rather than bundled: 2.6 MB of wasm in the JS bundle would be paid for
- * on every boot. The service worker precaches it, so an offline machine has it.
+ * Fetched rather than bundled: megabytes of wasm in the JS bundle would be
+ * paid for on every boot. The service worker precaches them, so an offline
+ * machine has them.
  */
 async function seedCargo(): Promise<void> {
-  void fetch('/wasm/cowsay.wasm')
-    .then(r => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))))
-    .then(buf => fs.promises.writeFile('/bin/cowsay', new Uint8Array(buf), { mode: 0o755 }))
-    .catch(() => {})
+  const install = (name: string, links: string[] = []): Promise<void> =>
+    fetch(`/wasm/${name}.wasm`)
+      .then(r => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))))
+      .then(buf => fs.promises.writeFile(`/bin/${name}`, new Uint8Array(buf), { mode: 0o755 }))
+      .then(() => Promise.all(links.map(l => fs.promises.symlink(`/bin/${name}`, `/bin/${l}`))))
+      .then(() => {}, () => {})
+  void install('cowsay')
+  void install('vim', ['vi'])
+}
+
+/** The skeleton and the manual, into a home that may already have them. */
+const installHome = async (home: string): Promise<void> => {
+  await fs.promises.mkdir(home, { recursive: true }).catch(() => {})
+  await installSkel(home)
+  await installBin(home)
 }
 
 /**
- * ~/public_html is an ordinary directory until a supporter is logged in; then
- * the site is mounted over it and every save goes to the server. Unmounted at
- * logout. login(1) waits for the mount and says so; a boot resume is quiet.
+ * A member's home is set up on login and on a boot resume, as guest's is at
+ * boot. ~/public_html exists under it only while a supporter is logged in: the
+ * mount creates it, and umount removes it again when empty. Every save goes to
+ * the server. login(1) waits for the home and the mount and says so; a boot
+ * resume is quiet.
  */
-function wirePages(api: ApiClient): { onAuth: CsHooks['onAuth']; up(): void } {
+function wireHome(api: ApiClient): { onAuth: CsHooks['onAuth']; up(): void } {
   // Set once the filesystems are mounted; a resume can finish before then.
   let fsUp = false
+  // The home the mount went under: the user is already null when umount runs.
+  let mounted = HOME
+  let installed: Promise<void> = Promise.resolve()
   const wanted = () => fsUp && api.authed && api.pagesAllowed
-  const mount = () => mountPages(api, HOME, wanted).catch(() => false)
+  const mount = () => {
+    mounted = homeOf(api.username)
+    return mountPages(api, mounted, wanted).catch(() => false)
+  }
+  const arrive = () => {
+    if (!fsUp || !api.username) return
+    installed = installHome(homeOf(api.username))
+    if (wanted()) void mount()
+  }
   const previous = api.onAuthChange
   api.onAuthChange = user => {
     previous?.(user)
-    if (user && api.pagesAllowed) void mount()
-    else umountPages(HOME)
+    if (user) arrive()
+    else umountPages(mounted)
   }
   return {
     onAuth: async user => {
+      await installed
       if (!user || !api.pagesAllowed) return
       return (await mount()) ? `~/public_html on pages.cyberspace.online/${user}/` : undefined
     },
     up: () => {
       fsUp = true
-      if (wanted()) void mount()
+      arrive()
     },
   }
 }
@@ -138,9 +183,14 @@ function wirePages(api: ApiClient): { onAuth: CsHooks['onAuth']; up(): void } {
 export async function bootMachine(deps: MachineDeps): Promise<Kernel> {
   const kernel = new Kernel()
   kernel.release = VERSION
-  const pages = wirePages(deps.api)
-  registerPrograms(kernel, deps, { onAuth: pages.onAuth, pickFile: deps.pickFile })
+  const home = wireHome(deps.api)
+  registerPrograms(kernel, deps, { onAuth: home.onAuth, pickFile: deps.pickFile })
 
+  // OPFS exists only in a secure context: https, or http on localhost. A LAN
+  // address or 127.0.0.1 over plain http has no navigator.storage at all.
+  if (!navigator.storage?.getDirectory) {
+    throw new Error('no origin private file system: serve over https or from localhost')
+  }
   const opfs = await navigator.storage.getDirectory()
   await mountAll({
     '/': InMemory,
@@ -151,10 +201,8 @@ export async function bootMachine(deps: MachineDeps): Promise<Kernel> {
   await kernel.seed()
 
   await writeMotd(deps.api.username)
-  await installSkel(HOME)
-  await installBin(HOME)
-  await fs.promises.mkdir(`${HOME}/public_html`).catch(() => {})
-  pages.up()
+  await installHome(HOME)
+  home.up()
   await seedCargo()
 
   return kernel

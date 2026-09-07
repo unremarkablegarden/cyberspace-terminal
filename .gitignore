@@ -14,3 +14,8 @@ TODO.md
 .env
 .env.*
 !.env.example
+
+# toolchains and sources pulled by tools/*/build.sh
+tools/vim/vim/
+tools/wasi-sdk/
+tools/vim/build/

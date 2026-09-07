@@ -3,147 +3,157 @@
 ## v0.1
 
 - The machine boots
-    - WebGL2 CRT fed by an ANSI/VT parser
+    - WebGL2 CRT, ANSI/VT parser
     - Kernel: processes, pipes, tty, VFS
-    - Filesystem: ZenFS on OPFS, home persists
+    - Filesystem: ZenFS on OPFS, persistent home
     - Shell: pipelines, redirection, globs, `$?`, history, tab completion
     - Coreutils
 - Display
-    - Audio: sampled keys, machine noise, degauss, power, boot chime
+    - Audio: keys, machine noise, degauss, power, boot chime
     - Strike and implode tube effects
-    - 6 font families, 6x13 coverage fallback
+    - 6 font families, 6x13 fallback
     - `F1` config: screen preset, phosphor, font, sound, baud
-    - Soft keyboard and 44x20 grid on phones
+    - Soft keyboard, 44x20 grid on phones
     - `shutdown`, `reboot`, BEL
-    - Output paced at the configured baud
+    - Baud-paced output
 - Programs
-    - wasm32-wasi binaries run as processes, one worker each, blocking stdin
-    - `#!` dispatch and non-interactive script mode
-    - `cowsay` installed to `/bin` at boot
-    - Compat host runs the original /terminal programs
-    - Examples seeded at `/bin/examples`
-- `edit` (`nano` keys), full-screen over ANSI
+    - wasm32-wasi processes, one worker each
+    - `#!` dispatch, non-interactive scripts
+    - `cowsay` at boot
+    - Compat host for original /terminal programs
+    - `/bin/examples`
+- `edit` (`nano` keys), full-screen
 - Network
     - `login`, `logout`, `whoami`, `finger`, `feed`
-    - Sessions resume at boot
+    - Session resume at boot
 - Chat
-    - `circ`: rooms, presence, read markers, live message stream
-    - `cmail`: 1:1 conversations, unread first
+    - `circ`: rooms, presence, read markers, live stream
+    - `cmail`: 1:1, unread first
 - Registry: `browse`, `install`, `publish`, `recall`
-    - `ctx.api` capability for published programs, locked to `/v1/`
-- Offline: installable PWA, boots with no network
-- Machine copy in the old unix register, errno wording for every error
-- COOP/COEP headers in production
+    - `ctx.api` capability, locked to `/v1/`
+- Offline PWA
+- Old-unix machine copy, errno wording
+- COOP/COEP in production
 
 ## v0.2
 
 - TUI
     - Widget toolkit: box, log, list, input, reveal, select, confirm, text, prompt, tune
-    - Screen stack: popups over any full-screen program
-    - Widgets draw on either the ANSI surface or the display grid
+    - Popup screen stack
 - Display
-    - Boot loader: banner, memory count, hardware probe, service mounts (`^C` skips)
+    - Boot loader: banner, memory count, hardware probe, service mounts
     - Screensaver
-    - 5 keyboard sound sets in `F1`
-    - `F1` panes for controls and key sounds
+    - 5 `F1` keyboard sound sets
 - `less` / `more`
 - Chat
     - `circ` and `cmail` rebuilt on the toolkit
-    - Backlog prints by the line, new messages type at 2400 baud
-    - `cmail` draws a box per turn
-    - Room switcher shows unread rooms
-    - Unknown slash commands are refused locally, not sent as prose
-    - `/help` opens the local help box
-- `login` masks the password
-- Output pacing fixed at 240 cps; keystroke echo and repaints are not paced
-- Fixed reads returning another file's contents after a reload (ZenFS inodes)
-- Fixed `cat ~/.sh_history` printing nothing (history appends, no truncate)
-- Fixed pacing running 1000x slow (seconds counted as milliseconds)
-- Fixed `^H` and `^J` never reaching programs
-- Fixed popups not redrawing on a key
-- `changelog` prints the change log
-- Fixed `cmd | less` returning at once (keys were read from the pipe, not the terminal)
-- Icon: the site's globe, in P1 phosphor
-- Version follows the change log: motd, `uname -a`, boot banner, package manifests
-- motd drops the status line
-- Fixed `cat` on a directory printing its bytes
-- Session
-    - A refresh comes back on the same screen, in the same directory
-    - `circ` comes back in the room you were in, `cmail` in the thread
-    - The half-typed line survives the refresh
-    - Sessions expire after ten minutes, and never cross accounts
-- Scrollback
-    - `CTRL-SHIFT-UP` / `CTRL-SHIFT-DOWN` scroll a line
-    - `SHIFT-PGUP` / `SHIFT-PGDN` scroll a screen
-    - Any key or new output returns to the bottom
-- `help` lists the keys
+    - Line-by-line backlog, 2400-baud typed messages
+    - `cmail` per-turn boxes
+    - Unread rooms in the switcher
+    - Local slash gating, `/help` box
+- `login` password mask
+- Fixed stale reads after reload
+- Fixed empty `~/.sh_history`
+- Fixed pacing 1000x slow
+- Fixed `^H`, `^J`, `PAGEUP`, `PAGEDOWN` not reaching programs
+- Fixed popups not redrawing on key
+- Fixed `cmd | less` exiting instantly
+- Fixed `cat` on a directory
+- `changelog` command
+- Icon: site globe, P1 phosphor
+- Version follows the changelog
+- Session resume: screen, directory, room/thread, half-typed line
+- Ten-minute session expiry, no cross-account bleed
+- Scrollback: line and screen paging, snap to bottom
+- `help` keys list
 - `$PWD`
-- Fixed `PAGEUP` and `PAGEDOWN` never reaching programs
-- Source
-    - `app/src` split into modules: config, machine, motd, settings, saver, scrollback, input, session, skel
-    - Home directory seeded from `app/src/skel/home` — add a file there, it appears in `~`
-    - Endpoints, grid size and machine constants in `app/src/config.ts`
-    - Program registry and mounts in `app/src/machine.ts`
-    - One screensaver per file in `packages/crt/src/savers`
-    - CRT shaders split out into `packages/crt/src/shaders.js`
+- Source split into modules; home seeded from `skel/home`
 - Pictures
-    - Photographs in `circ` and `cmail`, halftoned onto the tube
-    - `/art` blocks are drawn as they were made, not named
-    - `view file|url` opens an image full screen
-    - Fixed only some photographs drawing in a room full of them (the picture bank filled and was never emptied)
-    - Fixed an uncaptioned attachment printing its address under the picture
+    - Photographs in `circ`/`cmail`, halftoned
+    - `/art` blocks
+    - `view file|url`
+    - Fixed missing photographs in busy rooms
+    - Fixed stray address under uncaptioned attachments
 - Registry
-    - `browse` is a full screen: sortable columns, `/` filter, `SPACE` About, `S` reads the source, `↵` installs, `DEL` removes a copy, `U` unpublishes your own
-    - `T` runs a program once without installing it
-    - Rows you hold a copy of wear a `*`
-    - `publish` picks from your own programs and names the consequence before it happens — publish, recall or restore, whichever the program's state allows
-    - Versions are assigned by the registry; republishing unchanged source changes nothing and says so
-    - Programs are read before they run: one that reaches for the session token is refused, with the line and column
-    - `browse` ticks as the selection moves, like the `cmail` mailbox
-- A new build is picked up on the next visit, with no force refresh
-- `reboot` takes a waiting build
+    - `browse`: sortable, filter, About, source, install, remove, unpublish
+    - Dry-run (`T`), owned-copy marker
+    - `publish` states its consequence up front
+    - Program source scan before run
+- New build picked up on next visit, no force refresh; `reboot` takes a waiting build
 
 ## v0.2.1
 
-- Programs
-    - A program in `~/bin` exporting a function runs as a process, with `argv`, stdin and stdout
-    - Programs written for the web terminal keep running as they did
-    - `/bin/examples/count` is one of the new kind: it takes an argument, or numbers what arrives on stdin
+- `~/bin` function exports run as processes (argv, stdin, stdout)
+- Web-terminal programs unaffected
+- `count` example
 - Registry
-    - `browse` and `publish` show which terminal a program is written for: `web`, `term` or `wasm`
-    - `install author/name@2` installs an earlier version, `browse author/name@2` reads one
-    - `publish` can delete a program's registry record, which frees the slot it holds against your limit
-    - wasm programs can be published and installed
-    - Programs written for this machine are not listed on the web terminal, which cannot run them
-    - Fixed `publish` finding nothing to publish after a reload (it looked for the execute bit, which the browser filesystem cannot keep)
+    - Target terminal shown (web/term/wasm)
+    - Versioned install/browse (`@2`)
+    - Registry slot deletion
+    - wasm publish/install
+    - Machine-only programs hidden from the web terminal
+    - Fixed `publish` after reload
 - Pages
-    - `~/public_html` is a homepage at pages.cyberspace.online/<user>/ while a supporter is logged in: `edit`, `cp`, `rm` write straight to the site, `cat` reads it back; the first save creates it
-    - `upload ~/public_html/<file>` puts a file from this computer on the site
-    - `pages` shows the URL and usage; `pages title`, `pages button` set the directory entry
-    - `mv` inside `~/public_html` is refused
-- Pictures
-    - Fixed the chat log shifting as photographs finished loading (their rows are now held from the moment the message appears)
-- A cold start waits in standby until a key is pressed, so the boot plays with its sound
-- Fixed user programs bleeping per character and running slow (every write was paced, not just `ctx.type`)
-- Fixed a user program going on drawing for seconds after it was left (paced output still draining)
-- `ctx.setBlipHz` takes effect; `ctx.type` bleeps on non-space characters only
+    - `~/public_html` for supporters, `edit`/`cp`/`rm`/`cat` write through
+    - `upload` to public_html
+    - `pages`, `pages title`, `pages button`
+    - `mv` refused
+- Fixed chat log shift on image load
+- Cold boot waits for a keypress
+- Fixed per-character bleep/slowdown in user programs
+- Fixed lingering draw after program exit
+- `ctx.setBlipHz`; type bleeps on non-space only
 
 ## v0.3
 
 - Boot
-    - The machine comes up on a CYBER/OS nameplate with the address, what to type, and where the manual is
-    - Logged out, it says to `login`
-    - `reboot` syncs the build before it goes
-    - No mouse pointer over the tube
+    - CYBER/OS nameplate: address, what to type, manual location
+    - Logged-out prompt to `login`
+    - `reboot` syncs first
+    - No mouse pointer on the tube
 - Programs
-    - `~/bin/docs` carries a manual: `README.txt` on the directory, `API.txt` on writing a program, `TUI.txt` on drawing, `NETWORK.txt` on the Cyberspace API
-    - The examples moved to `~/bin/examples`, beside the manual
-    - `~/bin` is on `PATH`, so an installed program runs by its name
-    - `import` takes a `.js` or `.wasm` off this computer into `~/bin`
-    - `help` lists programs first and the shell under them
-    - `edit`: `^O` asks before it writes (↵ / ESC), new file included, and says `Saving...` while the write is in flight
-- `circ` and `cmail` say LOADING in the pane until the backlog is in
-- Fixed `cmail` listing conversations with no messages (threads opened but never written to; the site hides them)
-- ⌘← / ⌘→ move to the start and end of the line (shell, `edit`, chat input), as Home/End do
-- `login` no longer reprints the motd and no longer runs a nested shell
-- Fixed the prompt keeping the old name after `logout` (it now follows the login)
+    - `~/bin/docs` manual: README, API, TUI, NETWORK
+    - Examples moved beside the manual
+    - `~/bin` on `PATH`
+    - `import` for local `.js`/`.wasm`
+    - `help` lists programs first
+    - `edit` confirms before write
+- LOADING state in `circ`/`cmail`
+- Fixed empty `cmail` threads listed
+- ⌘←/⌘→ line navigation
+- `login` no longer reprints motd or nests a shell
+- Fixed stale username after `logout`
+
+## v0.4
+
+- Editing
+    - Select text with Shift+arrows (Ctrl+Shift for words) on the command line, in `circ`/`cmail` compose, and in `edit`
+    - Copy, cut, paste the selection: Cmd+C/X/V on macOS, Ctrl+Shift+C/X and Ctrl/Cmd+V elsewhere
+    - User programs get the same in any field built on `ctx.tui.InputLine`
+- Shell
+    - Tab completion is case-insensitive
+    - `edit` with no file opens an empty buffer; `^O` asks for the name
+    - `edit` inserts a tab on Tab, and is framed like `circ` and `cmail`
+    - `vim` (and `vi`): Vim 9 on wasm; `:w` writes to the machine, `~/.vimrc` honoured
+    - wasm programs get file access, keyboard wait with timeout, and non-spinning sleep
+    - `reset` (guest only, unlisted) wipes the machine on this browser after a y/N prompt
+    - `login` lands in `/home/<user>` with its own dotfiles and `~/bin`; `logout` returns to guest
+    - Fixed `^C` in a line-mode program sending the prompt to the top of the screen
+- Boot
+    - The motd arrives a line at a time; program output still arrives by the character
+    - Keys typed during the boot are discarded
+    - Fixed a silent hang at boot with no OPFS
+    - A warm boot no longer plays the power-on flash
+- Login
+    - `login` opens a LOGIN box
+    - Dials in once the password is accepted (RINGING, CONNECT, node banner); `logout` hangs up (NO CARRIER)
+    - `~/public_html` appears only while a supporter is logged in
+- Display: the cursor stops blinking while keys are pressed
+- Screensaver
+    - `screensaver`: eight savers, Space/Enter/Escape to preview, pick, quit
+    - The idle saver comes up after the `F1` timeout
+- iPad
+    - Runs the 80x25 layout
+    - § and Cmd+. act as Escape, Ctrl+Opt+1..9 as F1..F9
+    - Fixed `cat`, `less` and every write to `~` failing on Safari and iPad
+    - Fixed paste and Option-layer characters from an external keyboard

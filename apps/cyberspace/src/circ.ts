@@ -150,7 +150,7 @@ export function circProgram(
 
     const s = new Surface(cols, rows)
     const stack = new ScreenStack(s as never)
-    const input = new InputLine({ maxLength: 2048 })
+    const input = new InputLine({ maxLength: 2048, clipboard: t => tty.copy(t) })
 
     // Rects are derived from cols/rows; a literal column count breaks on the
     // other screen size.
@@ -863,7 +863,7 @@ export function circProgram(
       print.finish()
       roll.finish()
 
-      if (k.ctrlKey && k.key === 'c') { askQuit(); return }
+      if (k.ctrlKey && !k.shiftKey && k.key === 'c') { askQuit(); return }
       if (k.key === 'Escape') {
         if (suggest) { closeSuggest(); paint(); return }
         askQuit()

@@ -67,6 +67,32 @@ export class RingReader {
     this.data = new Uint8Array(sab, HEADER_BYTES)
   }
 
+  /** Bytes waiting to be read. */
+  available(): number {
+    return Atomics.load(this.ctl, HEAD) - Atomics.load(this.ctl, TAIL)
+  }
+
+  state(): number {
+    return Atomics.load(this.ctl, STATE)
+  }
+
+  /**
+   * Blocks the calling thread until bytes are waiting or the ring is closed.
+   * Returns false when timeoutMs elapsed first; Infinity waits without limit.
+   * Backs poll_oneoff, so a program can wait on the keyboard with a deadline.
+   */
+  waitReadable(timeoutMs: number): boolean {
+    const deadline = performance.now() + timeoutMs
+    for (;;) {
+      const head = Atomics.load(this.ctl, HEAD)
+      if (head !== Atomics.load(this.ctl, TAIL)) return true
+      if (Atomics.load(this.ctl, STATE) !== STATE_OPEN) return true
+      const left = deadline - performance.now()
+      if (left <= 0) return false
+      if (Atomics.wait(this.ctl, HEAD, head, left) === 'timed-out') return false
+    }
+  }
+
   /** Blocks the calling thread until bytes, EOF (empty result) or kill (null). */
   readBlocking(max: number): Uint8Array | null {
     for (;;) {

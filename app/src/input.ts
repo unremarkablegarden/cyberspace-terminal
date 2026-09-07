@@ -2,13 +2,21 @@
 // key sound each keypress makes.
 
 import type { Tty } from '@cyberspace/kernel'
+import type { KeyInput } from '@cyberspace/tui'
 import { bytes } from '@cyberspace/kernel'
 import type { Sound } from '@cyberspace/crt/audio'
 import { softKeydownWanted, softInputKeys, SENTINEL } from '@cyberspace/crt/softkeys'
-import { encodeKey, encodeKeyName } from './keys'
+import { aliasKey, encodeKey, encodeKeyName } from './keys'
 import type { Baud } from './baud'
 import type { Scrollback } from './scrollback'
 import type { ConfigBox } from './settings'
+
+/** A screen covering the machine that takes every key: the config box, the screensaver. */
+export interface Overlay {
+  readonly open: boolean
+  key(k: KeyInput): void
+  silentKey(k: KeyInput): boolean
+}
 
 export interface KeyboardDeps {
   tty: Tty
@@ -16,10 +24,22 @@ export interface KeyboardDeps {
   snd: Sound
   scroll: Scrollback
   config: () => ConfigBox | null
+  /** The overlay taking keys, if any. The config box when open, else the screensaver when up. */
+  overlay: () => Overlay | null
+  /** Any input path: a key or a pointer press. Feeds the idle timer. */
+  activity?: () => void
   /** ^C during the cold boot skips it. Answers whether it took the key. */
   skipBoot: () => boolean
   /** Any key switches a machine in standby on. Answers whether it took the key. */
   powerOn: () => boolean
+  /** True once a shell is reading the tty. Before that, keys and pastes are dropped. */
+  live: () => boolean
+  /**
+   * Each physical keydown, with its auto-repeat flag. A held key plays no click
+   * (the repeat is dropped); the host instead bleeps the screen change the
+   * repeat causes, so a hold chatters like output. See main.ts.
+   */
+  markRepeat?: (repeat: boolean) => void
 }
 
 /** Keys that are only a modifier, which do not count as a keypress in standby. */
@@ -32,6 +52,7 @@ export class Keyboard {
 
   /** Browsers only start an audio context from a user gesture, so every input path calls this. */
   wake(): void {
+    this.d.activity?.()
     this.d.snd.resume()
     if (!this.woken) {
       this.woken = true
@@ -59,9 +80,9 @@ export class Keyboard {
    * Auto-repeat is not filtered here; Sound.key drops repeats.
    */
   click(e: { key: string; repeat?: boolean; ctrlKey?: boolean; shiftKey?: boolean }): void {
-    const config = this.d.config()
-    if (config?.open) {
-      if (!config.silentKey(keyInput(e.key, !!e.ctrlKey, !!e.shiftKey))) this.d.snd.key(e)
+    const overlay = this.d.overlay()
+    if (overlay?.open) {
+      if (!overlay.silentKey(keyInput(e.key, !!e.ctrlKey, !!e.shiftKey))) this.d.snd.key(e)
       return
     }
     if (this.d.tty.isSilent(e.key)) return
@@ -72,22 +93,25 @@ export class Keyboard {
   /** A key by name, from the soft keyboard or from the config box's own handling. */
   press(name: string, ctrl = false, shift = false): void {
     if (this.d.powerOn()) return
-    const config = this.d.config()
-    if (!config?.open && this.d.scroll.key(name, ctrl, shift)) return
-    if (config?.open) {
-      config.key(keyInput(name, ctrl, shift))
+    const overlay = this.d.overlay()
+    if (!overlay?.open && this.d.scroll.key(name, ctrl, shift)) return
+    if (overlay?.open) {
+      overlay.key(keyInput(name, ctrl, shift))
       return
     }
     const s = encodeKeyName(name, ctrl)
     if (s === null) return
     if (s === '\x03' && this.d.skipBoot()) return
+    if (!this.d.live()) return
     if (s === '\x03') this.d.tx.flush()
     this.d.tty.input(bytes(s))
   }
 
   /** A key from the real keyboard, event and all. */
-  key(e: KeyboardEvent): void {
+  key(ev: KeyboardEvent): void {
     this.wake()
+    const e = aliasKey(ev)
+    if (e !== ev) ev.preventDefault()
     // Standby takes the key and nothing else acts on it. No key sound: the audio
     // context is still suspended here, and the press is answered by powerOn().
     // Bare modifiers and browser chords (Cmd-R, ^W) are not the switch.
@@ -95,6 +119,8 @@ export class Keyboard {
       e.preventDefault()
       return
     }
+    // ev, not e: aliasKey drops the repeat flag when it rewrites the event.
+    this.d.markRepeat?.(!!ev.repeat)
     this.click(e)
     // ^C skips the cold boot. Kept out of the tty: no shell exists yet.
     if (e.ctrlKey && e.key === 'c' && this.d.skipBoot()) {
@@ -102,16 +128,19 @@ export class Keyboard {
       return
     }
     const config = this.d.config()
-    if (e.key === 'F1') {
+    const overlay = this.d.overlay()
+    // F1 opens the config box, except over the screensaver, which takes the
+    // key like any other and wakes.
+    if (e.key === 'F1' && (!overlay?.open || overlay === config)) {
       e.preventDefault()
       config?.toggle()
       return
     }
-    if (!config?.open && this.d.scroll.key(e.key, e.ctrlKey, e.shiftKey)) {
+    if (!overlay?.open && this.d.scroll.key(e.key, e.ctrlKey, e.shiftKey)) {
       e.preventDefault()
       return
     }
-    if (config?.open) {
+    if (overlay?.open) {
       e.preventDefault()
       this.press(e.key, e.ctrlKey, e.shiftKey)
       return
@@ -119,6 +148,7 @@ export class Keyboard {
     const str = encodeKey(e)
     if (str === null) return
     e.preventDefault()
+    if (!this.d.live()) return
     // ^C also discards output still queued in the rate limiter.
     if (str === '\x03') this.d.tx.flush()
     this.d.tty.input(bytes(str))
@@ -127,7 +157,7 @@ export class Keyboard {
   /** Pasted text goes in as if typed. */
   paste(text: string): void {
     this.wake()
-    if (this.d.config()?.open) return
+    if (this.d.config()?.open || !this.d.live()) return
     this.d.tty.input(bytes(text.replace(/\r\n?/g, '\r')))
   }
 
@@ -162,10 +192,11 @@ export class Keyboard {
     field.addEventListener('pointerdown', () => this.pointer())
 
     field.addEventListener('keydown', e => {
-      if (!softKeydownWanted(e)) return
+      const a = aliasKey(e)
+      if (a === e && !softKeydownWanted(e)) return
       e.preventDefault()
-      this.click(e)
-      this.press(e.key, e.ctrlKey, e.shiftKey)
+      this.click(a)
+      this.press(a.key, a.ctrlKey, a.shiftKey)
     })
     field.addEventListener('beforeinput', e => {
       e.preventDefault()

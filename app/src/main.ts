@@ -16,7 +16,7 @@ import { fs } from '@zenfs/core'
 import { syncTerm } from './vt'
 import { Baud } from './baud'
 import { VERSION } from './changelog'
-import { API_URL, COLD_AFTER, COLS, CPS, ENV, HOME, MOBILE, ROWS, SOUNDS } from './config'
+import { API_URL, COLD_AFTER, COLS, CPS, ENV, MOBILE, ROWS, SOUNDS, STORE_PREFIX, TABLET, homeOf, pathOf } from './config'
 import { store } from './store'
 import { grid, withGrid } from './grid'
 import { pictureHost } from './image'
@@ -24,6 +24,7 @@ import { bootMachine } from './machine'
 import { writeMotd } from './motd'
 import { ConfigBox, restoreSettings } from './settings'
 import { Screensaver } from './saver'
+import { saverPrefs } from './prefs'
 import { Scrollback } from './scrollback'
 import { Keyboard } from './input'
 import { parseSession, runSession, SESSION_VERSION, type TerminalSession } from './session'
@@ -42,10 +43,16 @@ const api = new ApiClient(API_URL, {
   set: v => (v ? localStorage.setItem('csterm.auth', v) : localStorage.removeItem('csterm.auth')),
 })
 api.onAuthChange = user => {
+  const home = homeOf(user)
   ENV.USER = user ?? 'guest'
-  // The running shell keeps its own copy of the environment, so rename it too:
-  // the prompt is drawn from it on every line.
-  if (shell) shell.env.USER = ENV.USER
+  ENV.HOME = home
+  ENV.PATH = pathOf(home)
+  // The running shell keeps its own copy of the environment, so move it too:
+  // the prompt is drawn from it on every line, and cwd is the shell's own.
+  if (shell) {
+    Object.assign(shell.env, { USER: ENV.USER, HOME: home, PATH: ENV.PATH, PWD: home })
+    shell.cwd = home
+  }
   void writeMotd(user)
 }
 
@@ -70,8 +77,30 @@ xt.loadAddon(ser)
 
 const scroll = new Scrollback(xt, ROWS, snd)
 const tx = new Baud(data => { scroll.reset(); xt.write(data) }, CPS, 'char')
-// Echo is written urgent so keystrokes never queue behind program output.
-const tty = new Tty((data, urgent) => (urgent ? tx.now(data.slice()) : tx.write(data.slice())), COLS, ROWS)
+// A held key drops its repeat click; instead the screen change the repeat causes
+// bleeps. repeatAt is the time of the last auto-repeat keydown, cleared on a
+// fresh press, and REPEAT_BLIP_MS is how long after it an echo still counts as
+// the repeat's doing (repeats arrive well inside it).
+const REPEAT_BLIP_MS = 250
+let repeatAt = 0
+// Time of the last keydown. The caret is held solid for one blink period after
+// it, so a moving cursor is never caught in its off phase.
+let keyAt = 0
+
+// Echo is written urgent so keystrokes never queue behind program output. Echo
+// during the repeat window is a held key changing the screen, so it bleeps like
+// output; a plain keystroke's echo does not, since repeatAt is 0 by then.
+const tty = new Tty((data, urgent) => {
+  if (urgent) {
+    tx.now(data.slice())
+    if (repeatAt && performance.now() - repeatAt < REPEAT_BLIP_MS) snd.blip(1400)
+  } else {
+    tx.write(data.slice())
+  }
+}, COLS, ROWS)
+// Copy and cut reach the system clipboard here; the kernel has no DOM. Paste
+// comes back the other way, through the window paste handler below.
+tty.clipboard = text => { void navigator.clipboard?.writeText(text) }
 
 xt.onBell(() => snd.beep(880, 0.09))
 
@@ -83,12 +112,16 @@ let shell: Proc | null = null
 let machine: Kernel | null = null
 /** Non-null only while the cold-boot sequence plays; ^C aborts it. */
 let bootAbort: AbortController | null = null
+/** Set once the shell is reading the tty. Typing during the boot is discarded. */
+let live = false
 /** Non-null only while the machine sits in standby; any key aborts it. */
 let standbyAbort: AbortController | null = null
 
 let screen: CrtScreen
 let config: ConfigBox | null = null
 let saver: Screensaver | null = null
+/** Time of the last key or pointer press, for the idle screensaver. */
+let lastActive = Date.now()
 
 const keyboard = new Keyboard({
   tty,
@@ -96,6 +129,8 @@ const keyboard = new Keyboard({
   snd,
   scroll,
   config: () => config,
+  overlay: () => (config?.open ? config : saver?.open ? saver : null),
+  activity: () => { lastActive = Date.now() },
   skipBoot: () => {
     if (!bootAbort) return false
     bootAbort.abort()
@@ -105,6 +140,13 @@ const keyboard = new Keyboard({
     if (!standbyAbort) return false
     standbyAbort.abort()
     return true
+  },
+  live: () => live,
+  // A fresh press clears the window, so its echo does not bleep; a repeat opens
+  // it, so the echo it causes does.
+  markRepeat: repeat => {
+    keyAt = performance.now()
+    repeatAt = repeat ? keyAt : 0
   },
 })
 
@@ -124,8 +166,57 @@ async function shutdownProgram(p: Proc): Promise<number> {
   p.out('\nTHE SYSTEM IS HALTED\n')
   await waitForDrain()
   halted = true
+  live = false
   await withGrid(() => implode(screen.term, snd))
   killSession?.()
+  return 0
+}
+
+/** One raw keypress. True on y or Y; anything else, EOF or ^C is no. */
+async function confirm(p: Proc, prompt: string): Promise<boolean> {
+  const t = p.tty
+  if (!t) return false
+  p.out(prompt)
+  await waitForDrain()
+  t.setRaw()
+  try {
+    const chunk = await p.stdin.read()
+    const ch = chunk ? String.fromCharCode(chunk[0]) : ''
+    t.echo(ch >= ' ' ? ch + '\n' : '\n')
+    return ch === 'y' || ch === 'Y'
+  } finally {
+    t.setCooked()
+  }
+}
+
+/**
+ * Factory state for a guest: every csterm.* key in localStorage, the OPFS home,
+ * the service worker and its caches. Members log out first; their home is
+ * theirs and the saved session would only be resumed.
+ */
+async function resetProgram(p: Proc): Promise<number> {
+  if (api.authed) { p.err('reset: not while logged in\n'); return 1 }
+  if (!(await confirm(p, 'Erase this machine and start as new? (y/N) '))) return 1
+  p.out('ERASING ...\n')
+  await waitForDrain()
+  halted = true
+  live = false
+  for (const k of Object.keys(localStorage)) if (k.startsWith(STORE_PREFIX)) localStorage.removeItem(k)
+  // keys() is missing from the DOM lib types, though every OPFS browser has it.
+  const root = await navigator.storage.getDirectory() as FileSystemDirectoryHandle & { keys(): AsyncIterable<string> }
+  for await (const name of root.keys()) await root.removeEntry(name, { recursive: true }).catch(() => {})
+  for (const r of await navigator.serviceWorker?.getRegistrations() ?? []) await r.unregister()
+  for (const c of await caches.keys()) await caches.delete(c)
+  await withGrid(() => implode(screen.term, snd))
+  location.reload()
+  return 0
+}
+
+/** screensaver(1): the picker. Keys reach it through the overlay route, not the pty. */
+async function screensaverProgram(p: Proc): Promise<number> {
+  if (!p.tty) { p.err('screensaver: not a tty\n'); return 1 }
+  await waitForDrain()
+  await saver?.pick()
   return 0
 }
 
@@ -139,6 +230,7 @@ async function rebootProgram(p: Proc): Promise<number> {
   snd.beep(880, 0.08)
   await sleep(400)
   halted = true
+  live = false
   await withGrid(() => implode(screen.term, snd))
   // Drop the mark that would make the reload a warm boot.
   store.remove('lastSeen')
@@ -176,7 +268,7 @@ function saveSession(): void {
       excludeAltBuffer: true,
       excludeModes: true,
     }),
-    cwd: shell.env.PWD || HOME,
+    cwd: shell.env.PWD || ENV.HOME,
     resume: machine.resume.line,
     state: machine.resume.state,
   }
@@ -211,7 +303,13 @@ const program = {
 
     restoreSettings(s, snd)
     config = new ConfigBox(s, snd)
-    saver = new Screensaver(s, () => halted)
+    saver = new Screensaver(s, snd, () => halted || !live)
+    // The idle timer. Coarse on purpose: the timeout is in minutes.
+    setInterval(() => {
+      const prefs = saverPrefs()
+      if (!prefs.enabled || saver?.open) return
+      if (Date.now() - lastActive >= Math.max(1, prefs.minutes) * 60_000) void saver?.start()
+    }, 5000)
 
     // Load the saved font before the first paint, so no frame renders in the default.
     const savedFont = store.get('font', 'terminus-8x16')
@@ -226,12 +324,16 @@ const program = {
     const kernelP = bootMachine({
       api,
       snd,
-      host: { shutdown: shutdownProgram, reboot: rebootProgram },
+      host: { shutdown: shutdownProgram, reboot: rebootProgram, reset: resetProgram, screensaver: screensaverProgram },
       // Image decoding is faceplate-only, and the metrics depend on the font
       // loaded right now, which F1 can change under a running program.
       pictures: () => pictureHost(s.term),
       pickFile,
     })
+    // A kernel that fails while the animation plays would otherwise surface
+    // only after standby ends on a keypress. Cut the animation; the await
+    // below rethrows into the fault report.
+    kernelP.catch(() => { standbyAbort?.abort(); bootAbort?.abort() })
     // Resumed under the boot animation, capped at 5s so a dead network cannot
     // hold up the prompt.
     const resumed = api.hasSavedSession
@@ -266,8 +368,8 @@ const program = {
       standbyAbort = null
       bootAbort = null
     } else {
+      // Warm boot: no strike. The flash belongs to the power-on sequence only.
       snd.powerOn()
-      await withGrid(() => strike(s.term, snd))
     }
     store.set('lastSeen', String(Date.now()))
 
@@ -278,13 +380,18 @@ const program = {
     await writeMotd(api.username)
     machine = kernel
 
-    ;(globalThis as Record<string, unknown>).cs = {
-      kernel, fs, tty, snd, screen, api, tx, xt, saver,
-      dbg: {
-        get lock() { return grid.locked },
-        get halted() { return halted },
-        get update() { return updateWaiting() },
-      },
+    // Dev-only debug handle. A production page shares its realm with untrusted
+    // user programs, so a live reference here is reachable by any of them; api
+    // holds the session token and is left off even in dev.
+    if (import.meta.env.DEV) {
+      ;(globalThis as Record<string, unknown>).cs = {
+        kernel, fs, tty, snd, screen, tx, xt, saver,
+        dbg: {
+          get lock() { return grid.locked },
+          get halted() { return halted },
+          get update() { return updateWaiting() },
+        },
+      }
     }
 
     const saved = loadSession()
@@ -299,6 +406,8 @@ const program = {
       tty,
       halted: () => halted,
       drained: waitForDrain,
+      arrival: mode => { tx.mode = mode },
+      open: () => { live = true },
       onShell: (p, kill) => { shell = p; killSession = kill },
     }, saved)
   },
@@ -316,6 +425,8 @@ const program = {
       // this assignment is what lets a full-screen program hide the caret. It is
       // also hidden while scrolled back, where it would not mark the input point.
       s.term.showCursor = RENDER.cursor && tty.caret && scroll.back === 0
+      // Overrides this frame's blink phase; the loop resumes its own afterwards.
+      if (performance.now() - keyAt < RENDER.blinkMs) s.term.cursorVisible = true
     }
   },
 
@@ -346,13 +457,36 @@ window.addEventListener('paste', e => {
   e.preventDefault()
   keyboard.paste(text)
 })
+// Copy and cut are handled from the keyboard, through tty.copy above. The screen
+// is a canvas with no DOM selection, so the browser's own copy would overwrite
+// the clipboard with an empty string; refuse it and let the tty path write.
+window.addEventListener('copy', e => e.preventDefault())
+window.addEventListener('cut', e => e.preventDefault())
+// iPad Safari fires no paste event unless an editable element has focus, and
+// the tablet wires no soft-keyboard field. A hidden field holds focus so Cmd+V
+// raises the paste event above; keys still bubble to the window handler, and
+// the field itself takes no text. With a hardware keyboard attached iPadOS
+// shows no on-screen keyboard for it.
+if (TABLET) {
+  const field = document.createElement('textarea')
+  field.setAttribute('autocapitalize', 'off')
+  field.setAttribute('autocomplete', 'off')
+  field.setAttribute('autocorrect', 'off')
+  field.setAttribute('spellcheck', 'false')
+  field.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;border:0;padding:0;resize:none'
+  document.body.appendChild(field)
+  field.addEventListener('beforeinput', e => e.preventDefault())
+  field.addEventListener('blur', () => setTimeout(() => field.focus(), 0))
+  window.addEventListener('pointerup', () => field.focus())
+  field.focus()
+}
 
 const canvas = document.getElementById('tube') as HTMLCanvasElement
 
 try {
   await mount(canvas, program)
   if (MOBILE) keyboard.wireSoftKeyboard(canvas)
-  else canvas.addEventListener('pointerdown', () => keyboard.pointer())
+  else canvas.addEventListener('pointerdown', () => { saver?.stop(); keyboard.pointer() })
 } catch (err) {
   const fault = document.getElementById('fault')!
   fault.style.display = 'block'

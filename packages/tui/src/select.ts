@@ -45,8 +45,16 @@ export interface SelectOptions {
    * remaining rows arrow-only.
    */
   keys?: string[]
+  /**
+   * A key acting on the selected row without choosing it, checked after the
+   * list's own keys and before `keys`. True if it took the key. The picker
+   * uses it for a preview.
+   */
+  onKey?: (e: KeyInput, index: number) => boolean
   /** Shown in the bottom rule. Spans, so a key can be drawn as a cap. */
   hint?: string | Span[]
+  /** Shown in the top rule, right-aligned, opposite the title. */
+  note?: string | Span[]
   /**
    * Region to centre within. Defaults to the whole grid. A program with its own
    * chrome, such as a chat screen with an input line, passes the area it is
@@ -179,6 +187,8 @@ export class SelectPopup implements Screen {
       return true
     }
 
+    if (this.opts.onKey?.(e, this.index)) return true
+
     // A row's own key, checked last so it cannot shadow a key the list already
     // handles. It moves the selection before choosing, so the row flashes as it
     // is taken and identifies which one the key selected.
@@ -272,6 +282,7 @@ export class SelectPopup implements Screen {
     const inner = frame(term, r)
 
     label(term, r, this.opts.title, { attr: BRIGHT | BOLD })
+    if (this.opts.note) label(term, r, this.opts.note, { align: 'right' })
     if (this.opts.hint) {
       label(term, r, this.opts.hint, { edge: 'bottom', align: 'right' })
     }

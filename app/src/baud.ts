@@ -5,8 +5,11 @@
 // Echo and full-screen repaints bypass the limiter. Only rate-limited output is
 // counted by drain(); the host uses that count to time the output bleep.
 
-/** How output is released: `line` emits a whole line per step, `char` emits bytes at `cps`. */
+/** How output is released: `line` emits whole lines at LINE_RATE, `char` emits bytes at `cps`. */
 export type Arrival = 'line' | 'char'
+
+/** Lines per second in `line` mode, the tui Reveal rate. Independent of `cps`. */
+export const LINE_RATE = 45
 
 const NL = 10
 
@@ -68,12 +71,16 @@ export class Baud {
       const { data: head, bulk, echo } = this.chunks[0]
       // Repaints and echo are written whole and spend no credit.
       const instant = bulk || echo
+      const line = !instant && this.mode === 'line'
       const take = instant ? head.length - this.offset
-        : this.mode === 'line' ? lineRun(head, this.offset)
+        : line ? lineRun(head, this.offset)
         : Math.min(Math.floor(this.credit), head.length - this.offset)
       this.out(head.subarray(this.offset, this.offset + take))
       this.offset += take
-      if (!instant) { this.credit -= take; sent += take }
+      // A line costs a fixed share of the budget, cps / LINE_RATE, so its length
+      // does not set the pace. Charging per byte made an 80-column line wait a
+      // third of a second at 240 cps.
+      if (!instant) { this.credit -= line ? this.cps / LINE_RATE : take; sent += take }
       if (this.offset >= head.length) {
         this.chunks.shift()
         this.offset = 0

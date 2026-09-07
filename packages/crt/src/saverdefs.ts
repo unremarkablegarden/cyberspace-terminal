@@ -12,7 +12,7 @@
  * absent from CONFIG.
  */
 export const SAVER_NAMES = [
-  'matrix', 'pipes', 'worms', 'rain', 'stars', 'life', 'fire', 'dvd', 'fortune',
+  'matrix', 'pipes', 'worms', 'rain', 'stars', 'life', 'fire', 'dvd',
 ] as const
 
 export type SaverName = (typeof SAVER_NAMES)[number]

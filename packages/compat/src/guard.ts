@@ -1,18 +1,17 @@
-// Static check applied to a program before it runs.
+// Static check applied to a program before it runs. A lint, not the boundary:
+// the boundary is the worker realm a program runs in (see spawn.ts). A worker
+// has no window, no page globals and no localStorage, so the refresh token, kept
+// in localStorage on the page, is not reachable from a program at all.
 //
-// A user program is imported as a real ES module into this page (see host.ts),
-// so it runs with the reader's session behind it. The credential must not be
-// reachable from there: the refresh token is in localStorage, and anyone
-// holding it can act as the reader afterwards, on any device.
+// This still runs because it turns an obvious grab into a clear refusal at the
+// prompt rather than a runtime error inside the worker. It refuses the names
+// that reach the credential and nothing else; fetch and the canvas and codec
+// APIs the games use are allowed.
 //
-// This refuses the names that reach the credential and nothing else. fetch and
-// the canvas and codec APIs the games use are all allowed, because a network
-// call is only useful once the caller holds something worth sending, so
-// blocking the read is what closes the channel. Blocking the capabilities
-// instead would break every program on the machine.
-//
-// This is a filter, not a sandbox: `x['con' + 'structor']` defeats it. It stops
-// copied snippets and direct token grabs, not a determined author.
+// Static analysis cannot be the boundary: `x[['con','structor'].join('')]` and
+// String.fromCharCode both defeat it. Constant `+` concatenation is folded (see
+// literalString) so the copy-paste form is caught, but the realm is what makes
+// the residue safe.
 
 import { parse } from 'acorn'
 import * as walk from 'acorn-walk'
@@ -99,12 +98,20 @@ function reason(table: Record<string, string>, name: string): string | undefined
   return Object.hasOwn(table, name) ? table[name] : undefined
 }
 
-/** A string literal's value, or null if the node is not one. */
+/** A string literal's value, or null if the node is not a constant string. */
 function literalString(node: any): string | null {
   if (node?.type === 'Literal' && typeof node.value === 'string') return node.value
   // x[`constructor`] parses as a template with one chunk and no substitutions.
   if (node?.type === 'TemplateLiteral' && node.expressions.length === 0 && node.quasis.length === 1) {
     return node.quasis[0]?.value?.cooked ?? null
+  }
+  // Constant string concatenation, so x['con' + 'structor'] folds to the key it
+  // builds and Rule C sees it. Both sides must fold, which recurses through a
+  // longer chain like 'con' + 'struc' + 'tor'.
+  if (node?.type === 'BinaryExpression' && node.operator === '+') {
+    const l = literalString(node.left)
+    const r = literalString(node.right)
+    return l !== null && r !== null ? l + r : null
   }
   return null
 }

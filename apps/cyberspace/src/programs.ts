@@ -2,11 +2,14 @@
 // or the DOM. Accounts are created on the website; the machine only signs in.
 //
 // Output follows the POSIX conventions: login(1) prompts, "Login incorrect",
-// finger(1) layout with the bio as Plan, and silence on success.
+// finger(1) layout with the bio as Plan. A successful login dials in (modem.ts).
 
 import { dec, fs, paths, type Proc, type Program } from '@cyberspace/kernel'
-import { wrap } from '@cyberspace/tui'
+import { FormPopup, NORMAL, wrap } from '@cyberspace/tui'
 import { ApiClient, ApiError } from './api.js'
+import { SILENT, type ChatSound } from './chat.js'
+import { box } from './modal.js'
+import { dial, hangup } from './modem.js'
 import { PAGES_QUOTA, PAGES_TYPES, isPagesButton, normalisePagesPath } from './pages.js'
 
 export interface CsHooks {
@@ -101,40 +104,92 @@ const when = (v: unknown): string => {
   return d && !isNaN(d.getTime()) ? d.toISOString().slice(0, 10) : ''
 }
 
-export function cyberspacePrograms(api: ApiClient, hooks?: CsHooks): Record<string, Program> {
+export function cyberspacePrograms(api: ApiClient, hooks?: CsHooks, snd: ChatSound = SILENT): Record<string, Program> {
   const login: Program = async p => {
     if (api.username) {
       p.err(`login: already logged in as ${api.username}\n`)
       return 1
     }
-    const email = p.argv[1] ?? await readLine(p, 'login: ')
-    if (!email) return 1
-    const password = await readLine(p, 'Password: ', '*')
-    if (password === null) return 1
-    let username: string
-    try {
-      username = await api.login(email, password)
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 401) {
-        p.err('Login incorrect\n')
-        return 1
+    let username: string | null
+    if (p.tty) {
+      username = await box<string | null>(p, null, (s, stack, done) => {
+        const tty = p.tty!
+        const repaint = () => { stack.top?.draw?.(s); tty.paint(s.render()) }
+        // The modem log types under the box, one character per tick. Paints
+        // rather than program output, so it neither queues nor bleeps; the
+        // blip is played here instead.
+        let row = 0
+        let r: { x: number; y: number; h: number } | undefined
+        const line = async (text: string) => {
+          // Anchored on the first line: the box moves as its status comes and goes.
+          r ??= form.rect(s)
+          const y = r.y + r.h + 1 + row++
+          if (y >= s.rows) return
+          for (let i = 0; i < text.length; i++) {
+            s.text(r.x + i, y, text[i], NORMAL)
+            snd.blip()
+            tty.paint(s.render())
+            await new Promise(res => setTimeout(res, 1000 / 240))
+          }
+        }
+        const form: FormPopup = new FormPopup({
+          title: 'LOGIN',
+          fields: [{ label: 'login:', value: p.argv[1] }, { label: 'Password:', mask: '*' }],
+          shadow: true,
+          // The upper half, so the log fits beneath.
+          bounds: { x: 0, y: 0, w: tty.cols, h: Math.floor(tty.rows / 2) },
+          onSubmit: ([email, password]) => api.login(email.trim(), password).then(
+            () => dial(line, snd, email.trim()).then(() => null),
+            e => ({
+              message: e instanceof ApiError && e.status === 401
+                ? 'Login incorrect'
+                : (e as { reason?: string; message?: string }).reason ?? (e as Error).message ?? String(e),
+              clear: [1],
+            })),
+          onDone: v => done(v && v[0].trim()),
+          onRepaint: repaint,
+          onFeedback: kind => {
+            if (kind === 'move' || kind === 'submit') snd.tick()
+            else if (kind === 'edge' || kind === 'fail') snd.beep(220)
+            else if (kind === 'cancel') snd.blip(420)
+          },
+        })
+        return form
+      })
+      // The box reports its own failures; the shell only sees the exit code.
+      if (username === null) return 1
+      username = api.username ?? username
+    } else {
+      // No terminal (a script): the line-mode prompts.
+      const email = p.argv[1] ?? await readLine(p, 'login: ')
+      if (!email) return 1
+      const password = await readLine(p, 'Password: ', '*')
+      if (password === null) return 1
+      try {
+        username = await api.login(email, password)
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 401) {
+          p.err('Login incorrect\n')
+          return 1
+        }
+        return fail(p, 'login', e)
       }
-      return fail(p, 'login', e)
     }
-    // Silent on success. The host renames the running shell's user (main.ts
-    // onAuthChange), so the prompt follows without a nested shell.
+    // The host renames the running shell's user (main.ts onAuthChange), so the
+    // prompt follows without a nested shell.
     const note = await hooks?.onAuth?.(username)
     if (note) p.out(note + '\n')
     return 0
   }
 
-  const logout: Program = p => {
+  const logout: Program = async p => {
     if (!api.username && !api.hasSavedSession) {
       p.err('logout: not logged in\n')
       return 1
     }
     api.logout()
     void hooks?.onAuth?.(null)
+    if (p.tty) await hangup(p, snd)
     return 0
   }
 
@@ -260,7 +315,7 @@ export function cyberspacePrograms(api: ApiClient, hooks?: CsHooks): Record<stri
       return 1
     }
 
-    const home = p.env.HOME ?? '/home/guest'
+    const home = p.env.HOME ?? '/'
     const dest = paths.join(home, 'bin', name)
     if (await fs.promises.stat(dest).catch(() => null)) {
       p.err(`import: ${name} exists — rm ~/bin/${name} first\n`)

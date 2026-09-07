@@ -16,7 +16,6 @@ export const shellMain: Program = async (p: Proc) => {
   const sh: ShellState = {
     proc: p,
     vars: {},
-    cwd: p.cwd,
     status: 0,
   }
 
@@ -30,7 +29,7 @@ export const shellMain: Program = async (p: Proc) => {
     return 1
   }
 
-  p.env.PWD = sh.cwd
+  p.env.PWD = sh.proc.cwd
 
   const rl = new Readline(p.tty, p.stdin, (line, cursor) => complete(sh, line, cursor))
 
@@ -131,7 +130,7 @@ function prompt(sh: ShellState): string {
   const user = sh.proc.env.USER ?? 'guest'
   const host = sh.proc.env.HOSTNAME ?? 'cyberspace'
   const home = sh.proc.env.HOME ?? ''
-  let cwd = sh.cwd
+  let cwd = sh.proc.cwd
   if (home && (cwd === home || cwd.startsWith(home + '/'))) cwd = '~' + cwd.slice(home.length)
   return `\x1b[1m${user}@${host}\x1b[0m:${cwd}$ `
 }
@@ -153,7 +152,7 @@ async function complete(sh: ShellState, line: string, cursor: number): Promise<C
       .map(n => n + ' ')
   } else {
     const expanded = word.replace(/^~(?=\/|$)/, sh.proc.env.HOME ?? '')
-    const abs = paths.resolve(sh.cwd, expanded || '.')
+    const abs = paths.resolve(sh.proc.cwd, expanded || '.')
     const listDir = expanded.endsWith('/') || expanded === ''
     const dir = listDir ? abs : paths.dirname(abs)
     const base = listDir ? '' : paths.basename(abs)
@@ -161,8 +160,11 @@ async function complete(sh: ShellState, line: string, cursor: number): Promise<C
     let names: string[] = []
     try { names = await fs.promises.readdir(dir) } catch { return {} }
     candidates = []
+    // Case-insensitive, so `cat r<Tab>` finds README.txt. The typed prefix is
+    // replaced by the match's own spelling (see `erase`).
+    const lowBase = base.toLowerCase()
     for (const name of names.sort()) {
-      if (!name.startsWith(base)) continue
+      if (!name.toLowerCase().startsWith(lowBase)) continue
       if (name.startsWith('.') && !base.startsWith('.')) continue
       let full = name
       try {
@@ -175,13 +177,13 @@ async function complete(sh: ShellState, line: string, cursor: number): Promise<C
   }
 
   if (!candidates.length) return {}
-  if (candidates.length === 1) return { insert: candidates[0].slice(prefix.length) }
+  if (candidates.length === 1) return { erase: prefix.length, insert: candidates[0] }
 
   let common = candidates[0]
   for (const c of candidates) {
-    while (!c.startsWith(common)) common = common.slice(0, -1)
+    while (!c.toLowerCase().startsWith(common.toLowerCase())) common = common.slice(0, -1)
   }
   common = common.replace(/[ /]$/, '')
-  if (common.length > prefix.length) return { insert: common.slice(prefix.length) }
+  if (common.length > prefix.length) return { erase: prefix.length, insert: common }
   return { list: candidates.map(c => c.trimEnd()) }
 }

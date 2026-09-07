@@ -60,26 +60,29 @@ export class ApiClient {
   pagesAllowed = false
   onAuthChange: ((username: string | null) => void) | null = null
 
-  private idToken: string | null = null
-  private refreshToken: string | null = null
+  // Private at runtime, not only in the type system: the page shares its realm
+  // with untrusted user programs, so a TS `private` here would still be readable
+  // as an ordinary property.
+  #idToken: string | null = null
+  #refreshToken: string | null = null
 
   constructor(public base: string, private storage: AuthStorage) {
-    this.refreshToken = storage.get()
+    this.#refreshToken = storage.get()
   }
 
   get authed(): boolean {
-    return this.idToken !== null
+    return this.#idToken !== null
   }
 
   get hasSavedSession(): boolean {
-    return this.refreshToken !== null
+    return this.#refreshToken !== null
   }
 
   async login(email: string, password: string): Promise<string> {
     const r = await this.request<{ idToken: string; refreshToken: string }>(
       'POST', '/v1/auth/login', { email, password }, { auth: false })
-    this.idToken = r.idToken
-    this.refreshToken = r.refreshToken
+    this.#idToken = r.idToken
+    this.#refreshToken = r.refreshToken
     this.storage.set(r.refreshToken)
     await this.loadMe()
     return this.username ?? email
@@ -87,7 +90,7 @@ export class ApiClient {
 
   /** Silent boot-time resume from a saved refresh token. */
   async resume(): Promise<string | null> {
-    if (!this.refreshToken) return null
+    if (!this.#refreshToken) return null
     try {
       await this.refresh()
       await this.loadMe()
@@ -99,8 +102,8 @@ export class ApiClient {
   }
 
   logout(): void {
-    this.idToken = null
-    this.refreshToken = null
+    this.#idToken = null
+    this.#refreshToken = null
     this.username = null
     this.userId = null
     this.pagesAllowed = false
@@ -114,10 +117,10 @@ export class ApiClient {
    * has expired.
    */
   async token(renew = false): Promise<string | null> {
-    if ((renew || !this.idToken) && this.refreshToken) {
+    if ((renew || !this.#idToken) && this.#refreshToken) {
       await this.refresh().catch(() => { this.logout() })
     }
-    return this.idToken
+    return this.#idToken
   }
 
   get<T>(path: string): Promise<T> {
@@ -172,12 +175,12 @@ export class ApiClient {
   }
 
   private async refresh(): Promise<void> {
-    if (!this.refreshToken) throw new ApiError('UNAUTHORIZED', 'not logged in', 401)
+    if (!this.#refreshToken) throw new ApiError('UNAUTHORIZED', 'not logged in', 401)
     const r = await this.request<{ idToken: string; refreshToken?: string }>(
-      'POST', '/v1/auth/refresh', { refreshToken: this.refreshToken }, { auth: false, retry: false })
-    this.idToken = r.idToken
+      'POST', '/v1/auth/refresh', { refreshToken: this.#refreshToken }, { auth: false, retry: false })
+    this.#idToken = r.idToken
     if (r.refreshToken) {
-      this.refreshToken = r.refreshToken
+      this.#refreshToken = r.refreshToken
       this.storage.set(r.refreshToken)
     }
   }
@@ -214,7 +217,7 @@ export class ApiClient {
     // A Uint8Array goes out as it is; anything else is JSON.
     const raw = body instanceof Uint8Array
     if (body !== undefined) headers['Content-Type'] = raw ? contentType ?? 'application/octet-stream' : 'application/json'
-    if (auth && this.idToken) headers['Authorization'] = `Bearer ${this.idToken}`
+    if (auth && this.#idToken) headers['Authorization'] = `Bearer ${this.#idToken}`
 
     let res: Response
     try {
@@ -227,9 +230,9 @@ export class ApiClient {
       throw new ApiError('NO_CARRIER', 'NO CARRIER', 0)
     }
 
-    if (res.status === 401 && auth && retry && this.refreshToken) {
+    if (res.status === 401 && auth && retry && this.#refreshToken) {
       await this.refresh().catch(() => { this.logout() })
-      if (this.idToken) return this.envelope<T>(method, path, body, { ...opts, retry: false })
+      if (this.#idToken) return this.envelope<T>(method, path, body, { ...opts, retry: false })
     }
 
     const json = await res.json().catch(() => null) as Envelope<T> | null

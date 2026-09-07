@@ -11,6 +11,8 @@ import type { TtyControl } from '@cyberspace/kernel'
 export interface Completion {
   /** Text to insert at the cursor. */
   insert?: string
+  /** Characters before the cursor that `insert` replaces. */
+  erase?: number
   /** Candidates to print when there is nothing unambiguous to insert. */
   list?: string[]
 }
@@ -19,11 +21,30 @@ export type Completer = (line: string, cursor: number) => Promise<Completion>
 
 const visibleLen = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, '').length
 
+// Selection helpers, kept local so the shell keeps its one dependency (kernel).
+// The tui widgets carry the same logic in edits.ts.
+const selRange = (anchor: number | null, pos: number): [number, number] | null =>
+  anchor === null || anchor === pos ? null : anchor < pos ? [anchor, pos] : [pos, anchor]
+const wordLeft = (s: string, p: number): number => {
+  let i = Math.max(0, Math.min(p, s.length))
+  while (i > 0 && /\s/.test(s[i - 1]!)) i--
+  while (i > 0 && !/\s/.test(s[i - 1]!)) i--
+  return i
+}
+const wordRight = (s: string, p: number): number => {
+  let i = Math.max(0, Math.min(p, s.length))
+  while (i < s.length && /\s/.test(s[i]!)) i++
+  while (i < s.length && !/\s/.test(s[i]!)) i++
+  return i
+}
+
 export class Readline {
   history: string[] = []
 
   private buf = ''
   private cursor = 0
+  /** Other end of the selection, or null when nothing is selected. */
+  private anchor: number | null = null
   private histIndex = 0
   private draft = ''
   private prompt = ''
@@ -32,6 +53,9 @@ export class Readline {
   private drawnStart = 0
   private drawnView = ''
   private drawnCol = 0
+  // Whether the last paint showed a selection. A selection forces a full row
+  // repaint: the incremental diff tracks plain text and cannot place inverse.
+  private selShown = false
 
   constructor(
     private tty: TtyControl,
@@ -45,12 +69,42 @@ export class Readline {
     this.drawnCol = col
   }
 
+  private sel(): [number, number] | null {
+    return selRange(this.anchor, this.cursor)
+  }
+
+  /** Move the caret; a shifted move extends the selection, a plain one drops it. */
+  private move(to: number, shift: boolean): void {
+    to = Math.max(0, Math.min(to, this.buf.length))
+    const prevCursor = this.cursor
+    const prevAnchor = this.anchor
+    if (shift) {
+      if (this.anchor === null) this.anchor = this.cursor
+      this.cursor = to
+    } else {
+      this.anchor = null
+      this.cursor = to
+    }
+    if (this.cursor !== prevCursor || this.anchor !== prevAnchor) this.redraw()
+  }
+
+  private deleteSel(): boolean {
+    const s = this.sel()
+    if (!s) return false
+    this.buf = this.buf.slice(0, s[0]) + this.buf.slice(s[1])
+    this.cursor = s[0]
+    this.anchor = null
+    return true
+  }
+
   /** Read one line. Returns null on EOF (^D at an empty line). */
   async read(prompt: string): Promise<string | null> {
     this.tty.setRaw()
     this.prompt = prompt
     this.buf = ''
     this.cursor = 0
+    this.anchor = null
+    this.selShown = false
     this.histIndex = this.history.length
     this.draft = ''
     this.tty.echo(prompt)
@@ -84,9 +138,23 @@ export class Readline {
         this.tty.echo('^C\r\n' + this.prompt)
         this.buf = ''
         this.cursor = 0
+        this.anchor = null
+        this.selShown = false
         this.drawn(0, '', 0)
         return
+      // Copy and cut, from cmd+C/cmd+X or ctrl+shift+C/X. See app/src/keys.ts.
+      case '\x1b[99;6u': {
+        const s = this.sel()
+        if (s) this.tty.copy(this.buf.slice(s[0], s[1]))
+        return
+      }
+      case '\x1b[120;6u': {
+        const s = this.sel()
+        if (s) { this.tty.copy(this.buf.slice(s[0], s[1])); this.deleteSel(); this.redraw() }
+        return
+      }
       case '\x7f': case '\b': case '\x1b[104;5u':
+        if (this.deleteSel()) { this.redraw(); return }
         if (this.cursor > 0) {
           this.buf = this.buf.slice(0, this.cursor - 1) + this.buf.slice(this.cursor)
           this.cursor--
@@ -94,27 +162,50 @@ export class Readline {
         }
         return
       case '\x1b[3~': // Delete
+        if (this.deleteSel()) { this.redraw(); return }
         if (this.cursor < this.buf.length) {
           this.buf = this.buf.slice(0, this.cursor) + this.buf.slice(this.cursor + 1)
           this.redraw()
         }
         return
-      case '\x1b[D': if (this.cursor > 0) { this.cursor--; this.redraw() } return
-      case '\x1b[C': if (this.cursor < this.buf.length) { this.cursor++; this.redraw() } return
-      case '\x1b[H': case '\x01': this.cursor = 0; this.redraw(); return
-      case '\x1b[F': case '\x05': this.cursor = this.buf.length; this.redraw(); return
+      case '\x1b[D': { // Left; collapse a selection to its start
+        const s = this.sel()
+        if (s) { this.cursor = s[0]; this.anchor = null; this.redraw() }
+        else this.move(this.cursor - 1, false)
+        return
+      }
+      case '\x1b[C': { // Right; collapse a selection to its end
+        const s = this.sel()
+        if (s) { this.cursor = s[1]; this.anchor = null; this.redraw() }
+        else this.move(this.cursor + 1, false)
+        return
+      }
+      // Modified arrows: `1;2` shift (extend), `1;5` ctrl (word), `1;6` both.
+      case '\x1b[1;2D': this.move(this.cursor - 1, true); return
+      case '\x1b[1;2C': this.move(this.cursor + 1, true); return
+      case '\x1b[1;5D': this.move(wordLeft(this.buf, this.cursor), false); return
+      case '\x1b[1;5C': this.move(wordRight(this.buf, this.cursor), false); return
+      case '\x1b[1;6D': this.move(wordLeft(this.buf, this.cursor), true); return
+      case '\x1b[1;6C': this.move(wordRight(this.buf, this.cursor), true); return
+      case '\x1b[H': case '\x01': this.move(0, false); return
+      case '\x1b[F': case '\x05': this.move(this.buf.length, false); return
+      case '\x1b[1;2H': this.move(0, true); return // Shift+Home
+      case '\x1b[1;2F': this.move(this.buf.length, true); return // Shift+End
       case '\x1b[A': this.hist(-1); return
       case '\x1b[B': this.hist(1); return
       case '\x15': // ^U kill to start
+        this.anchor = null
         this.buf = this.buf.slice(this.cursor)
         this.cursor = 0
         this.redraw()
         return
       case '\x0b': // ^K kill to end
+        this.anchor = null
         this.buf = this.buf.slice(0, this.cursor)
         this.redraw()
         return
       case '\x17': { // ^W kill word
+        this.anchor = null
         const head = this.buf.slice(0, this.cursor).replace(/\S+\s*$/, '')
         this.buf = head + this.buf.slice(this.cursor)
         this.cursor = head.length
@@ -127,10 +218,14 @@ export class Readline {
         return
       case '\t': {
         if (!this.complete) return
+        this.anchor = null
         const r = await this.complete(this.buf, this.cursor)
         if (r.insert) {
-          this.buf = this.buf.slice(0, this.cursor) + r.insert + this.buf.slice(this.cursor)
-          this.cursor += r.insert.length
+          // `erase` characters before the cursor are replaced too, so a match
+          // that differs in case from what was typed corrects it.
+          const erase = r.erase ?? 0
+          this.buf = this.buf.slice(0, this.cursor - erase) + r.insert + this.buf.slice(this.cursor)
+          this.cursor += r.insert.length - erase
           this.redraw()
         } else if (r.list?.length) {
           this.tty.echo('\r\n' + columns(r.list, this.tty.cols) + '\r\n')
@@ -140,6 +235,7 @@ export class Readline {
       }
     }
     if (k.length === 1 && k >= ' ') {
+      this.deleteSel()
       this.buf = this.buf.slice(0, this.cursor) + k + this.buf.slice(this.cursor)
       this.cursor++
       this.redraw()
@@ -153,6 +249,7 @@ export class Readline {
     this.histIndex = next
     this.buf = next === this.history.length ? this.draft : this.history[next]
     this.cursor = this.buf.length
+    this.anchor = null
     this.redraw()
   }
 
@@ -163,9 +260,12 @@ export class Readline {
     if (this.cursor > width) start = this.cursor - width
     const view = this.buf.slice(start, start + width)
     const col = this.cursor - start
+    const s = this.sel()
 
-    // Same window, so send the difference rather than the whole row.
-    if (!force && start === this.drawnStart) {
+    // Same window, so send the difference rather than the whole row. Skipped
+    // whenever a selection is on screen now or was on the last paint, since the
+    // diff tracks plain text and cannot add or clear the inverse run.
+    if (!force && !s && !this.selShown && start === this.drawnStart) {
       const atEnd = col === view.length && this.drawnCol === this.drawnView.length
       if (atEnd && view.length > this.drawnView.length && view.startsWith(this.drawnView)) {
         this.tty.echo(view.slice(this.drawnView.length))
@@ -185,7 +285,15 @@ export class Readline {
       }
     }
 
-    this.tty.echo('\r\x1b[K' + this.prompt + view)
+    // The selected run in the visible window, drawn inverse.
+    let out = view
+    if (s) {
+      const lo = Math.max(0, s[0] - start)
+      const hi = Math.min(view.length, s[1] - start)
+      if (hi > lo) out = view.slice(0, lo) + '\x1b[7m' + view.slice(lo, hi) + '\x1b[27m' + view.slice(hi)
+    }
+    this.selShown = s !== null
+    this.tty.echo('\r\x1b[K' + this.prompt + out)
     const back = view.length - col
     if (back > 0) this.tty.echo(`\x1b[${back}D`)
     this.drawn(start, view, col)

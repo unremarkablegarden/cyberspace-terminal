@@ -6,8 +6,11 @@
 // after which a ticker diffs the cell grid to ANSI every frame. popScreen to an
 // empty stack returns to line mode.
 
-import { dec, type Proc, type Program } from '@cyberspace/kernel'
-import { Surface, parseKeys } from '@cyberspace/tui'
+import { dec, type Proc } from '@cyberspace/kernel'
+import {
+  Surface, parseKeys, InputLine, TextBuffer,
+  type KeyInput, type InputOptions, type BufferOptions,
+} from '@cyberspace/tui'
 import {
   CellGrid, NORMAL, BRIGHT, BOLD, DIM, MUTED, FAINT, ALT, ITALIC, BG,
 } from '@cyberspace/crt/term'
@@ -15,22 +18,22 @@ import {
   frame, label, hline, vline, clear, shadow, ground, inside, cells,
 } from '@cyberspace/tui'
 
-// ctx.tui exposes the box helpers only. The module they come from also holds
-// widgets, which are not offered to compat programs.
+// The box helpers on ctx.tui; the input widgets are added per run below, so
+// their clipboard can be bound to this program's ctx.copy.
 const box = { frame, label, hline, vline, clear, shadow, ground, inside, cells }
 import { DotCanvas, drawEdges, teapot } from './vector.js'
 import { roll } from './roll.js'
 
 class Aborted extends Error {}
 
-interface UserProgram {
+export interface UserProgram {
   name?: string
   description?: string
   run(ctx: unknown, args: string[]): void | Promise<void>
 }
 
 /** Import a string of source as an ES module and hand back its default export. */
-async function importDefault(source: string): Promise<unknown> {
+export async function importDefault(source: string): Promise<unknown> {
   const url = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }))
   try {
     const mod = await import(/* @vite-ignore */ url)
@@ -41,13 +44,13 @@ async function importDefault(source: string): Promise<unknown> {
 }
 
 /** A default export shaped like an original /terminal program, or null. */
-function asGridProgram(value: unknown): UserProgram | null {
+export function asGridProgram(value: unknown): UserProgram | null {
   if (!value || typeof value !== 'object') return null
   return typeof (value as UserProgram).run === 'function' ? value as UserProgram : null
 }
 
 /** The position in the author's own source that a stack trace points at, or null. */
-function whereInSource(stack: string | undefined): string | null {
+export function whereInSource(stack: string | undefined): string | null {
   if (!stack) return null
   const hit = stack.match(/blob:[^\s)]*?:(\d+):(\d+)/)
   return hit ? `${hit[1]}:${hit[2]}` : null
@@ -85,11 +88,19 @@ export interface CompatDeps {
     page(limit?: number, after?: string): Promise<Record<string, unknown>[]>
     profile?(username: string): Promise<Record<string, unknown> | null>
   }
+  /**
+   * Fetch a remote image, returning its raw bytes. A program cannot reach the
+   * network itself, so this is the only path in, and the host checks the URL
+   * host against a whitelist before fetching. Absent when unconfigured.
+   */
+  image?(url: string): Promise<Uint8Array>
+  /** Put text on the system clipboard, for the input widgets' copy and cut. */
+  copy?(text: string): void
   version?: string
 }
 
 interface CompatScreen {
-  onKey?(e: { key: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean }): unknown
+  onKey?(e: KeyInput): unknown
   draw?(): void
 }
 
@@ -210,13 +221,31 @@ export function runGridProgram(deps: CompatDeps): (p: Proc, program: UserProgram
       del: (path: string) => deps.api ? deps.api.del(apiPath(path)) : noApi(),
     }
 
+    // Input widgets whose clipboard is bound to this program's ctx.copy, so an
+    // app that uses them gets selection, copy, cut and paste with no wiring.
+    const clip = (text: string) => deps.copy?.(text)
+    const CtxInputLine = class extends InputLine {
+      constructor(o: InputOptions = {}) { super({ clipboard: clip, ...o }) }
+    }
+    const CtxTextBuffer = class extends TextBuffer {
+      constructor(o: BufferOptions = {}) { super({ clipboard: clip, ...o }) }
+    }
+
     const ctx = {
-      tui: { ...box, DotCanvas, drawEdges, teapot },
+      tui: { ...box, DotCanvas, drawEdges, teapot, InputLine: CtxInputLine, TextBuffer: CtxTextBuffer },
+      copy: clip,
       attr: ATTR,
       gfx: {
         canvas(width: number, height: number): OffscreenCanvas {
           return new OffscreenCanvas(Math.max(1, Math.floor(width)), Math.max(1, Math.floor(height)))
         },
+      },
+      // The host fetches the bytes after a whitelist check; decode stays here so
+      // the program gets a bitmap to draw onto a gfx canvas.
+      image: async (url: string): Promise<ImageBitmap> => {
+        if (!deps.image) throw new Error('NO CARRIER')
+        const bytes = await deps.image(url)
+        return createImageBitmap(new Blob([bytes as BlobPart]))
       },
 
       write,
@@ -308,12 +337,15 @@ export function runGridProgram(deps: CompatDeps): (p: Proc, program: UserProgram
         const chunk = await p.stdin.read()
         if (chunk === null) return
         for (const k of parseKeys(dec.decode(chunk))) {
-          if (k.ctrlKey && k.key === 'c') {
+          // Ctrl+C aborts; Ctrl+Shift+C is copy and belongs to the widget below.
+          if (k.ctrlKey && !k.shiftKey && k.key === 'c') {
             ac.abort()
             return
           }
           const top = screens[screens.length - 1]
-          top?.onKey?.({ key: k.key.length === 1 ? k.key : k.key, ctrlKey: k.ctrlKey, metaKey: false, altKey: false })
+          // The whole KeyInput, so a widget sees Shift for selection and the
+          // copy chord; the pump above still claims Ctrl+C for abort.
+          top?.onKey?.(k)
           grid.dirty = grid.dirty || true
         }
       }
@@ -341,71 +373,6 @@ export function runGridProgram(deps: CompatDeps): (p: Proc, program: UserProgram
       // of the program's own unpaced output and does not bleep on its way out.
       if (!inScreen && !screens.length) p.out('\x1b[0m')
       p.tty?.setCooked()
-    }
-  }
-}
-
-/**
- * Kernel file handler for JS programs, of either kind.
- *
- * The file is claimed on `export default` and the KIND is decided after the
- * import, by what the default export turns out to be: a function is a program
- * written for this machine and is called with the process; an object with a
- * `run` method is an original /terminal program and goes to the grid runner.
- * Reading the shape off the source instead would be guessing at a fact the
- * import is about to state.
- */
-export function jsFileHandler(deps: CompatDeps): (path: string, data: Uint8Array) => Program | null {
-  const runGrid = runGridProgram(deps)
-  return (_path, data) => {
-    if (data.length < 2 || data[0] === 0) return null
-    const head = dec.decode(data.subarray(0, Math.min(data.length, 4096)))
-    if (!/export\s+default/.test(head)) return null
-    const source = dec.decode(data)
-
-    return async (p) => {
-      // Checked before the import, which evaluates a real ES module in this
-      // page — the boundary for both kinds; see guard.ts. Loaded on demand
-      // because the parser is ~130 KB and only a program run needs it.
-      try {
-        const { inspect, refusalLines } = await import('./guard.js')
-        const hits = inspect(source)
-        if (hits.length) {
-          for (const line of refusalLines(p.argv[0] ?? '?', hits)) p.err(line.text + '\n')
-          return 1
-        }
-      } catch (e) {
-        // A SyntaxError is treated as the program's. Source the guard cannot
-        // parse but the engine can would be a bypass, so it is refused.
-        p.err(`${p.argv[0]}: ${(e as Error)?.message ?? e}\n`)
-        return 1
-      }
-
-      let value: unknown
-      try {
-        value = await importDefault(source)
-      } catch (e) {
-        const at = whereInSource((e as Error)?.stack)
-        p.err(`${p.argv[0]}: ${(e as Error)?.message ?? e}${at ? ` at ${at}` : ''}\n`)
-        return 1
-      }
-
-      if (typeof value === 'function') {
-        try {
-          return await (value as Program)(p) ?? 0
-        } catch (e) {
-          const at = whereInSource((e as Error)?.stack)
-          p.err(`${p.argv[0]}: ${(e as Error)?.message ?? e}${at ? ` at ${at}` : ''}\n`)
-          return 1
-        }
-      }
-
-      const grid = asGridProgram(value)
-      if (!grid) {
-        p.err(`${p.argv[0]}: not a program (missing export default)\n`)
-        return 1
-      }
-      return runGrid(p, grid)
     }
   }
 }

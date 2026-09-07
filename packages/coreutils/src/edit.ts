@@ -1,34 +1,50 @@
-// edit — full-screen text editor, nano keys: ^O write, ^X exit, ^K cut line.
+// edit — full-screen text editor. ^O write, ^X exit, ^K cut line. Without a file
+// argument it opens an empty buffer and asks for the name at the first write.
+//
+// Framed like the other full-screen programs (circ, cmail, browse): the file
+// name sits in the top rule, the key legend as inverse keycaps in the bottom
+// rule, and the text between them.
 
 import { dec, type Proc, type Program, readText } from '@cyberspace/kernel'
-import { Surface, ScreenStack, ConfirmPopup, ENTER_ESC, TextBuffer, drawBuffer, parseKeys, DIM, BOLD, NORMAL } from '@cyberspace/tui'
+import {
+  Surface, ScreenStack, ConfirmPopup, PromptPopup, ENTER_ESC, TextBuffer,
+  drawBuffer, parseKeys, frame, label, cells, type Span, DIM, BOLD, BRIGHT,
+} from '@cyberspace/tui'
 import { fsp, resolve, strerror } from './util.js'
+
+// The key legend, inverse keycaps then a plain label, as in circ and browse.
+const HINT: Span[] = [
+  { text: ' ^O ', inverse: true, attr: DIM },
+  { text: ' Write ' },
+  { text: ' ^K ', inverse: true, attr: DIM },
+  { text: ' Cut ' },
+  { text: ' ^X ', inverse: true, attr: DIM },
+  { text: ' Exit' },
+]
 
 export const edit: Program = async p => {
   if (!p.tty) {
     p.err('edit: no tty\n')
     return 1
   }
-  const name = p.argv[1]
-  if (!name) {
-    p.err('usage: edit file\n')
-    return 1
-  }
-
-  const path = resolve(p, name)
+  // Both empty for an untitled buffer, until the first write names it.
+  let name = p.argv[1] ?? ''
+  let path = name ? resolve(p, name) : ''
   let initial = ''
   // False until the file is on disk; the write box is titled by it.
-  let exists = true
-  try {
-    initial = await readText(path)
-  } catch {
-    exists = false
+  let exists = false
+  if (path) {
+    try {
+      initial = await readText(path)
+      exists = true
+    } catch {}
   }
 
-  const cols = p.tty.cols
-  const rows = p.tty.rows
+  const tty = p.tty
+  const cols = tty.cols
+  const rows = tty.rows
   const s = new Surface(cols, rows)
-  const buf = new TextBuffer({ initial, width: cols })
+  const buf = new TextBuffer({ initial, width: cols, clipboard: t => tty.copy(t) })
   const stack = new ScreenStack(s as never)
   let saved = initial
   let notice = ''
@@ -41,19 +57,38 @@ export const edit: Program = async p => {
 
   const paint = (): void => {
     s.clear()
-    drawBuffer(s, buf, { x: 0, y: 0, w: cols, h: rows - 2 })
+    const outer = { x: 0, y: 0, w: cols, h: rows }
+    frame(s, outer)
+    drawBuffer(s, buf, { x: 1, y: 1, w: cols - 2, h: rows - 2 })
+
+    // Top rule: the file name, and the live state on its right.
     const modified = buf.text !== saved
-    const status = ` ${name}${modified ? '  [Modified]' : ''}`
-    s.text(0, rows - 2, status.padEnd(cols), DIM | BOLD, 1)
-    if (saving) {
-      s.text(0, rows - 1, 'Saving...', BOLD)
-      s.showCursor = false
-    } else if (asking === 'exit') {
-      s.text(0, rows - 1, 'Save modified buffer?  Y Yes  N No  ^C Cancel', BOLD)
+    const state = saving ? 'SAVING…' : modified ? 'MODIFIED' : ''
+    const stateW = state ? cells(state) + 2 : 0
+    label(s, outer, name || 'New Buffer', { attr: BRIGHT | BOLD, max: cols - 4 - stateW })
+    if (state) label(s, outer, [{ text: state, attr: BOLD }], { align: 'right' })
+
+    // Bottom rule: the key legend, or the exit question while it is up.
+    if (asking === 'exit') {
+      label(s, outer, [
+        { text: 'Save modified buffer? ' },
+        { text: ' Y ', inverse: true, attr: DIM }, { text: ' Yes ' },
+        { text: ' N ', inverse: true, attr: DIM }, { text: ' No ' },
+        { text: ' ESC ', inverse: true, attr: DIM }, { text: ' Cancel' },
+      ], { edge: 'bottom', align: 'left', max: cols - 2 })
       s.showCursor = false
     } else {
-      s.text(0, rows - 1, notice || '^O Write  ^X Exit  ^K Cut Line', DIM)
-      s.showCursor = true
+      const hintW = HINT.reduce((n, x) => n + cells(x.text), 2)
+      // Bottom-left: a transient notice while one stands, else the caret's line
+      // and column. Line and total count hard lines, not folded rows.
+      const head = buf.text.slice(0, buf.caret)
+      const line = head ? head.split('\n').length : 1
+      const total = buf.text ? buf.text.split('\n').length : 1
+      const col = buf.caret - head.lastIndexOf('\n')
+      const left = notice || `Ln ${line}/${total}  Col ${col}`
+      label(s, outer, left, { edge: 'bottom', align: 'left', max: cols - 2 - hintW })
+      label(s, outer, HINT, { edge: 'bottom', align: 'right' })
+      s.showCursor = !saving
     }
     p.tty!.paint(s.render())
   }
@@ -76,10 +111,44 @@ export const edit: Program = async p => {
     }
   }
 
+  // Set by a box's callback when the editor should exit once the loop resumes.
+  let quit = false
+
   // Every write is confirmed, a new file included. The answer arrives on a
   // later stdin read, so the box cannot be awaited from the key loop; it
   // writes from its callback and the loop drops keys while `saving`.
-  const askWrite = (): void => {
+  // `then` runs after a successful write (exit, for the save-on-exit path).
+  const askWrite = (then?: () => void): void => {
+    const done = (): void => {
+      void write().then(ok => {
+        paint()
+        if (ok) then?.()
+      })
+    }
+    if (!name) {
+      // Untitled: the name first. An existing file then gets the overwrite
+      // question, as it would have from the command line.
+      stack.push(new PromptPopup({
+        title: 'WRITE',
+        prefix: 'File name: ',
+        rows: 0,
+        shadow: true,
+        onDone: value => {
+          stack.pop()
+          s.invalidate()
+          if (!value) { paint(); return }
+          name = value
+          path = resolve(p, value)
+          void fsp.stat(path).then(() => true, () => false).then(there => {
+            exists = there
+            if (there) askWrite(then)
+            else done()
+          })
+        },
+      }))
+      p.tty!.paint(s.render())
+      return
+    }
     stack.push(new ConfirmPopup({
       title: 'WRITE',
       lines: [`${exists ? 'Overwrite' : 'Write'} ${name}?`],
@@ -90,7 +159,7 @@ export const edit: Program = async p => {
         stack.pop()
         s.invalidate()
         if (!yes) { paint(); return }
-        void write().then(paint)
+        done()
       },
     }))
     p.tty!.paint(s.render())
@@ -104,8 +173,9 @@ export const edit: Program = async p => {
     paint()
     for (;;) {
       const chunk = await p.stdin.read()
-      if (chunk === null) return 0
+      if (chunk === null || quit) return 0
       for (const k of parseKeys(dec.decode(chunk))) {
+        if (quit) return 0
         if (saving) continue
         if (stack.active) {
           stack.key(k)
@@ -116,11 +186,18 @@ export const edit: Program = async p => {
 
         if (asking === 'exit') {
           if (k.key === 'y' && !k.ctrlKey) {
-            if (await write()) return 0
+            if (name) {
+              if (await write()) return 0
+            } else {
+              // The name comes through a box; the exit follows its write.
+              asking = ''
+              askWrite(() => { quit = true; p.stdin.interrupt?.() })
+              continue
+            }
             asking = ''
           } else if (k.key === 'n' && !k.ctrlKey) {
             return 0
-          } else if ((k.ctrlKey && k.key === 'c') || k.key === 'Escape') {
+          } else if ((k.ctrlKey && !k.shiftKey && k.key === 'c') || k.key === 'Escape') {
             asking = ''
           }
           paint()
@@ -131,13 +208,17 @@ export const edit: Program = async p => {
           askWrite()
           continue
         }
-        if (k.ctrlKey && k.key === 'x') {
+        // Ctrl+Shift+X is cut, handled by the buffer below; plain ^X exits.
+        if (k.ctrlKey && !k.shiftKey && k.key === 'x') {
           if (buf.text === saved) return 0
           asking = 'exit'
           paint()
           continue
         }
-        buf.key(k)
+        // Tab is a completion key in every other buffer, so TextBuffer drops
+        // it; the editor is the one place a literal U+0009 belongs in the text.
+        if (k.key === 'Tab' && !k.ctrlKey) buf.insert('\t')
+        else buf.key(k)
         paint()
       }
     }

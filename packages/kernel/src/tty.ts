@@ -48,6 +48,11 @@ export interface TtyControl {
    * reads keys from here instead; equivalent to /dev/tty.
    */
   get stdin(): Source
+  /**
+   * Put text on the system clipboard, for a copy or cut. Paste arrives the other
+   * way, as input. Inert until the host wires a writer.
+   */
+  copy(text: string): void
 }
 
 export class Tty implements TtyControl {
@@ -57,6 +62,14 @@ export class Tty implements TtyControl {
 
   /** Whether the running program wants a caret shown. See paint(). */
   caret = true
+
+  /**
+   * Whether the alt screen (DECSET 1049 or 47) is up, tracked from the bytes written.
+   * The shell's ^C handler leaves the alt screen for a killed program, and must
+   * not send 1049l when it is already down: xterm's 1049l also restores the
+   * saved cursor, which was never saved, so the prompt would land at row 0.
+   */
+  alt = false
 
   /** Keys the program handles with its own sound. See silence(). */
   private quiet = new Set<string>()
@@ -68,10 +81,20 @@ export class Tty implements TtyControl {
   private readers = new Pipe()
   private out: (data: Uint8Array, urgent?: boolean) => void
 
+  /**
+   * Host-side clipboard writer, injected by the faceplate (the kernel has no DOM
+   * and cannot reach navigator.clipboard). Null until wired; copy() is then inert.
+   */
+  clipboard: ((text: string) => void) | null = null
+
   constructor(out: (data: Uint8Array, urgent?: boolean) => void, cols = 80, rows = 25) {
     this.out = out
     this.cols = cols
     this.rows = rows
+  }
+
+  copy(text: string): void {
+    this.clipboard?.(text)
   }
 
   setRaw(): void {
@@ -163,7 +186,15 @@ export class Tty implements TtyControl {
     const hide = s.lastIndexOf('\x1b[?25l')
     const show = s.lastIndexOf('\x1b[?25h')
     if (hide !== -1 || show !== -1) this.caret = show > hide
+    this.trackAlt(s)
     this.out(bytes(s), true)
+  }
+
+  private trackAlt(s: string): void {
+    // 47 is the older switch without cursor save; Vim's builtin xterm uses it.
+    const up = Math.max(s.lastIndexOf('\x1b[?1049h'), s.lastIndexOf('\x1b[?47h'))
+    const down = Math.max(s.lastIndexOf('\x1b[?1049l'), s.lastIndexOf('\x1b[?47l'))
+    if (up !== -1 || down !== -1) this.alt = up > down
   }
 
   /** Process side: stdin. Reads track the live queue, so an interrupt EOFs only
@@ -186,6 +217,7 @@ export class Tty implements TtyControl {
     return {
       write: (data: Uint8Array | string) => {
         const s = typeof data === 'string' ? data : dec.decode(data)
+        this.trackAlt(s)
         this.out(bytes(s.replace(/(?<!\r)\n/g, '\r\n')), !this.paced)
       },
       end() {},

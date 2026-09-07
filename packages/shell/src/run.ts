@@ -14,7 +14,6 @@ export class ShellExit {
 export interface ShellState {
   proc: Proc
   vars: Record<string, string>
-  cwd: string
   status: number
 }
 
@@ -22,7 +21,7 @@ const ctxOf = (sh: ShellState): ExpandCtx => ({
   vars: sh.vars,
   env: sh.proc.env,
   status: sh.status,
-  cwd: sh.cwd,
+  cwd: sh.proc.cwd,
 })
 
 export async function runLine(sh: ShellState, src: string): Promise<number> {
@@ -73,7 +72,7 @@ async function runPipeline(sh: ShellState, cmds: Cmd[]): Promise<number> {
     const builtin = BUILTINS[argv[0]]
     const program = builtin
       ? (p: Proc) => builtin(sh, p)
-      : await sh.proc.kernel.resolveExec(argv[0], sh.cwd, env)
+      : await sh.proc.kernel.resolveExec(argv[0], sh.proc.cwd, env)
     if (!program) {
       sh.proc.err(`sh: ${argv[0]}: command not found\n`)
       return 127
@@ -81,7 +80,7 @@ async function runPipeline(sh: ShellState, cmds: Cmd[]): Promise<number> {
 
     const redirs: Stage['redirs'] = []
     for (const r of cmd.redirs) {
-      redirs.push({ fd: r.fd, op: r.op, path: paths.resolve(sh.cwd, await expandOne(ctxOf(sh), r.target)) })
+      redirs.push({ fd: r.fd, op: r.op, path: paths.resolve(sh.proc.cwd, await expandOne(ctxOf(sh), r.target)) })
     }
     stages.push({ argv, program, env, redirs })
   }
@@ -126,7 +125,7 @@ async function runPipeline(sh: ShellState, cmds: Cmd[]): Promise<number> {
     const task = sh.proc.kernel.spawn(st.program, {
       argv: st.argv,
       env: st.env,
-      cwd: sh.cwd,
+      cwd: sh.proc.cwd,
       stdin,
       stdout,
       stderr,
@@ -151,12 +150,14 @@ async function runPipeline(sh: ShellState, cmds: Cmd[]): Promise<number> {
     onSigint?: (() => void) | null
     setCooked?: () => void
     paint?: (s: string) => void
+    alt?: boolean
   } | undefined
   const prevSigint = tty?.onSigint
   if (tty) {
     tty.onSigint = () => {
       for (const t of tasks) t.kill()
-      tty.paint?.('\x1b[?1049l\x1b[?25h')
+      // Only when the alt screen is up: see Tty.alt.
+      tty.paint?.(tty.alt ? '\x1b[?1049l\x1b[?25h' : '\x1b[?25h')
       tty.setCooked?.()
     }
   }
@@ -179,7 +180,7 @@ type Builtin = (sh: ShellState, p: Proc) => Promise<number> | number
 
 const BUILTINS: Record<string, Builtin> = {
   async cd(sh, p) {
-    const target = p.argv[1] ? paths.resolve(sh.cwd, p.argv[1].replace(/^~(?=\/|$)/, p.env.HOME ?? '/')) : (p.env.HOME ?? '/')
+    const target = p.argv[1] ? paths.resolve(sh.proc.cwd, p.argv[1].replace(/^~(?=\/|$)/, p.env.HOME ?? '/')) : (p.env.HOME ?? '/')
     try {
       const st = await fs.promises.stat(target)
       if (!st.isDirectory()) { p.err(`cd: ${p.argv[1]}: Not a directory\n`); return 1 }
@@ -187,7 +188,6 @@ const BUILTINS: Record<string, Builtin> = {
       p.err(`cd: ${p.argv[1]}: No such file or directory\n`)
       return 1
     }
-    sh.cwd = target
     sh.proc.cwd = target
     // Published so the host can store it with the session, and so `echo $PWD`
     // agrees with `pwd`.
@@ -196,7 +196,7 @@ const BUILTINS: Record<string, Builtin> = {
   },
 
   pwd(sh, p) {
-    p.out(sh.cwd + '\n')
+    p.out(sh.proc.cwd + '\n')
     return 0
   },
 

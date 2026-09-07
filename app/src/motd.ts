@@ -5,7 +5,7 @@
 
 import { fs } from '@zenfs/core'
 import { BOLD, BRIGHT, FAINT, NORMAL, sgr } from '@cyberspace/tui'
-import { MOBILE } from './config'
+import { MOBILE, TABLET } from './config'
 import { VERSION } from './changelog'
 
 /**
@@ -64,8 +64,10 @@ function welcome(user: string | null): Span[][] {
     [],
   ]
 
-  // F1 opens the config box from a keyboard the phone does not have.
-  if (!MOBILE) lines.push([cmd('F1'), say(' Config')])
+  // F1 opens the config box from a keyboard the phone does not have. iPad
+  // keyboards have no F row or Escape: the chords are in app/src/keys.ts.
+  if (TABLET) lines.push([cmd('Ctrl-Opt-1'), say(' Config')], [cmd('§'), say(' Esc')])
+  else if (!MOBILE) lines.push([cmd('F1'), say(' Config')])
   lines.push(
     user
       ? [say('Type '), cmd('help'), say(' for commands.')]

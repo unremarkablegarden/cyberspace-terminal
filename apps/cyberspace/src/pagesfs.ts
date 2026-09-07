@@ -261,4 +261,7 @@ export function umountPages(home: string): void {
   if (mounted !== point) return
   vfs.umount(point)
   mounted = null
+  // The directory is the mount's own unless files were put there before the
+  // mount; rmdir fails on a non-empty directory and those are kept.
+  void fs.promises.rmdir(point).catch(() => {})
 }

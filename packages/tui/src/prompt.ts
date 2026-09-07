@@ -92,7 +92,7 @@ export class PromptPopup implements Screen {
   onKey(e: KeyInput): boolean {
     if (this.closed) return false
 
-    if (e.key === 'Escape' || (e.ctrlKey && (e.key === 'c' || e.key === 'C'))) {
+    if (e.key === 'Escape' || (e.ctrlKey && !e.shiftKey && (e.key === 'c' || e.key === 'C'))) {
       this.opts.onFeedback?.('cancel', e)
       this.finish(null)
       return true

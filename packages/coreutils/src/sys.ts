@@ -76,8 +76,8 @@ const SHELL = new Set([
   'sort', 'tail', 'touch', 'true', 'uname', 'uniq', 'wc', 'which', 'whoami',
 ])
 
-/** Not listed: help is what is being read, and nano and more are aliases. */
-const HIDDEN = new Set(['help', 'nano', 'more'])
+/** Not listed: help is what is being read, nano and more are aliases, reset is guest-only. */
+const HIDDEN = new Set(['help', 'nano', 'more', 'reset'])
 
 /** Names in rows, padded to the longest, filling the width of the terminal. */
 function columns(out: (s: string) => void, names: string[], cols: number): void {

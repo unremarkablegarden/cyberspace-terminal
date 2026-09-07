@@ -13,27 +13,9 @@
 import { NORMAL } from '../term.js'
 import type { Term } from '../term.js'
 
-/** Break text on word boundaries to fit `width` columns. Used by fortune. */
-export function wrap(text: string, width: number): string[] {
-  const out: string[] = []
-  for (const para of text.split('\n')) {
-    let line = ''
-    for (const word of para.split(/\s+/).filter(Boolean)) {
-      if (!line) { line = word; continue }
-      if (line.length + 1 + word.length <= width) { line += ' ' + word; continue }
-      out.push(line)
-      line = word
-    }
-    out.push(line)
-  }
-  return out
-}
-
 export interface SaverDeps {
   /** Phosphor persistence, for savers that want a longer trail. */
   setDecay: (value: number | null) => void
-  /** The fortune text source, kept as a single shared copy. */
-  fortune: () => Promise<string | null>
 }
 
 export interface Saver {

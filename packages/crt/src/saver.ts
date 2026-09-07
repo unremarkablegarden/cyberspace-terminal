@@ -21,14 +21,13 @@ import { stars } from './savers/stars.js'
 import { life } from './savers/life.js'
 import { fire } from './savers/fire.js'
 import { dvd } from './savers/dvd.js'
-import { fortune } from './savers/fortune.js'
 
 export type { Saver, SaverDeps, SaverSpec }
 
 // --- the roster ------------------------------------------------------------
 
 export const SAVERS: SaverSpec[] = [
-  matrix, pipes, worms, rain, stars, life, fire, dvd, fortune,
+  matrix, pipes, worms, rain, stars, life, fire, dvd,
 ]
 
 // CONFIG lists the names module without loading this one, so a saver added
