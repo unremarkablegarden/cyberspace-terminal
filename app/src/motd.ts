@@ -5,7 +5,8 @@
 
 import { fs } from '@zenfs/core'
 import { BOLD, BRIGHT, FAINT, NORMAL, sgr } from '@cyberspace/tui'
-import { MOBILE, TABLET } from './config'
+import { COLS, MOBILE, TABLET } from './config'
+import type { ChatPictures } from './image'
 import { VERSION } from './changelog'
 
 /**
@@ -49,6 +50,39 @@ function plate(): Span[][] {
   ]
 }
 
+/** The globe beside the nameplate, as picture handles. See app/src/image.ts. */
+const GLOBE_SRC = '/globe.png'
+/** The box the globe is fitted into: as tall as the plate, the welcome line and the first hint. */
+const GLOBE_COLS = 30
+const GLOBE_ROWS = 9
+
+let pictures: ChatPictures | null = null
+
+/** The host's picture bank, on a faceplate that has one. Held for the life of the machine. */
+export function motdPictures(p: ChatPictures): void {
+  pictures = p
+}
+
+/** The globe's rows, rasterised for the current font; none on a phone or without a bank. */
+async function globe(): Promise<string[]> {
+  if (MOBILE || !pictures) return []
+  // The host caches by font and size, so a rewrite costs nothing while the
+  // font stays and re-rasterises when F1 changes it.
+  return pictures.load(GLOBE_SRC, GLOBE_SRC, GLOBE_COLS, GLOBE_ROWS).then(p => p.lines, () => [])
+}
+
+/** Hang the globe off the right edge, one cell in so the last column never wraps. */
+function withGlobe(lines: Span[][], art: string[]): Span[][] {
+  return lines.map((spans, i) => {
+    const row = art[i]
+    if (!row) return spans
+    const used = spans.reduce((n, s) => n + s.text.length, 0)
+    const gap = COLS - 1 - row.length - used
+    if (gap < 1) return spans
+    return [...spans, say(' '.repeat(gap)), { text: row, attr: NORMAL }]
+  })
+}
+
 /** Bold marks anything that can be typed. The prose around it is not bold. */
 const cmd = (text: string): Span => ({ text, attr: BOLD })
 const say = (text: string): Span => ({ text, attr: NORMAL })
@@ -79,7 +113,8 @@ function welcome(user: string | null): Span[][] {
     [cmd('cd bin/docs'), say(' then '), cmd('less README.txt'), say(' and '), cmd('less API.txt')],
     [say('User program repo: '), cmd('browse'), say(' and '), cmd('publish')],
     [],
-    [say('Supporters can sync their home directory to the mainframe with '), cmd('sync'), say(' for regular users files live in your browser storage.')],
+    [say('Supporters can sync their home directory to the mainframe with '), cmd('sync')],
+    [say('For regular users files live in your browser storage.')],
     [],
   )
   return lines
@@ -96,7 +131,8 @@ function render(lines: Span[][]): string {
     .join('')
 }
 
-/** Write /etc/motd. Called again whenever the logged-in user changes. */
+/** Write /etc/motd. Called again whenever the logged-in user or the font changes. */
 export async function writeMotd(user: string | null): Promise<void> {
-  await fs.promises.writeFile('/etc/motd', render(welcome(user))).catch(() => {})
+  const lines = withGlobe(welcome(user), await globe())
+  await fs.promises.writeFile('/etc/motd', render(lines)).catch(() => {})
 }

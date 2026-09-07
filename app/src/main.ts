@@ -19,7 +19,7 @@ import { VERSION } from './changelog'
 import { API_URL, COLD_AFTER, COLS, CPS, ENV, MOBILE, ROWS, SOUNDS, STORE_PREFIX, TABLET, homeOf, pathOf } from './config'
 import { store } from './store'
 import { grid, withGrid } from './grid'
-import { pictureHost } from './image'
+import { pictureHost, standbyArt } from './image'
 import { bootMachine } from './machine'
 import { writeMotd } from './motd'
 import { ConfigBox, restoreSettings } from './settings'
@@ -328,7 +328,7 @@ const program = {
     void loadFallback(s.term)
 
     restoreSettings(s, snd)
-    config = new ConfigBox(s, snd)
+    config = new ConfigBox(s, snd, () => void writeMotd(api.username))
     saver = new Screensaver(s, snd, () => halted || !live)
     // The idle timer. Coarse on purpose: the timeout is in minutes.
     setInterval(() => {
@@ -378,7 +378,10 @@ const program = {
       await withGrid(async () => {
         // Standby until a key or a tap. An AudioContext unlocks only on a user
         // gesture, so a cold boot taken unprompted plays none of its sequence.
-        await standby(s.term, gate.signal)
+        // The picture takes two thirds of the free rows; the four rows of text sit under it.
+        const grid = await standbyArt(s.term, '/standby.png', s.term.cols, Math.floor((s.term.rows - 6) * 2 / 3)).catch(() => undefined)
+        await standby(s.term, gate.signal, grid?.art)
+        grid?.release()
         standbyAbort = null
         bootAbort = abort
         await snd.unlock()

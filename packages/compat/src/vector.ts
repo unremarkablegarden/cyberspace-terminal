@@ -31,7 +31,8 @@ export type Edge = [P3, P3]
 function dotAspect(term: Term): number {
   const dotW = term.advance / 2
   const dotH = term.font.cellH / 4
-  return dotH / dotW
+  // The face stretches every source pixel; a Term without a face reports none.
+  return dotH / dotW * ((term as { stretch?: number }).stretch ?? 1)
 }
 
 /**

@@ -13,6 +13,7 @@
 import {
   PICT_LO, PICT_HI, halftoneFit, fitImage, dotAspect, type CellMetrics, type Luma,
 } from '@cyberspace/tui'
+import type { StandbyArt } from '@cyberspace/crt/effects'
 
 /** A rasterised picture, as rows of picture handles. `' '` is an unlit cell. */
 export interface Picture {
@@ -237,8 +238,15 @@ async function toLuma(src: string | Uint8Array): Promise<Luma> {
 }
 
 /** Cell geometry, read on each call: F1 can change the font under a running program. */
-function metricsOf(term: { font: { cellW: number; cellH: number }; advance: number }): CellMetrics {
-  return { cellW: term.font.cellW, cellH: term.font.cellH, advance: term.advance }
+function metricsOf(term: TermMetrics): CellMetrics {
+  return { cellW: term.font.cellW, cellH: term.font.cellH, advance: term.advance, stretch: term.stretch }
+}
+
+/** What the rasteriser reads off the Term. `stretch` is the face's, see crt term.js. */
+export interface TermMetrics {
+  font: { cellW: number; cellH: number }
+  advance: number
+  stretch?: number
 }
 
 /** A picture and the slots it holds, which are released together. */
@@ -293,9 +301,7 @@ function toPicture(
  * not fit, the pictures the screen last asked to keep are the ones that stay.
  * One per program; release() frees every slot it took.
  */
-export function pictureHost(
-  term: { font: { cellW: number; cellH: number }; advance: number },
-): ChatPictures {
+export function pictureHost(term: TermMetrics): ChatPictures {
   /** Insertion order is least-recently-wanted first, which is the eviction order. */
   const done = new Map<string, Held>()
   const loading = new Set<string>()
@@ -313,7 +319,7 @@ export function pictureHost(
 
   const announce = (): void => { for (const cb of listeners) cb() }
   const keyOf = (m: CellMetrics, src: string, c: number, r: number): string =>
-    `${m.advance}x${m.cellH}|${c}x${r}|${src}`
+    `${m.advance}x${m.cellH}x${m.stretch ?? 1}|${c}x${r}|${src}`
 
   const touch = (key: string, held: Held): Held => {
     done.delete(key)
@@ -418,4 +424,21 @@ export function pictureHost(
       holder.close()
     },
   }
+}
+
+/**
+ * The standby picture as bitmaps for effects.ts, which draws on the grid
+ * directly and has no pty to carry handles over. The slots are held until
+ * release(), which the host calls once standby has cleared the screen.
+ */
+export async function standbyArt(
+  term: TermMetrics, src: string, maxCols: number, maxRows: number,
+): Promise<{ art: StandbyArt; release(): void }> {
+  const host = pictureHost(term)
+  const pic = await host.load(src, src, maxCols, maxRows)
+  const cells: (Uint16Array | undefined)[] = []
+  for (const line of pic.lines) {
+    for (const ch of line) cells.push(pictureBits(ch.codePointAt(0)!))
+  }
+  return { art: { cols: pic.cols, rows: pic.rows, cells }, release: () => host.release() }
 }

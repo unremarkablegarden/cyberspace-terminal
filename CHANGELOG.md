@@ -160,8 +160,6 @@
 
 ## v0.5
 
-- `download <file>` saves a file from the machine to this computer
-- Fixed `export` (bare `export` lists the environment; `export NAME` before the assignment now reaches programs)
 - Sync 
     - Home directory syncs to Cloudflare R2
     - End-to-end encrypted
@@ -176,5 +174,11 @@
         - Total 5 Mb
         - Max 256 files
         - Max 1 Mb file size
+- `download <file>` saves a file from the machine to this computer
+- Fixed `export` (bare `export` lists the environment; `export NAME` before the assignment now reaches programs)
 - Deleted skel files stay deleted
 - Fixed a visit after a deploy booting the previous build until a hard refresh
+- Standby screen: a grid picture over `CYBERSPACE TERMINAL`, the hint blinks between faint and bright
+- Boot: hex address on the memory count, device values in bold, a kernel load bar, a hex burst, lit `OK`s
+- A globe beside the nameplate on the front page
+- Fixed pictures rendering about a third too narrow (the face stretches the raster; chat, `view` and braille drawings all corrected)

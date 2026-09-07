@@ -24,6 +24,12 @@ export interface CellMetrics {
   cellH: number
   /** Cell pitch: cellW plus the spare join column. */
   advance: number
+  /**
+   * Height over width of a framebuffer pixel as displayed; 1 when absent. The
+   * CRT maps the whole framebuffer onto a 4:3 face, so at 80x25 a pixel shows
+   * about a third taller than wide (Term.stretch).
+   */
+  stretch?: number
 }
 
 /**

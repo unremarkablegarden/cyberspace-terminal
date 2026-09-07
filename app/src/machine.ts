@@ -17,7 +17,7 @@ import { downloadProgram, type SaveFile } from './download'
 import { OpfsHome } from './opfs'
 import { changelog, VERSION } from './changelog'
 import { ENV, HOME, IMAGE_HOSTS, RTDB_URL, homeOf } from './config'
-import { writeMotd } from './motd'
+import { motdPictures, writeMotd } from './motd'
 import { installSkel } from './skel'
 import { installBin } from './bin'
 
@@ -240,6 +240,7 @@ export async function bootMachine(deps: MachineDeps): Promise<Kernel> {
   })
   await kernel.seed()
 
+  if (deps.pictures) motdPictures(deps.pictures())
   await writeMotd(deps.api.username)
   await installHome(HOME)
   home.up()

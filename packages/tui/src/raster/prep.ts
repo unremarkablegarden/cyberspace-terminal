@@ -17,10 +17,11 @@ import type { CellMetrics, Luma } from './index.js'
  * divides it into its own sample grid: cellW x cellH for pixel, 2 x 4 for
  * dot-based ones. The ratio of a sample's height to its width is therefore
  * (cellH/sy) / (advance/sx). Both grids give the same value for a given font,
- * 0.889 in the 8x16 face and 0.923 in the 12x24, since it describes the cell.
+ * 0.889 in the 8x16 face and 0.923 in the 12x24, since it describes the cell,
+ * before the face stretch (CellMetrics.stretch) is applied on top.
  */
 export function sampleAspect(m: CellMetrics, sx: number, sy: number): number {
-  return (m.cellH / sy) / (m.advance / sx)
+  return (m.cellH / sy) / (m.advance / sx) * (m.stretch ?? 1)
 }
 
 /**

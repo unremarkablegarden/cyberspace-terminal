@@ -34,9 +34,13 @@ export class CellGrid {
   scrollView(delta: number): boolean
 }
 
+export const FACE_ASPECT: number
+
 export class Term extends CellGrid {
   w: number
   h: number
+  /** Height over width of a source pixel on the face. See term.js. */
+  readonly stretch: number
   fb: Uint8Array
   bold: unknown
   italic: unknown

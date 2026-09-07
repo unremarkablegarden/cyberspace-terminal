@@ -49,7 +49,7 @@ function resetUserParam(screen: CrtScreen, key?: string): void {
  * storage, not in the box: saving a preset extends the SCREEN list, and the
  * shell can change any of these while the box is closed.
  */
-function settings(screen: CrtScreen, snd: Sound): Setting[] {
+function settings(screen: CrtScreen, snd: Sound, onFont?: () => void): Setting[] {
   const channel = (name: 'background' | 'keys' | 'beeps'): Setting => ({
     label: name,
     values: AUDIO_LEVELS.map(([label]) => label),
@@ -79,6 +79,7 @@ function settings(screen: CrtScreen, snd: Sound): Setting[] {
           await loadFamily(screen.term, familyOf(name))
           screen.crt.setSource(screen.term.w, screen.term.h)
           store.set('font', name)
+          onFont?.()
           return label
         } catch {
           return fontLabel(store.get('font', 'terminus-8x16'))
@@ -186,8 +187,9 @@ export class ConfigBox {
   /** RENDER.cursor as it was before the box opened, restored on close. */
   private cursorWas = true
 
-  constructor(screen: CrtScreen, snd: Sound) {
-    this.overlay = new SettingsOverlay(screen.term, () => settings(screen, snd))
+  /** `onFont` runs after a font change lands: pictures rasterised for the old cell size need redoing. */
+  constructor(screen: CrtScreen, snd: Sound, onFont?: () => void) {
+    this.overlay = new SettingsOverlay(screen.term, () => settings(screen, snd, onFont))
     this.overlay.onFeedback = kind => {
       if (kind === 'edge') snd.beep(220, 0.04)
       // Same close sound the other screens use.

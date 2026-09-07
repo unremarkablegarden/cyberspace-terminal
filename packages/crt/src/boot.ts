@@ -1,7 +1,7 @@
 // Cold-start sequence, after the tube strikes (effects.ts):
 //
 //   banner()    CYBERSPACE in a box
-//   post()      1984 firmware: memory count, device inventory, kernel load
+//   post()      1984 firmware: memory count, device inventory, kernel load bar, hex burst
 //   probe()     the real machine, read off navigator/screen — this bit is true
 //   services()  mounts and [ OK ] lines
 //
@@ -9,7 +9,7 @@
 // feeding the grid while this runs and repaint afterwards. Ctrl-C aborts via the
 // signal, and the caller is responsible for the end state.
 
-import { BRIGHT, BOLD, NORMAL } from './term.js'
+import { BRIGHT, BOLD, DIM, NORMAL } from './term.js'
 import { Aborted } from './effects.js'
 import type { Sound } from './audio.js'
 
@@ -205,44 +205,88 @@ async function banner(ctx: BootCtx, version: string): Promise<void> {
 
 // --- firmware ----------------------------------------------------------------
 
+/** Random bytes as a hex dump row: address, bytes, then the printable column. */
+function hexRow(addr: number, bytes: number): string {
+  const b = Array.from({ length: bytes }, () => Math.floor(Math.random() * 256))
+  const hex = b.map(v => v.toString(16).padStart(2, '0')).join(' ')
+  const ascii = b.map(v => (v >= 0x20 && v < 0x7f ? String.fromCharCode(v) : '.')).join('')
+  return `${addr.toString(16).padStart(8, '0')}  ${hex}  |${ascii}|`
+}
+
+/** `label : ` then the value in bold, then an optional lit tag. One device line. */
+async function device(ctx: BootCtx, label: string, value: string, tag?: string): Promise<void> {
+  await ctx.type(`${label.padEnd(12)}: `, NORMAL)
+  await ctx.type(value, BOLD)
+  if (tag) await ctx.type(`  [${tag}]`, BRIGHT | BOLD)
+  ctx.term.newline()
+  ctx.term.dirty = true
+}
+
 async function post(ctx: BootCtx): Promise<void> {
   ctx.setBlipHz(FIRMWARE_BLIP_HZ)
+  const { cols } = ctx.term
 
-  // The POST beep plays with the first line, under the type-out.
+  // The power-on beep plays with the first line, under the type-out.
   const year = new Date().getFullYear()
   ctx.snd.postBeep()
-  await ctx.type('CYBERSPACE BIOS v2.11', BOLD)
+  await ctx.type('CYBERSPACE BIOS v2.11', BRIGHT | BOLD)
   await ctx.typeln(`  (c) 1984-${year} UNREMARKABLE GARDEN INC.`, NORMAL)
   ctx.term.newline()
   await ctx.sleep(280)
   await ctx.typeln('MEMORY TEST : ', NORMAL)
 
-  // Step back onto the line just ended and overwrite the count in place.
+  // Step back onto the line just ended and overwrite the count in place: the
+  // address climbs in hex beside the total, sixteen steps to 640 KB.
   ctx.term.cy--
-  for (let k = 64; k <= 640; k += 64) {
+  for (let k = 40; k <= 640; k += 40) {
     ctx.term.cx = 14
-    ctx.term.write(String(k).padStart(3) + ' KB OK', NORMAL)
+    ctx.term.write(`0x${(k * 1024).toString(16).toUpperCase().padStart(6, '0')}  `, NORMAL)
+    ctx.term.write(`${String(k).padStart(3)} KB`, BOLD)
+    ctx.term.write(k === 640 ? '  OK' : '', BRIGHT | BOLD)
     ctx.snd.blip(FIRMWARE_BLIP_HZ)
-    await ctx.sleep(75)
+    await ctx.sleep(k === 640 ? 260 : 45)
   }
   ctx.term.newline()
   await ctx.sleep(200)
 
   // A pause per device, so the sequence reads as probing rather than printing a list.
   ctx.snd.seek(3)
-  await ctx.typeln('FIXED DISK  : ST-225  20MB  OK', NORMAL)
+  await device(ctx, 'FIXED DISK', 'ST-225  20MB', 'OK')
   await ctx.sleep(220)
-  await ctx.typeln('SERIAL      : 2 PORTS', NORMAL)
+  await device(ctx, 'VIDEO', 'P1 PHOSPHOR  ' + `${cols}x${ctx.term.rows}`)
+  await ctx.sleep(160)
+  await device(ctx, 'SERIAL', '2 PORTS')
   await ctx.sleep(180)
-  await ctx.typeln('MODEM       : HAYES 2400 [READY]', NORMAL)
+  await device(ctx, 'MODEM', 'HAYES 2400', 'READY')
   await ctx.sleep(320)
   ctx.term.newline()
   await ctx.sleep(200)
   await ctx.typeln('boot: hd(0,a)/vmunix', NORMAL)
   await ctx.sleep(300)
+
+  // The kernel load: a bar filled in place, then a burst of the image going by.
   ctx.snd.seek(4)
-  await ctx.typeln('LOADING KERNEL ...', NORMAL)
-  await ctx.sleep(520)
+  const barW = Math.max(12, Math.min(32, cols - 26))
+  await ctx.type('LOADING KERNEL ', NORMAL)
+  const barX = ctx.term.cx
+  for (let step = 0; step <= barW; step++) {
+    ctx.term.cx = barX
+    ctx.term.write('[', NORMAL)
+    ctx.term.write('\u2588'.repeat(step), BRIGHT | BOLD)
+    ctx.term.write('\u2591'.repeat(barW - step), NORMAL)
+    ctx.term.write(`] ${String(Math.round(step * 100 / barW)).padStart(3)}%`, BOLD)
+    ctx.term.dirty = true
+    if (step % 3 === 0) ctx.snd.blip(FIRMWARE_BLIP_HZ)
+    await ctx.sleep(28)
+  }
+  ctx.term.newline()
+  ctx.setBaud(19200)
+  const bytes = cols >= 68 ? 16 : 8
+  for (let row = 0; row < 6; row++) {
+    await ctx.typeln(hexRow(0x10f000 + row * bytes, bytes).slice(0, cols), DIM)
+  }
+  ctx.setBaud(2400)
+  await ctx.sleep(360)
   ctx.term.newline()
 }
 
@@ -304,7 +348,8 @@ async function probe(ctx: BootCtx): Promise<void> {
   // the width; a wrapped value would overwrite the next label's row.
   const room = Math.max(8, ctx.term.cols - 14)
   for (const [label, value] of specs()) {
-    await ctx.typeln(`  ${label.padEnd(10)}: ${value.slice(0, room)}`, NORMAL)
+    await ctx.type(`  ${label.padEnd(10)}: `, NORMAL)
+    await ctx.typeln(value.slice(0, room), BOLD)
     await ctx.sleep(70)
   }
   ctx.term.newline()
@@ -349,7 +394,9 @@ async function services(ctx: BootCtx): Promise<void> {
   await ctx.sleep(180)
 
   for (const target of targets(ctx)) {
-    await ctx.typeln(`[ OK ] ${target}`, NORMAL)
+    await ctx.type('[ ', NORMAL)
+    await ctx.type('OK', BRIGHT | BOLD)
+    await ctx.typeln(` ] ${target}`, NORMAL)
     await ctx.sleep(55)
   }
   await ctx.sleep(340)

@@ -32,6 +32,13 @@ const MUTED_LEVEL = 180
  */
 const BG_LEVEL = 34
 
+/**
+ * Width over height of the face the composite draws the framebuffer on
+ * (the composite shader in shaders.js). The whole framebuffer is mapped onto it whatever
+ * its own aspect, so a source pixel is not square on the glass.
+ */
+export const FACE_ASPECT = 4 / 3
+
 export class Term extends CellGrid {
   /**
    * padX/padY are unlit margin inside the framebuffer, keeping text off the edge
@@ -95,6 +102,16 @@ export class Term extends CellGrid {
   }
 
   /** Rasterise the whole grid. ~300k byte writes. Call only when dirty. */
+  /**
+   * How much taller than wide a source pixel shows on the face: the
+   * framebuffer's aspect over the face's. 1.34 at 80x25 in the 8x16 face,
+   * under 1 on the phone grid. Anything that draws a shape in pixels or dots
+   * divides its x by this, or the shape comes out squashed.
+   */
+  get stretch() {
+    return (this.w / this.h) / FACE_ASPECT
+  }
+
   raster() {
     const { cols, rows, font, fb, w } = this
     const { cellH, glyphs } = font

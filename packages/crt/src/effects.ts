@@ -8,7 +8,7 @@
 // where timers are clamped to 1s, skips frames instead of stretching the
 // sequence.
 
-import { BRIGHT, BOLD, DIM, NORMAL } from './term.js'
+import { BRIGHT, BOLD, DIM, FAINT, NORMAL } from './term.js'
 import type { Sound } from './audio.js'
 
 interface TermLike {
@@ -18,6 +18,14 @@ interface TermLike {
   clear(): void
   put(x: number, y: number, ch: string | number, attr?: number, inv?: number): void
   text(x: number, y: number, str: string, attr?: number, inv?: number): number
+  putGlyph(x: number, y: number, bits: ArrayLike<number>, attr?: number, inv?: number): void
+}
+
+/** A picture for the standby screen: one bitmap per cell, row-major, undefined where unlit. */
+export interface StandbyArt {
+  cols: number
+  rows: number
+  cells: (ArrayLike<number> | undefined)[]
 }
 
 /** Thrown when an effect is skipped. The caller handles the end state. */
@@ -52,8 +60,9 @@ function line(term: TermLike, midX: number, midY: number, half: number): void {
   term.dirty = true
 }
 
-const STANDBY_HEAD = 'CYBERSPACE  ·  STANDBY'
-const STANDBY_HINT = 'PRESS ANY KEY TO POWER ON'
+const STANDBY_NAME = 'CYBERSPACE TERMINAL'
+const STANDBY_HEAD = 'STANDBY'
+const STANDBY_HINT = 'Press any key to power ON'
 /** Standby blink period in ms. Slower than the cursor's, so the two do not read alike. */
 const STANDBY_BLINK = 900
 
@@ -65,15 +74,32 @@ const STANDBY_BLINK = 900
  * gesture, and every sound strike() and the boot sequence make is dropped while
  * it is suspended. Booting unprompted therefore boots silent.
  *
- * DIM rather than FAINT: FAINT (level 100) is a fill for shadows and panels,
- * and these two lines are read on an unlit screen.
+ * DIM for the name: FAINT (level 100) is a fill for shadows and panels, and
+ * the name is read on an unlit screen. The hint alone dips to FAINT, as the
+ * low end of its blink.
  */
-export async function standby(term: TermLike, signal: AbortSignal): Promise<void> {
-  const mid = term.rows >> 1
+export async function standby(term: TermLike, signal: AbortSignal, art?: StandbyArt): Promise<void> {
+  // The block: the picture, a blank, the two name rows, a blank, the hint.
+  const artRows = art ? art.rows + 1 : 0
+  const top = Math.max(0, (term.rows - (artRows + 4)) >> 1)
+  const nameRow = top + artRows
+  const centred = (text: string, y: number, attr: number) =>
+    term.text((term.cols - text.length) >> 1, y, text, attr)
   const draw = (lit: boolean) => {
     term.clear()
-    term.text((term.cols - STANDBY_HEAD.length) >> 1, mid - 1, STANDBY_HEAD, DIM)
-    if (lit) term.text((term.cols - STANDBY_HINT.length) >> 1, mid + 2, STANDBY_HINT, DIM)
+    if (art) {
+      const x0 = (term.cols - art.cols) >> 1
+      for (let y = 0; y < art.rows; y++) {
+        for (let x = 0; x < art.cols; x++) {
+          const bits = art.cells[y * art.cols + x]
+          if (bits) term.putGlyph(x0 + x, top + y, bits, DIM)
+        }
+      }
+    }
+    centred(STANDBY_NAME, nameRow, DIM | BOLD)
+    centred(STANDBY_HEAD, nameRow + 1, DIM)
+    // The blink swings between the dimmest text and the brightest rather than off.
+    centred(STANDBY_HINT, nameRow + 3, lit ? BRIGHT : FAINT)
     term.dirty = true
   }
 

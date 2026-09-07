@@ -26,7 +26,7 @@ export type HalftoneOptions = RasterOptions
  * rasteriser runs.
  */
 export function dotAspect(m: CellMetrics): number {
-  return (m.cellH / 4) / (m.advance / 2)
+  return (m.cellH / 4) / (m.advance / 2) * (m.stretch ?? 1)
 }
 
 /**
