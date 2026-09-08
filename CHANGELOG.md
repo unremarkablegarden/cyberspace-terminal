@@ -197,3 +197,4 @@
     - `U`: author's posts; `feed @user` opens them directly
     - `F`: find a member
     - State management
+    - Profile pictures in the member card and bio

@@ -18,7 +18,7 @@ import {
   type Grid, type KeyInput, type Rect, type Screen, type Span, type TextLine,
 } from '@cyberspace/tui'
 import { ApiClient, ApiError } from './api.js'
-import { SILENT, type ChatPictureHost, type ChatPictures } from './chat.js'
+import { SILENT, type ChatPictureHost, type ChatPictures, type Picture } from './chat.js'
 import {
   keep, keepReply, toEntry, toProfile, toReply, when, OPEN_FILTER,
   type ApiPost, type ApiReply, type ApiUser, type FeedBlock, type FeedEntry, type FeedFilter,
@@ -271,20 +271,61 @@ function fact(head: string, body: string, width: number): TextLine[] {
     i === 0 ? [{ text: head, attr: BOLD }, { text: row.slice(head.length) }] : row)
 }
 
-/** A member's box: their words, then the facts under a rule. Bio paragraphs are kept. */
-function bioLines(p: FeedProfile, joined: string | undefined, width: number): TextLine[] {
+/** The profile picture's width in cells. The site shows 128px square; this is 20 cells by about 8 rows. */
+const PFP_COLS = 20
+const PFP_ROWS = 12
+/** Blank between the picture and the words. */
+const PFP_GAP = 2
+/** Narrowest words column worth putting a picture beside. */
+const PFP_MIN_TEXT = 16
+
+/**
+ * The picture's place in a member's box: its size, and its rows once they
+ * have arrived. Without rows the column is left blank at the same size, so
+ * the box does not reflow when the picture lands.
+ */
+interface Portrait {
+  cols: number
+  rows: number
+  lines?: string[]
+}
+
+/** Whether a box this wide has room for the picture beside the words. */
+function portraitFits(width: number): boolean {
+  return width >= PFP_COLS + PFP_GAP + PFP_MIN_TEXT
+}
+
+/**
+ * A member's box: their words, then the facts under a rule. Bio paragraphs are
+ * kept. With a portrait, the words sit to its right and the rule and facts run
+ * full width under both.
+ */
+function bioLines(p: FeedProfile, joined: string | undefined, width: number, portrait?: Portrait): TextLine[] {
+  const pic = portrait && portraitFits(width) ? portrait : undefined
+  const tw = pic ? width - pic.cols - PFP_GAP : width
   const out: TextLine[] = []
-  if (p.displayName) out.push(...wrap(p.displayName, width), '')
+  if (p.displayName) out.push(...wrap(p.displayName, tw), '')
   if (p.bio) {
     for (const para of p.bio.split(/\n/)) {
       if (!para.trim()) {
         if (out[out.length - 1] !== '') out.push('')
         continue
       }
-      out.push(...wrap(para, width))
+      out.push(...wrap(para, tw))
     }
   } else {
     out.push('NO BIO')
+  }
+  if (pic) {
+    while (out.length < pic.rows) out.push('')
+    for (let i = 0; i < out.length; i++) {
+      const row = out[i]!
+      const left = pic.lines?.[i] ?? ''
+      const spans: Span[] = [{ text: left.padEnd(pic.cols) + ' '.repeat(PFP_GAP) }]
+      if (typeof row === 'string') spans.push({ text: row })
+      else if (Array.isArray(row)) spans.push(...row)
+      out[i] = spans
+    }
   }
   const facts: TextLine[] = []
   const serial = p.serial != null ? ` (#${p.serial})` : ''
@@ -368,6 +409,7 @@ class FeedScreen implements Screen {
   private quit: () => void
   private profile?: FeedProfile
   private profileRows: TextLine[] = []
+  private portrait?: Portrait
   private cardWidth = 0
   private parent?: FeedScreen
   private child?: FeedScreen
@@ -585,9 +627,55 @@ class FeedScreen implements Screen {
     const profile = await this.fetchProfile(who)
     if (this.closed || !profile) return
     this.profile = profile
+    this.portrait = this.portraitOf(profile)
     this.buildCard()
     this.centre()
     this.redraw()
+    if (this.portrait) void this.loadPortrait(profile.picture!, this.portrait)
+  }
+
+  /** The picture's slot, held from the start so the box does not reflow when it lands. */
+  private portraitOf(profile: FeedProfile): Portrait | undefined {
+    const pics = this.env.pics
+    if (!profile.picture || !pics) return undefined
+    return { cols: PFP_COLS, rows: pics.slot(PFP_COLS, PFP_ROWS, 1) }
+  }
+
+  private portraitLoading = false
+
+  /** A picture that cannot be read leaves its column blank. */
+  private async loadPortrait(src: string, portrait: Portrait): Promise<void> {
+    const pics = this.env.pics
+    if (!pics || this.portraitLoading) return
+    this.portraitLoading = true
+    try {
+      const pic = await pics.load(src, src, portrait.cols, PFP_ROWS)
+      if (this.closed || this.portrait !== portrait) return
+      portrait.lines = pic.lines
+      this.buildCard()
+      this.redraw()
+    } catch (err) {
+      console.error('feed: portrait failed', err)
+    } finally {
+      this.portraitLoading = false
+    }
+  }
+
+  /**
+   * Before each paint: the rows held here name bank slots, and the bank may
+   * have freed them for other pictures. The lookup is what keeps them, and a
+   * portrait that is gone is fetched again rather than drawn from stale rows.
+   */
+  private refreshPortrait(): void {
+    const pics = this.env.pics
+    const portrait = this.portrait
+    const src = this.profile?.picture
+    if (!pics || !portrait || !src) return
+    const pic = pics.picture(src, portrait.cols, PFP_ROWS)
+    if (pic?.lines === portrait.lines) return
+    portrait.lines = pic?.lines
+    this.buildCard()
+    if (!pic) void this.loadPortrait(src, portrait)
   }
 
   private async fetchProfile(who: string): Promise<FeedProfile | null> {
@@ -612,7 +700,7 @@ class FeedScreen implements Screen {
   private buildCard(): void {
     const p = this.profile
     this.cardWidth = this.bodyWidth
-    this.profileRows = p ? bioLines(p, p.joined ? when(p.joined) : undefined, this.bodyWidth) : []
+    this.profileRows = p ? bioLines(p, p.joined ? when(p.joined) : undefined, this.bodyWidth, this.portrait) : []
     this.listKey = ''
   }
 
@@ -1046,6 +1134,7 @@ class FeedScreen implements Screen {
   /** The member card, single rule at DIM, scrolling with the column. */
   private drawCard(term: Grid, clip: Rect): void {
     if (!this.cardRows) return
+    this.refreshPortrait()
     const r: Rect = { x: clip.x, y: clip.y - this.scroll, w: clip.w, h: this.cardRows }
     // The gap under the card is drawn as a rule: this is where the member's words stop.
     const rule = r.y + r.h
@@ -1403,6 +1492,17 @@ class FeedScreen implements Screen {
     // The status rule is outside the box: repainted before the push snapshots the grid.
     this.drawChrome()
 
+    const width = Math.max(24, Math.min(56, this.pane.w - 10))
+    const portrait = portraitFits(width) ? this.portraitOf(profile) : undefined
+    if (portrait) {
+      try {
+        portrait.lines = (await this.env.pics!.load(profile.picture!, profile.picture!, portrait.cols, PFP_ROWS)).lines
+      } catch (err) {
+        console.error('feed: portrait failed', err)
+      }
+      if (this.closed) return
+    }
+
     const site = profile.website?.url
     this.modal = 'bio'
     const popup = new TextPopup({
@@ -1413,8 +1513,7 @@ class FeedScreen implements Screen {
           { text: ` ${b} `, inverse: true, attr: DIM },
         ])
         : undefined,
-      lines: bioLines(profile, profile.joined ? when(profile.joined) : undefined,
-        Math.max(24, Math.min(56, this.pane.w - 10))),
+      lines: bioLines(profile, profile.joined ? when(profile.joined) : undefined, width, portrait),
       hint: site ? POPUP_HINT('L Link', 'ESC Close') : POPUP_HINT('ESC Close'),
       // L copies the site and the box stays; the box reports it in its own rule.
       action: site

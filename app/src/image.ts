@@ -40,8 +40,9 @@ export interface ChatPictures {
    * height a 4:3 photograph fills at this width, which is the common case, so
    * most pictures fill their slot exactly and wider ones leave the tail blank.
    * Read from the host because it depends on the font, which F1 can change.
+   * `ratio` is width over height; 4:3 unless given.
    */
-  slot(maxCols: number, maxRows: number): number
+  slot(maxCols: number, maxRows: number, ratio?: number): number
   /**
    * Declare the pictures the screen is about to draw.
    *
@@ -391,8 +392,8 @@ export function pictureHost(term: TermMetrics): ChatPictures {
       return have ? touch(key, have).pic : undefined
     },
 
-    slot(maxCols, maxRows) {
-      return fitImage(4, 3, dotAspect(metricsOf(term)), maxCols, maxRows).rows
+    slot(maxCols, maxRows, ratio = 4 / 3) {
+      return fitImage(ratio, 1, dotAspect(metricsOf(term)), maxCols, maxRows).rows
     },
 
     ensure(srcs, maxCols, maxRows) {

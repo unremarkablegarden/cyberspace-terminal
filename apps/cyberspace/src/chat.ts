@@ -172,8 +172,10 @@ export interface Picture {
 export interface ChatPictures {
   /** The picture at this size, if it is rasterised. A lookup, never a fetch. */
   picture(src: string, maxCols: number, maxRows: number): Picture | undefined
-  /** Rows an attachment holds, whether or not its pixels have arrived. */
-  slot(maxCols: number, maxRows: number): number
+  /** Rows an attachment holds, whether or not its pixels have arrived. `ratio` is width over height, 4:3 unless given. */
+  slot(maxCols: number, maxRows: number, ratio?: number): number
+  /** Fetch and rasterise now. For a picture a screen cannot lay out until it has it. */
+  load(src: string | Uint8Array, key: string, maxCols: number, maxRows: number): Promise<Picture>
   /** The pictures on the pane: the ones worth loading and worth keeping. */
   ensure(srcs: Iterable<string | undefined>, maxCols: number, maxRows: number): void
   /** Whether this source could not be read. Still loading is not failure. */

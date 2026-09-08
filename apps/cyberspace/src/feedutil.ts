@@ -64,6 +64,8 @@ export interface FeedProfile {
   guilds?: string[]
   /** ADMIN, MOD, SUPPORTER, HACKER, resolved here. */
   badges: string[]
+  /** The square profile picture. Supporters and admins only, as on the site. */
+  picture?: string
 }
 
 export interface PostDraft {
@@ -129,6 +131,7 @@ export interface ApiUser {
   isModerator?: boolean
   isSupporter?: boolean
   isHacker?: boolean
+  profilePictureUrl?: string
 }
 
 /** What the reader has asked not to see. Read once when the program starts. */
@@ -222,6 +225,12 @@ export function toProfile(user: ApiUser, fallback: string): FeedProfile {
       ? { text: user.websiteName || user.websiteUrl, url: user.websiteUrl }
       : undefined,
     badges,
+    // The site shows the picture for supporters, subscribers and admins. The
+    // API strips isSubscriber from another member's profile, so a subscriber
+    // who is not also a supporter shows none here.
+    picture: user.profilePictureUrl && (user.isSupporter || user.isSiteAdmin)
+      ? user.profilePictureUrl
+      : undefined,
   }
 }
 
