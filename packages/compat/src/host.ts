@@ -8,8 +8,8 @@
 
 import { dec, type Proc } from '@cyberspace/kernel'
 import {
-  Surface, parseKeys, InputLine, TextBuffer,
-  type KeyInput, type InputOptions, type BufferOptions,
+  Surface, parseKeys, InputLine, TextBuffer, fitImage, halftone as rasterise, distinctCells,
+  type KeyInput, type InputOptions, type BufferOptions, type CellMetrics, type Luma, type Rect,
 } from '@cyberspace/tui'
 import {
   CellGrid, NORMAL, BRIGHT, BOLD, DIM, MUTED, FAINT, ALT, ITALIC, BG,
@@ -96,7 +96,73 @@ export interface CompatDeps {
   image?(url: string): Promise<Uint8Array>
   /** Put text on the system clipboard, for the input widgets' copy and cut. */
   copy?(text: string): void
+  /**
+   * The faceplate's picture bank, one holder per run. A block is drawn by
+   * writing its handles as text; the faceplate resolves them to bitmaps. The
+   * grid's own gfx plane does not cross the pty, so this is the only way a
+   * program's pixels reach the screen. Absent when the host has no decoder.
+   */
+  pictures?: () => CompatPictures
   version?: string
+}
+
+/**
+ * Rasterising and handle allocation stay with the program; the host lends a
+ * range of handles and stores the bitmaps assigned to them. Sending a bitmap
+ * before the paint that uses it is enough: both travel the same ordered path.
+ */
+export interface CompatPictures {
+  metrics(): CellMetrics
+  /** The handles this run may assign. Undefined when the host has none to spare. */
+  range(count: number): { base: number; count: number } | undefined
+  set(codes: number[], bits: Uint16Array[]): void
+  release(): void
+}
+
+/** Handles asked of the host per run: a 74x19 frame beside 26 fully distinct 17x6 thumbnails. */
+export const PICT_RANGE = 4096
+
+/**
+ * Allocates handles for blocks inside the run's range, synchronously, so a
+ * block draws on the call that asks for it as the original's did. Blocks are
+ * evicted least recently drawn first when the range is full, and a block
+ * larger than the whole range never draws.
+ */
+class BlockBank {
+  private free: number[] = []
+  /** Blocks holding handles, least recently drawn first. */
+  private held = new Map<object, number[]>()
+
+  constructor(private pictures: CompatPictures, range: { base: number; count: number }) {
+    for (let i = range.count - 1; i >= 0; i--) this.free.push(range.base + i)
+  }
+
+  /** Handles for this block's bitmaps, or undefined when it cannot fit. */
+  codes(block: object, distinct: Uint16Array[]): number[] | undefined {
+    const have = this.held.get(block)
+    if (have) {
+      this.held.delete(block)
+      this.held.set(block, have)
+      return have
+    }
+    while (this.free.length < distinct.length) {
+      const oldest = this.held.keys().next()
+      if (oldest.done) return undefined
+      this.free.push(...this.held.get(oldest.value)!)
+      this.held.delete(oldest.value)
+    }
+    const codes = distinct.map(() => this.free.pop()!)
+    this.held.set(block, codes)
+    this.pictures.set(codes, distinct)
+    return codes
+  }
+}
+
+/** The original terminal's Halftone: sized in cells, drawn by the block itself. */
+interface Halftone {
+  cols: number
+  rows: number
+  draw(term: CellGrid, x: number, y: number, attr?: number, clip?: Rect): void
 }
 
 interface CompatScreen {
@@ -120,7 +186,12 @@ export function runGridProgram(deps: CompatDeps): (p: Proc, program: UserProgram
     const cols = p.tty?.cols ?? (Number(p.env.COLUMNS) || 80)
     const rows = p.tty?.rows ?? (Number(p.env.LINES) || 25)
 
-    const grid = new CellGrid({ cellW: 8, cellH: 16 }, cols, rows)
+    const pictures = deps.pictures?.()
+    // The face's own cell size, so DotCanvas and fitImage compute the aspect
+    // the pictures are rasterised at. 8x16 when there is no face to ask.
+    const m: CellMetrics = pictures?.metrics() ?? { cellW: 8, cellH: 16, advance: 9 }
+    const grid = new CellGrid({ cellW: m.cellW, cellH: m.cellH }, cols, rows)
+    ;(grid as { stretch?: number }).stretch = m.stretch
     const surface = new Surface(cols, rows)
     const screens: CompatScreen[] = []
     const ac = new AbortController()
@@ -231,8 +302,38 @@ export function runGridProgram(deps: CompatDeps): (p: Proc, program: UserProgram
       constructor(o: BufferOptions = {}) { super({ clipboard: clip, ...o }) }
     }
 
+    // The original's halftone took the Term and returned a block that draws
+    // itself. The term argument is accepted and ignored: the block draws on
+    // whichever grid it is handed.
+    const range = pictures?.range(PICT_RANGE)
+    const bank = pictures && range ? new BlockBank(pictures, range) : undefined
+    const halftone = (_term: unknown, luma: Luma, cols: number, rows: number): Halftone => {
+      if (!bank) throw new Error('NO CARRIER')
+      const raster = rasterise(m, luma, cols, rows)
+      const { distinct, cell } = distinctCells(raster)
+      const block = {
+        cols: raster.cols,
+        rows: raster.rows,
+        draw(term: CellGrid, x: number, y: number, attr = NORMAL, clip?: Rect) {
+          const codes = bank.codes(block, distinct)
+          if (!codes) return
+          for (let yy = 0; yy < raster.rows; yy++) {
+            for (let xx = 0; xx < raster.cols; xx++) {
+              if (!inside(clip, x + xx, y + yy)) continue
+              const n = cell[yy * raster.cols + xx]!
+              term.put(x + xx, y + yy, n < 0 ? 32 : codes[n]!, attr)
+            }
+          }
+        },
+      }
+      return block
+    }
+
     const ctx = {
-      tui: { ...box, DotCanvas, drawEdges, teapot, InputLine: CtxInputLine, TextBuffer: CtxTextBuffer },
+      tui: {
+        ...box, DotCanvas, drawEdges, teapot, fitImage, halftone,
+        InputLine: CtxInputLine, TextBuffer: CtxTextBuffer,
+      },
       copy: clip,
       attr: ATTR,
       gfx: {
@@ -366,6 +467,7 @@ export function runGridProgram(deps: CompatDeps): (p: Proc, program: UserProgram
       return 1
     } finally {
       clearInterval(ticker)
+      pictures?.release()
       pumping = false
       p.stdin.interrupt?.()
       leaveScreen()

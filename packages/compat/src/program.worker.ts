@@ -10,6 +10,7 @@
 
 import type { Proc } from '@cyberspace/kernel'
 import type { Source, Sink } from '@cyberspace/kernel'
+import type { CellMetrics } from '@cyberspace/tui'
 import {
   runGridProgram, importDefault, asGridProgram, whereInSource, type CompatDeps,
 } from './host.js'
@@ -27,6 +28,10 @@ export interface RunMessage {
   username?: string
   /** Which brokered capabilities the host wired, so the worker offers only those. */
   caps: { api: boolean; feed: boolean; image: boolean }
+  /** The face's cell metrics; present when the page has a picture bank. */
+  metrics?: CellMetrics
+  /** Handles this run may assign bitmaps to. */
+  pict?: { base: number; count: number }
 }
 
 /** Main -> worker, after the run has started. */
@@ -46,6 +51,7 @@ export type WorkerMessage =
   | { t: 'tty'; op: 'setRaw' | 'setCooked' | 'setPaced'; arg?: boolean }
   | { t: 'snd'; method: string; args: unknown[] }
   | { t: 'copy'; text: string }
+  | { t: 'pict'; codes: number[]; bits: Uint16Array[] }
   | { t: 'cap'; id: number; kind: 'api.get' | 'api.post' | 'api.del' | 'feed.page' | 'feed.profile' | 'image'; args: unknown[] }
   | { t: 'exit'; code: number }
   | { t: 'fault'; message: string }
@@ -159,6 +165,17 @@ function brokerDeps(msg: RunMessage): CompatDeps {
   }
   if (msg.caps.image) {
     deps.image = url => call('image', [url]) as Promise<Uint8Array>
+  }
+  const metrics = msg.metrics
+  if (metrics) {
+    deps.pictures = () => ({
+      metrics: () => metrics,
+      // Reserved by the page at spawn, so the count asked here is already spent.
+      range: () => msg.pict,
+      set: (codes, bits) => post({ t: 'pict', codes, bits }),
+      // The range is the page's; it releases it when the run ends.
+      release: () => {},
+    })
   }
   return deps
 }

@@ -6,7 +6,7 @@ import { Kernel, mountAll, type Program } from '@cyberspace/kernel'
 import { coreutils } from '@cyberspace/coreutils'
 import { shellMain } from '@cyberspace/shell'
 import {
-  type ApiClient, circProgram, cmailProgram, cyberspacePrograms, registryPrograms,
+  type ApiClient, circProgram, cmailProgram, feedProgram, cyberspacePrograms, registryPrograms,
   mountPages, umountPages, syncHome, syncedPaths, syncProgram, type CsHooks, type HomeKey,
 } from '@cyberspace/apps'
 import { jsFileHandler } from '@cyberspace/compat'
@@ -67,10 +67,12 @@ function registerPrograms(kernel: Kernel, { api, homeKey, snd, host, pictures, s
     tick: () => snd.tick(),
     beep: (hz?: number, dur?: number) => snd.beep(hz, dur),
     blip: (hz?: number, dur?: number, jitter?: number) => snd.blip(hz, dur, jitter),
+    seek: (count?: number) => snd.seek(count),
   }
   kernel.registerAll(cyberspacePrograms(api, hooks, chatSnd))
   kernel.register('circ', circProgram(api, RTDB_URL, chatSnd, pictures))
   kernel.register('cmail', cmailProgram(api, RTDB_URL, chatSnd, pictures))
+  kernel.register('feed', feedProgram(api, chatSnd, pictures))
   if (pictures) kernel.register('view', viewProgram(pictures))
   if (saveFile) kernel.register('download', downloadProgram(saveFile))
   kernel.registerAll(registryPrograms(api, chatSnd))
@@ -81,6 +83,7 @@ function registerPrograms(kernel: Kernel, { api, homeKey, snd, host, pictures, s
   kernel.fileHandlers.push(jsFileHandler({
     username: () => api.username ?? ENV.USER,
     version: VERSION,
+    pictures,
     api: {
       get: path => api.get(path),
       post: (path, body) => api.post(path, body),

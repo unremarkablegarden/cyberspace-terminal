@@ -21,3 +21,46 @@ export function isPictureCell(ch: string | number | undefined): boolean {
   const code = typeof ch === 'number' ? ch : ch.codePointAt(0)
   return code !== undefined && code >= PICT_LO && code <= PICT_HI
 }
+
+/** A rasterised block as its distinct bitmaps and which one each cell uses (-1 unlit). */
+export interface DistinctCells {
+  distinct: Uint16Array[]
+  cell: Int32Array
+}
+
+/**
+ * Distinct bitmaps first, so the bank is asked once and either holds the whole
+ * block or none of it.
+ */
+export function distinctCells(block: { cols: number; rows: number; cells: (Uint16Array | undefined)[] }): DistinctCells {
+  const distinct: Uint16Array[] = []
+  const nth = new Map<string, number>()
+  const cell = new Int32Array(block.cols * block.rows).fill(-1)
+  for (let i = 0; i < cell.length; i++) {
+    const bits = block.cells[i]
+    if (!bits) continue
+    const key = String.fromCharCode(...bits)
+    let n = nth.get(key)
+    if (n === undefined) {
+      n = distinct.length
+      distinct.push(bits)
+      nth.set(key, n)
+    }
+    cell[i] = n
+  }
+  return { distinct, cell }
+}
+
+/** Rows of handles for a block, `' '` where the cell is unlit. */
+export function handleLines(cols: number, rows: number, cell: Int32Array, codes: number[]): string[] {
+  const lines: string[] = []
+  for (let y = 0; y < rows; y++) {
+    let line = ''
+    for (let x = 0; x < cols; x++) {
+      const n = cell[y * cols + x]!
+      line += n < 0 ? ' ' : String.fromCharCode(codes[n]!)
+    }
+    lines.push(line)
+  }
+  return lines
+}

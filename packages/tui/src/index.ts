@@ -31,7 +31,7 @@ export type { FormOptions, FormField, FormError } from './form.js'
 export type { PromptOptions } from './prompt.js'
 export { TunePopup } from './tune.js'
 export type { TuneOptions, TuneSpec, Knob, KnobGroup } from './tune.js'
-export { PICT_LO, PICT_HI, isPictureCell } from './pict.js'
+export { PICT_LO, PICT_HI, isPictureCell, distinctCells, handleLines, type DistinctCells } from './pict.js'
 export {
   fitImage, dotAspect, halftone, halftoneFit,
   RASTERS, DEFAULT_RASTER, resample, tone, unsharp, sampleAspect,
@@ -39,6 +39,8 @@ export {
 export type {
   CellMetrics, Halftone, Luma, HalftoneOptions, RasterOptions, Raster, RasterName,
 } from './image.js'
+export { EditorPopup } from './editor.js'
+export type { EditorOptions } from './editor.js'
 export { Pager } from './pager.js'
 export type { PagerOptions } from './pager.js'
 export { wrap } from './wrap.js'

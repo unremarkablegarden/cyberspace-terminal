@@ -11,7 +11,8 @@
 // decoder supplies none of this and callers print [IMG] instead.
 
 import {
-  PICT_LO, PICT_HI, halftoneFit, fitImage, dotAspect, type CellMetrics, type Luma,
+  PICT_LO, PICT_HI, halftoneFit, fitImage, dotAspect, distinctCells, handleLines,
+  type CellMetrics, type Luma,
 } from '@cyberspace/tui'
 import type { StandbyArt } from '@cyberspace/crt/effects'
 
@@ -71,6 +72,17 @@ export interface ChatPictures {
    * from a source other than a URL can be halftoned.
    */
   fromLuma(luma: Luma, key: string, maxCols: number, maxRows: number): Picture
+  /**
+   * A range of handles for a program that allocates its own, such as a compat
+   * program in its worker. The program decides which bitmap each handle means
+   * and sends it with set(); a handle can be reassigned. One range per host,
+   * freed by release(). Undefined when the bank cannot spare the range.
+   */
+  range(count: number): { base: number; count: number } | undefined
+  /** Assign bitmaps to handles inside this host's range. Others are ignored. */
+  set(codes: number[], bits: Uint16Array[]): void
+  /** Cell metrics of the face, for sizing a grid to match the pictures. */
+  metrics(): CellMetrics
   /** Release every bank slot this holder took. */
   release(): void
 }
@@ -106,10 +118,45 @@ class GlyphBank {
   private free: number[] = []
   /** Slots never yet used. Below this, a slot is either live or on `free`. */
   private next = 0
+  /**
+   * Ranges handed out whole, taken from the top of the slot space downwards so
+   * they never meet the shared slots growing up from the bottom. Each holds
+   * bitmaps the owner assigns directly, outside the dedupe and the refcounts.
+   */
+  private ranges: { base: number; count: number }[] = []
 
   get(code: number): Uint16Array | undefined {
     const i = code - PICT_LO
     return i >= 0 && i < SLOTS ? this.bits[i] : undefined
+  }
+
+  /** Slots above which a range is live; the shared allocator stops here. */
+  private get ceiling(): number {
+    let low = SLOTS
+    for (const r of this.ranges) low = Math.min(low, r.base - PICT_LO)
+    return low
+  }
+
+  reserve(count: number): { base: number; count: number } | undefined {
+    const end = this.ceiling
+    const start = end - count
+    if (start < this.next) return undefined
+    const range = { base: PICT_LO + start, count }
+    this.ranges.push(range)
+    return range
+  }
+
+  unreserve(range: { base: number; count: number }): void {
+    const i = this.ranges.indexOf(range)
+    if (i < 0) return
+    this.ranges.splice(i, 1)
+    this.bits.fill(undefined, range.base - PICT_LO, range.base - PICT_LO + range.count)
+  }
+
+  /** Assign a reserved slot. The range is the caller's; no bookkeeping here. */
+  set(code: number, bits: Uint16Array): void {
+    const i = code - PICT_LO
+    if (i >= 0 && i < SLOTS) this.bits[i] = bits
   }
 
   open(): Holder {
@@ -128,7 +175,7 @@ class GlyphBank {
       const key = String.fromCharCode(...bitmap)
       let code = this.byKey.get(key)
       if (code === undefined) {
-        const slot = this.free.length ? this.free.pop()! : this.next < SLOTS ? this.next++ : undefined
+        const slot = this.free.length ? this.free.pop()! : this.next < this.ceiling ? this.next++ : undefined
         if (slot === undefined) {
           this.release(codes)
           return undefined
@@ -260,37 +307,10 @@ function toPicture(
   holder: Holder, m: CellMetrics, luma: Luma, maxCols: number, maxRows: number,
 ): Held | undefined {
   const block = halftoneFit(m, luma, maxCols, maxRows)
-  // Distinct bitmaps first, so the bank is asked once and either holds the whole
-  // picture or none of it.
-  const distinct: Uint16Array[] = []
-  const nth = new Map<string, number>()
-  const cell = new Int32Array(block.cols * block.rows).fill(-1)
-  for (let i = 0; i < cell.length; i++) {
-    const bits = block.cells[i]
-    if (!bits) continue
-    const key = String.fromCharCode(...bits)
-    let n = nth.get(key)
-    if (n === undefined) {
-      n = distinct.length
-      distinct.push(bits)
-      nth.set(key, n)
-    }
-    cell[i] = n
-  }
-
+  const { distinct, cell } = distinctCells(block)
   const codes = holder.alloc(distinct)
   if (!codes) return undefined
-
-  const lines: string[] = []
-  for (let y = 0; y < block.rows; y++) {
-    let line = ''
-    for (let x = 0; x < block.cols; x++) {
-      const n = cell[y * block.cols + x]!
-      line += n < 0 ? ' ' : String.fromCharCode(codes[n]!)
-    }
-    lines.push(line)
-  }
-  return { pic: { cols: block.cols, rows: block.rows, lines }, codes }
+  return { pic: { cols: block.cols, rows: block.rows, lines: handleLines(block.cols, block.rows, cell, codes) }, codes }
 }
 
 /**
@@ -316,6 +336,7 @@ export function pictureHost(term: TermMetrics): ChatPictures {
   const wanted = new Set<string>()
   const listeners = new Set<() => void>()
   const holder = BANK.open()
+  let range: { base: number; count: number } | undefined
 
   const announce = (): void => { for (const cb of listeners) cb() }
   const keyOf = (m: CellMetrics, src: string, c: number, r: number): string =>
@@ -410,6 +431,25 @@ export function pictureHost(term: TermMetrics): ChatPictures {
       return pic
     },
 
+    range(count) {
+      if (range) BANK.unreserve(range)
+      range = BANK.reserve(count)
+      return range
+    },
+
+    set(codes, bits) {
+      if (!range) return
+      for (let i = 0; i < codes.length; i++) {
+        const code = codes[i]!
+        const b = bits[i]
+        if (b && code >= range.base && code < range.base + range.count) BANK.set(code, b)
+      }
+    },
+
+    metrics() {
+      return metricsOf(term)
+    },
+
     onLoad(cb) {
       listeners.add(cb)
       return () => { listeners.delete(cb) }
@@ -417,6 +457,8 @@ export function pictureHost(term: TermMetrics): ChatPictures {
 
     release() {
       done.clear()
+      if (range) BANK.unreserve(range)
+      range = undefined
       loading.clear()
       unreadable.clear()
       wanted.clear()

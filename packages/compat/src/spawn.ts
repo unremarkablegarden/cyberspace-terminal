@@ -10,7 +10,7 @@
 // stays behind the host's whitelist, and the token is never on this channel.
 
 import { dec, type Proc, type Program } from '@cyberspace/kernel'
-import type { CompatDeps } from './host.js'
+import { PICT_RANGE, type CompatDeps, type CompatPictures } from './host.js'
 import type { MainMessage, RunMessage, WorkerMessage } from './program.worker.js'
 
 /** A /v1/ path, or throws. Repeated here because a worker can forge the call. */
@@ -52,7 +52,10 @@ export function jsFileHandler(deps: CompatDeps): (path: string, data: Uint8Array
   }
 }
 
-async function serve(deps: CompatDeps, kind: Extract<WorkerMessage, { t: 'cap' }>['kind'], args: unknown[]): Promise<unknown> {
+async function serve(
+  deps: CompatDeps, pictures: CompatPictures | undefined,
+  kind: Extract<WorkerMessage, { t: 'cap' }>['kind'], args: unknown[],
+): Promise<unknown> {
   switch (kind) {
     case 'api.get': return deps.api ? deps.api.get(v1(args[0])) : Promise.reject(new Error('NO CARRIER'))
     case 'api.post': return deps.api ? deps.api.post(v1(args[0]), args[1]) : Promise.reject(new Error('NO CARRIER'))
@@ -63,8 +66,15 @@ async function serve(deps: CompatDeps, kind: Extract<WorkerMessage, { t: 'cap' }
   }
 }
 
+/** Bitmaps from a message: one Uint16Array per handle, nothing else. */
+function bitmaps(v: unknown): Uint16Array[] {
+  if (!Array.isArray(v)) return []
+  return v.filter((b): b is Uint16Array => b instanceof Uint16Array)
+}
+
 function runInWorker(p: Proc, source: string, deps: CompatDeps): Promise<number> {
   const worker = new Worker(new URL('./program.worker.ts', import.meta.url), { type: 'module' })
+  const pictures = deps.pictures?.()
 
   return new Promise<number>(resolve => {
     let settled = false
@@ -73,6 +83,7 @@ function runInWorker(p: Proc, source: string, deps: CompatDeps): Promise<number>
       settled = true
       p.signal.removeEventListener('abort', onAbort)
       worker.terminate()
+      pictures?.release()
       // Unblock the keyboard pump's pending read (installs a fresh readers pipe).
       p.stdin.interrupt?.()
       resolve(code)
@@ -100,8 +111,9 @@ function runInWorker(p: Proc, source: string, deps: CompatDeps): Promise<number>
           return
         }
         case 'copy': p.tty?.copy(m.text); return
+        case 'pict': pictures?.set(m.codes, bitmaps(m.bits)); return
         case 'cap':
-          serve(deps, m.kind, m.args).then(
+          serve(deps, pictures, m.kind, m.args).then(
             value => worker.postMessage({ t: 'cap-result', id: m.id, ok: true, value } satisfies MainMessage),
             (err: unknown) => worker.postMessage({ t: 'cap-result', id: m.id, ok: false, error: (err as Error)?.message ?? String(err) } satisfies MainMessage),
           )
@@ -138,6 +150,8 @@ function runInWorker(p: Proc, source: string, deps: CompatDeps): Promise<number>
       version: deps.version,
       username: deps.username?.(),
       caps: { api: !!deps.api, feed: !!deps.feed, image: !!deps.image },
+      metrics: pictures?.metrics(),
+      pict: pictures?.range(PICT_RANGE),
     }
     worker.postMessage(msg)
   })
