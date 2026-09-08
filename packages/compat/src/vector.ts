@@ -1,176 +1,36 @@
-// A vector display drawn into the character grid.
-//
-// Braille (U+2800-28FF) covers all 256 combinations of a 2x4 dot matrix, and
-// Spleen includes every one. Addressing an 80x25 text grid through Braille
-// therefore yields a 160x100 monochrome bitmap on the same canvas and
-// rasteriser, with no second canvas and no WebGL.
-//
-// Integer arithmetic throughout: a wireframe is a list of line segments and a
-// rotation is four multiplies, so there is no matrix or camera library here.
+// The teapot demo and the Term-facing Braille canvas handed to published
+// programs. The bitmap and projection maths live in @cyberspace/tui/vector;
+// this file keeps the (term, cols, rows) constructor the original programs
+// call, building the face metrics from the Term they pass.
+
+import { DotCanvas as TuiDotCanvas } from '@cyberspace/tui'
+import type { CellMetrics } from '@cyberspace/tui'
+
+export { drawEdges, rotate, project } from '@cyberspace/tui'
+export type { View, P3, Edge } from '@cyberspace/tui'
+import type { P3, Edge } from '@cyberspace/tui'
 
 interface Term {
   cols: number
   rows: number
   advance: number
-  font: { cellH: number }
-  put(x: number, y: number, ch: string | number, attr?: number, inv?: number): void
+  font: { cellW?: number; cellH: number }
+  stretch?: number
 }
 
-/** A point, as a plain tuple to limit allocation. */
-export type P3 = [number, number, number]
-export type Edge = [P3, P3]
-
-/**
- * Width-to-height ratio of a Braille dot in the font currently loaded.
- *
- * A dot is half a cell wide and a quarter of one tall, so the 8x16 face
- * (9-dot advance) gives 4.5 x 4 device pixels and the 12x24 face (13) gives
- * 6.5 x 6. Neither is square and they differ, so this is measured from the live
- * Term; a constant fitted to one face draws ellipses in the other.
- */
-function dotAspect(term: Term): number {
-  const dotW = term.advance / 2
-  const dotH = term.font.cellH / 4
-  // The face stretches every source pixel; a Term without a face reports none.
-  return dotH / dotW * ((term as { stretch?: number }).stretch ?? 1)
+function metricsOf(term: Term): CellMetrics {
+  return {
+    cellW: term.font.cellW ?? term.advance - 1,
+    cellH: term.font.cellH,
+    advance: term.advance,
+    stretch: term.stretch,
+  }
 }
 
-/**
- * Maps dot position to bit, because Braille numbering is not raster order:
- * dots 1-3 run down the left column and 4-6 down the right, with 7-8 added
- * beneath later for 8-dot computer Braille. The bottom row is therefore bits 6
- * and 7 while the rest are column-major.
- */
-const DOT_BIT = [
-  [0, 3],  // row 0: dots 1, 4
-  [1, 4],  // row 1: dots 2, 5
-  [2, 5],  // row 2: dots 3, 6
-  [6, 7],  // row 3: dots 7, 8
-]
-
-/** A 1-bit bitmap backed by Braille cells. */
-export class DotCanvas {
-  readonly cols: number
-  readonly rows: number
-  /** Size in dots, across and down. */
-  readonly w: number
-  readonly h: number
-  /** x correction for this face's dot shape. See dotAspect. */
-  readonly aspect: number
-
-  private cells: Uint8Array
-
-  /**
-   * Sized from the Term it will be drawn to, so changing the font rescales the
-   * picture rather than distorting it.
-   *
-   * cols and rows default to the whole grid. Pass them for a canvas covering
-   * part of it, such as a picture inside a box. aspect comes from the Term
-   * either way, being a property of the font rather than of the area used.
-   */
+/** The tui canvas, sized and aspected from a Term as the original API was. */
+export class DotCanvas extends TuiDotCanvas {
   constructor(term: Term, cols = term.cols, rows = term.rows) {
-    this.cols = Math.max(1, cols | 0)
-    this.rows = Math.max(1, rows | 0)
-    this.w = this.cols * 2
-    this.h = this.rows * 4
-    this.aspect = dotAspect(term)
-    this.cells = new Uint8Array(this.cols * this.rows)
-  }
-
-  clear() {
-    this.cells.fill(0)
-  }
-
-  plot(x: number, y: number) {
-    x |= 0
-    y |= 0
-    if (x < 0 || y < 0 || x >= this.w || y >= this.h) return
-    const bit = DOT_BIT[y & 3]![x & 1]!
-    this.cells[(y >> 2) * this.cols + (x >> 1)]! |= 1 << bit
-  }
-
-  /** Draw one line, Bresenham. Every picture here is built from these. */
-  line(x0: number, y0: number, x1: number, y1: number) {
-    x0 |= 0; y0 |= 0; x1 |= 0; y1 |= 0
-    const dx = Math.abs(x1 - x0), sx = x0 < x1 ? 1 : -1
-    const dy = -Math.abs(y1 - y0), sy = y0 < y1 ? 1 : -1
-    let err = dx + dy
-
-    // Guards against a line with both endpoints far off screen, which would
-    // otherwise iterate the whole distance plotting nothing.
-    let guard = this.w + this.h + Math.abs(dx) + Math.abs(dy)
-
-    for (;;) {
-      this.plot(x0, y0)
-      if ((x0 === x1 && y0 === y1) || guard-- <= 0) return
-      const e2 = 2 * err
-      if (e2 >= dy) { err += dy; x0 += sx }
-      if (e2 <= dx) { err += dx; y0 += sy }
-    }
-  }
-
-  /**
-   * Draw the bitmap onto the grid at ox, oy, leaving empty cells untouched.
-   *
-   * clip is taken structurally rather than as a tui Rect, so this file does not
-   * depend on the TUI layer above it for four numbers.
-   */
-  blit(
-    term: Term, attr = 0, ox = 0, oy = 0,
-    clip?: { x: number; y: number; w: number; h: number },
-  ) {
-    for (let cy = 0; cy < this.rows; cy++) {
-      for (let cx = 0; cx < this.cols; cx++) {
-        const bits = this.cells[cy * this.cols + cx]!
-        if (!bits) continue
-        const x = ox + cx, y = oy + cy
-        if (clip && (x < clip.x || y < clip.y || x >= clip.x + clip.w || y >= clip.y + clip.h)) {
-          continue
-        }
-        term.put(x, y, 0x2800 + bits, attr)
-      }
-    }
-  }
-}
-
-export interface View {
-  /** Turntable angle, radians. */
-  yaw: number
-  /** Tilt towards the viewer, radians, so part of the lid is visible. */
-  pitch: number
-  /** Dots per model unit. */
-  scale: number
-  /** Centre of projection, in dots. */
-  ox: number
-  oy: number
-  /**
-   * Distance to the eye, in model units. Large values are nearly orthographic;
-   * around 6 gives mild convergence without the model intersecting the near plane.
-   */
-  focal: number
-}
-
-/** Rotate the model, project it and draw the segments. */
-export function drawEdges(dc: DotCanvas, edges: Edge[], v: View) {
-  const cy = Math.cos(v.yaw), sy = Math.sin(v.yaw)
-  const cp = Math.cos(v.pitch), sp = Math.sin(v.pitch)
-  const sx = v.scale * dc.aspect
-
-  const project = (p: P3): [number, number] => {
-    // Y (turntable) then X (tilt), inlined rather than composed as a matrix:
-    // six multiplies in total.
-    const x = p[0] * cy + p[2] * sy
-    const zy = p[2] * cy - p[0] * sy
-    const y = p[1] * cp - zy * sp
-    const z = p[1] * sp + zy * cp
-    const s = v.focal / (v.focal + z)
-    return [v.ox + x * sx * s, v.oy - y * v.scale * s]
-  }
-
-  for (const [a, b] of edges) {
-    const A = project(a)
-    const B = project(b)
-    dc.line(A[0], A[1], B[0], B[1])
+    super(metricsOf(term), cols, rows)
   }
 }
 

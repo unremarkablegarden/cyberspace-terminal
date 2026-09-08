@@ -6,12 +6,12 @@ import { Kernel, mountAll, type Program } from '@cyberspace/kernel'
 import { coreutils } from '@cyberspace/coreutils'
 import { shellMain } from '@cyberspace/shell'
 import {
-  type ApiClient, circProgram, cmailProgram, feedProgram, cyberspacePrograms, registryPrograms,
+  type ApiClient, circProgram, cmailProgram, feedProgram, globeProgram, cyberspacePrograms, registryPrograms,
   mountPages, umountPages, syncHome, syncedPaths, syncProgram, type CsHooks, type HomeKey,
 } from '@cyberspace/apps'
 import { jsFileHandler } from '@cyberspace/compat'
 import type { Sound } from '@cyberspace/crt/audio'
-import type { ChatPictures } from './image'
+import { metricsOf, type ChatPictures, type TermMetrics } from './image'
 import { viewProgram } from './view'
 import { downloadProgram, type SaveFile } from './download'
 import { OpfsHome } from './opfs'
@@ -43,6 +43,8 @@ export interface MachineDeps {
    * in text rather than drawn. See image.ts.
    */
   pictures?: () => ChatPictures
+  /** The face, for programs that draw dots and need its cell shape. See image.ts metricsOf. */
+  face?: TermMetrics
   /** The host's file chooser, for upload(1). Absent on a host without one. */
   pickFile?: (accept: string) => Promise<File | null>
   /** The host's file save, for download(1). Absent on a host without one. */
@@ -52,7 +54,7 @@ export interface MachineDeps {
 }
 
 /** Register every program. A later registration replaces an earlier one of the same name. */
-function registerPrograms(kernel: Kernel, { api, homeKey, snd, host, pictures, saveFile }: MachineDeps, hooks: CsHooks): void {
+function registerPrograms(kernel: Kernel, { api, homeKey, snd, host, pictures, face, saveFile }: MachineDeps, hooks: CsHooks): void {
   kernel.registerAll(coreutils)
   kernel.register('sh', shellMain)
   kernel.register('changelog', changelog)
@@ -73,6 +75,15 @@ function registerPrograms(kernel: Kernel, { api, homeKey, snd, host, pictures, s
   kernel.register('circ', circProgram(api, RTDB_URL, chatSnd, pictures))
   kernel.register('cmail', cmailProgram(api, RTDB_URL, chatSnd, pictures))
   kernel.register('feed', feedProgram(api, chatSnd, pictures))
+  if (face && pictures) {
+    const world = () => fetch('/world.bin').then(r => {
+      if (!r.ok) throw new Error(String(r.status))
+      return r.arrayBuffer()
+    }).then(b => new Uint8Array(b))
+    const metrics = () => metricsOf(face)
+    const tiny = () => face.fallback ?? undefined
+    kernel.register('globe', globeProgram(api, { world, metrics, tiny, pixels: pictures }, chatSnd))
+  }
   if (pictures) kernel.register('view', viewProgram(pictures))
   if (saveFile) kernel.register('download', downloadProgram(saveFile))
   kernel.registerAll(registryPrograms(api, chatSnd))

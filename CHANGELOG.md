@@ -198,3 +198,6 @@
     - `F`: find a member
     - State management
     - Profile pictures in the member card and bio
+- Config: PHOSPHOR `custom`, own hue/saturation/lightness
+- `edit`: opening screen revealed a line at a time
+- `globe`: Wireframe Earth with member pins

@@ -5,10 +5,10 @@
 // name sits in the top rule, the key legend as inverse keycaps in the bottom
 // rule, and the text between them.
 
-import { dec, type Proc, type Program, readText } from '@cyberspace/kernel'
+import { dec, OSC_BLIP, type Proc, type Program, readText } from '@cyberspace/kernel'
 import {
-  Surface, ScreenStack, ConfirmPopup, PromptPopup, ENTER_ESC, TextBuffer,
-  drawBuffer, parseKeys, frame, label, cells, type Span, DIM, BOLD, BRIGHT,
+  Surface, ScreenStack, ConfirmPopup, PromptPopup, ENTER_ESC, TextBuffer, Reveal,
+  drawBuffer, parseKeys, frame, label, clear, cells, type Span, DIM, BOLD, BRIGHT,
 } from '@cyberspace/tui'
 import { fsp, resolve, strerror } from './util.js'
 
@@ -55,11 +55,21 @@ export const edit: Program = async p => {
   // '' = editing; 'exit' = the save-before-exit question is up.
   let asking = ''
 
+  // The opening screenful is released a line at a time, as circ prints its
+  // backlog, with the same blip per batch.
+  const print = new Reveal({ onTick: () => paint(), onBlip: () => tty.paint(OSC_BLIP) })
+
   const paint = (): void => {
     s.clear()
     const outer = { x: 0, y: 0, w: cols, h: rows }
+    const text = { x: 1, y: 1, w: cols - 2, h: rows - 2 }
     frame(s, outer)
-    drawBuffer(s, buf, { x: 1, y: 1, w: cols - 2, h: rows - 2 })
+    drawBuffer(s, buf, text)
+    // Rows not yet revealed are blanked after the draw rather than skipped in
+    // it, so drawBuffer keeps its caret and scroll bookkeeping unchanged.
+    if (print.count < text.h) {
+      clear(s, { ...text, y: text.y + print.count, h: text.h - print.count })
+    }
 
     // Top rule: the file name, and the live state on its right.
     const modified = buf.text !== saved
@@ -88,7 +98,8 @@ export const edit: Program = async p => {
       const left = notice || `Ln ${line}/${total}  Col ${col}`
       label(s, outer, left, { edge: 'bottom', align: 'left', max: cols - 2 - hintW })
       label(s, outer, HINT, { edge: 'bottom', align: 'right' })
-      s.showCursor = !saving
+      // Hidden while revealing, as the caret would sit on a blank row.
+      s.showCursor = !saving && !print.running
     }
     p.tty!.paint(s.render())
   }
@@ -170,6 +181,9 @@ export const edit: Program = async p => {
   s.invalidate()
 
   try {
+    // Folded at the text width, which drawBuffer sets on the first paint.
+    buf.setWidth(cols - 2)
+    print.start(Math.min(buf.rows().length, rows - 2))
     paint()
     for (;;) {
       const chunk = await p.stdin.read()
@@ -177,6 +191,8 @@ export const edit: Program = async p => {
       for (const k of parseKeys(dec.decode(chunk))) {
         if (quit) return 0
         if (saving) continue
+        // Any key finishes the reveal and then acts as it normally would.
+        print.finish()
         if (stack.active) {
           stack.key(k)
           p.tty.paint(s.render())
@@ -223,6 +239,7 @@ export const edit: Program = async p => {
       }
     }
   } finally {
+    print.stop()
     p.out('\x1b[?1049l\x1b[?25h')
     p.tty.setCooked()
   }

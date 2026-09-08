@@ -6,7 +6,8 @@
   "scripts": {
     "version:sync": "bun tools/version.ts",
     "version:check": "bun tools/version.ts --check",
-    "comments:check": "bun tools/comments.ts --check"
+    "comments:check": "bun tools/comments.ts --check",
+    "globe:bake": "bun tools/globe.ts"
   },
   "workspaces": [
     "packages/*",

@@ -11,6 +11,14 @@
 
 import { type Source, type Sink, bytes, dec, Pipe } from './pipe.js'
 
+/**
+ * A private OSC the host maps to the machine's blip, the sound circ makes per
+ * batch of revealed lines. A program that runs in the kernel and holds no sound
+ * service (edit, less) sends this through paint() instead. 777 is rxvt's
+ * extension number; a terminal without a handler drops the sequence.
+ */
+export const OSC_BLIP = '\x1b]777;blip\x1b\\'
+
 export interface TtyControl {
   setRaw(): void
   setCooked(): void

@@ -149,7 +149,7 @@ export function cyberspacePrograms(api: ApiClient, hooks?: CsHooks, snd: ChatSou
         }
         const form: FormPopup = new FormPopup({
           title: 'LOGIN',
-          fields: [{ label: 'Login:', value: p.argv[1] }, { label: 'Password:', mask: '*' }],
+          fields: [{ label: 'E-Mail:', value: p.argv[1] }, { label: 'Password:', mask: '*' }],
           shadow: true,
           pending: 'Authenticating...',
           // The upper half, so the log fits beneath.
@@ -177,7 +177,7 @@ export function cyberspacePrograms(api: ApiClient, hooks?: CsHooks, snd: ChatSou
       username = api.username ?? username
     } else {
       // No terminal (a script): the line-mode prompts.
-      const email = p.argv[1] ?? await readLine(p, 'login: ')
+      const email = p.argv[1] ?? await readLine(p, 'e-mail: ')
       if (!email) return 1
       const password = await readLine(p, 'Password: ', '*')
       if (password === null) return 1

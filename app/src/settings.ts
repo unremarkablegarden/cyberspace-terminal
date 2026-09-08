@@ -10,12 +10,13 @@ import { SettingsOverlay, type Setting } from '@cyberspace/crt/settings'
 import { KEY_PACK_NAMES } from '@cyberspace/crt/keypacks'
 import { CRT_CONTROLS } from '@cyberspace/crt/controls'
 import { SAVER_NAMES } from '@cyberspace/crt/saverdefs'
-import type { KeyInput } from '@cyberspace/tui'
+import type { KeyInput, KnobGroup } from '@cyberspace/tui'
 import { store } from './store'
 import { grid } from './grid'
 import {
-  SAVER_MINUTES, USER_PRESET, readAudio, saverPrefs, screenParams, setSaverPrefs,
-  userParams, writeAudio, writeUserParams,
+  CUSTOM_PHOSPHOR, CUSTOM_PHOSPHOR_DEFAULT, SAVER_MINUTES, USER_PRESET, customPhosphor,
+  phosphorTint, readAudio, saverPrefs, screenParams, setSaverPrefs, userParams, writeAudio,
+  writeCustomPhosphor, writeUserParams, type Hsl,
 } from './prefs'
 
 /** Volume steps offered by the AUDIO rows, and the gain each maps to. */
@@ -33,6 +34,26 @@ function setUserParam(screen: CrtScreen, key: string, value: number): void {
   // at once rather than after the operator selects that preset by hand.
   store.set('screen', USER_PRESET)
   screen.crt.setParams(params)
+}
+
+/** The three controls of the custom phosphor, one box like the user CRT preset's. */
+const PHOSPHOR_CONTROLS: KnobGroup[] = [
+  {
+    title: 'tint',
+    knobs: [
+      { key: 'h', min: 0, max: 360, step: 1, hint: 'hue, degrees' },
+      { key: 's', min: 0, max: 100, step: 1, hint: 'saturation, percent' },
+      { key: 'l', min: 0, max: 100, step: 1, hint: 'lightness, percent' },
+    ],
+  },
+]
+
+function setCustomPhosphor(screen: CrtScreen, hsl: Hsl): void {
+  writeCustomPhosphor(hsl)
+  // Turning a knob also selects the custom phosphor, as adjusting a CRT knob
+  // selects the user preset, so the change shows at once.
+  store.set('phosphor', CUSTOM_PHOSPHOR)
+  screen.crt.setPhosphor(phosphorTint())
 }
 
 function resetUserParam(screen: CrtScreen, key?: string): void {
@@ -106,12 +127,22 @@ function settings(screen: CrtScreen, snd: Sound, onFont?: () => void): Setting[]
     },
     {
       label: 'PHOSPHOR',
-      values: ['matrix', 'vt320', 'brutalist', 'bubblegum', 'white'],
+      values: ['matrix', 'vt320', 'brutalist', 'bubblegum', 'white', CUSTOM_PHOSPHOR],
       current: () => store.get('phosphor', 'matrix'),
       select: (value) => {
         store.set('phosphor', value)
-        screen.crt.setPhosphor(value)
+        screen.crt.setPhosphor(phosphorTint())
         return value
+      },
+      // Only the custom tint opens further; the built-in tints are fixed.
+      tune: value => value !== CUSTOM_PHOSPHOR ? null : {
+        title: CUSTOM_PHOSPHOR.toUpperCase(),
+        groups: PHOSPHOR_CONTROLS,
+        get: key => customPhosphor()[key as keyof Hsl],
+        set: (key, v) => setCustomPhosphor(screen, { ...customPhosphor(), [key]: v }),
+        reset: key => setCustomPhosphor(screen, key
+          ? { ...customPhosphor(), [key]: CUSTOM_PHOSPHOR_DEFAULT[key as keyof Hsl] }
+          : { ...CUSTOM_PHOSPHOR_DEFAULT }),
       },
     },
     {
@@ -240,5 +271,5 @@ export function restoreSettings(screen: CrtScreen, snd: Sound): void {
   snd.setKeyPack(audio.pack)
 
   screen.crt.setParams(screenParams())
-  screen.crt.setPhosphor(store.get('phosphor', 'matrix'))
+  screen.crt.setPhosphor(phosphorTint())
 }

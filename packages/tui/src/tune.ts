@@ -12,6 +12,11 @@
 // made, and Escape only closes the box. Two undo paths cover that: Backspace
 // restores the focused control, and the row at the foot restores all of them.
 //
+// A value can also be typed: digits replace the readout of the focused control
+// and Enter applies them, clamped to the range and snapped to the step. Until
+// Enter the control is unchanged, since a half-typed 3 for 30 would otherwise
+// swing the display on the way. Moving off the row discards the entry.
+//
 // The controls are data, as the settings are. This module knows only that a
 // control has a range and a step. See TuneSpec.
 
@@ -102,7 +107,7 @@ const spanCells = (spans: Span[]): number =>
   spans.reduce((n, s) => n + cells(s.text), 0)
 
 const HINT = keyHint([
-  ['‹›', 'Adjust'], ['⬆⬇', 'Move'], ['⌫', 'Reset'], ['ESC', 'Back'],
+  ['‹›', 'Adjust'], ['0-9↵', 'Type'], ['⬆⬇', 'Move'], ['⌫', 'Reset'], ['ESC', 'Back'],
 ])
 const COPIED = 'COPIED'
 const COPY_FAILED = 'CLIPBOARD BLOCKED — SEE CONSOLE'
@@ -136,6 +141,8 @@ export class TunePopup implements Screen {
   private term: Grid | null = null
   private flash: typeof COPIED | typeof COPY_FAILED | null = null
   private timer: ReturnType<typeof setTimeout> | null = null
+  /** Digits typed for the focused control, not yet applied. Empty when not typing. */
+  private typed = ''
 
   constructor(private opts: TuneOptions) {
     this.rows = []
@@ -165,6 +172,15 @@ export class TunePopup implements Screen {
       || e.key === 'Backspace' || e.key === 'Enter'
   }
 
+  /** A character that can be part of a typed value: digits, one point, a leading minus. */
+  private accepts(ch: string): boolean {
+    if (ch.length !== 1) return false
+    if (ch >= '0' && ch <= '9') return true
+    if (ch === '.') return !this.typed.includes('.')
+    if (ch === '-') return this.typed === ''
+    return false
+  }
+
   onKey(e: KeyInput): boolean {
     if (e.metaKey || e.altKey) return false
 
@@ -178,6 +194,9 @@ export class TunePopup implements Screen {
     }
 
     if (e.key === 'Escape') {
+      // A typed entry is abandoned before the box closes, so one Escape does
+      // not lose both the entry and the box.
+      if (this.typed) { this.typed = ''; this.opts.onFeedback?.('cancel', e); return true }
       this.opts.onFeedback?.('cancel', e)
       this.opts.onDone()
       return true
@@ -186,7 +205,14 @@ export class TunePopup implements Screen {
     if (e.ctrlKey) return false
 
     if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      this.typed = ''
       this.move(e.key === 'ArrowUp' ? -1 : 1, e)
+      return true
+    }
+
+    // No feedback: a digit is not in silentKey, so the key click already sounds.
+    if (this.focused?.kind === 'knob' && this.accepts(e.key)) {
+      this.typed += e.key
       return true
     }
 
@@ -201,13 +227,24 @@ export class TunePopup implements Screen {
     if (e.key === 'Backspace') {
       const row = this.focused
       if (row?.kind !== 'knob') { this.opts.onFeedback?.('edge', e); return true }
+      // While typing, Backspace edits the entry; the reset needs an empty one.
+      if (this.typed) {
+        this.typed = this.typed.slice(0, -1)
+        this.opts.onFeedback?.('move', e)
+        return true
+      }
       this.opts.onFeedback?.('apply', e)
       this.opts.reset(row.knob.key)
       return true
     }
 
     if (e.key === 'Enter') {
-      if (this.focused?.kind === 'reset') {
+      const row = this.focused
+      if (this.typed && row?.kind === 'knob') {
+        this.enter(row.knob, e)
+        return true
+      }
+      if (row?.kind === 'reset') {
         this.opts.onFeedback?.('apply', e)
         this.opts.reset()
         return true
@@ -255,6 +292,20 @@ export class TunePopup implements Screen {
     )
     // Already at the limit. Still consumed, since the key reached the box.
     if (next === current) { this.opts.onFeedback?.('edge', e); return }
+    this.opts.onFeedback?.('adjust', e)
+    this.opts.set(knob.key, next)
+  }
+
+  /** Apply the typed entry, clamped to the range and snapped to the step. */
+  private enter(knob: Knob, e: KeyInput) {
+    const parsed = Number(this.typed)
+    this.typed = ''
+    if (!Number.isFinite(parsed)) { this.opts.onFeedback?.('edge', e); return }
+    const raw = Math.round(parsed / knob.step) * knob.step
+    const next = Number(
+      Math.min(knob.max, Math.max(knob.min, raw)).toFixed(decimals(knob.step))
+    )
+    if (next === this.opts.get(knob.key)) { this.opts.onFeedback?.('edge', e); return }
     this.opts.onFeedback?.('adjust', e)
     this.opts.set(knob.key, next)
   }
@@ -416,12 +467,17 @@ export class TunePopup implements Screen {
       const ratio = span > 0 ? (value - knob.min) / span : 0
       const filled = Math.round(Math.min(1, Math.max(0, ratio)) * barW)
 
+      // The entry being typed takes the readout's place, cut from the left so
+      // the most recent digits stay visible in a narrow column.
+      const readout = on && this.typed
+        ? this.typed.slice(-numW).padStart(numW)
+        : value.toFixed(decimals(knob.step)).padStart(numW)
       const text = ' '.repeat(PAD)
         + knob.key.padEnd(labelW)
         + ' '.repeat(GAP)
         + '█'.repeat(filled) + '░'.repeat(barW - filled)
         + ' '.repeat(GAP)
-        + value.toFixed(decimals(knob.step)).padStart(numW)
+        + readout
 
       term.text(inner.x + 1, y, text.slice(0, inner.w - 1), attr)
     }

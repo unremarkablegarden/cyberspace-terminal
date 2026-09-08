@@ -276,12 +276,13 @@ export class ApiClient {
   }
   /**
    * Usernames matching an @-fragment, for autocomplete. Returns names only.
-   * A fragment shorter than two characters returns empty.
+   * A fragment shorter than two characters returns empty. `located` keeps
+   * members with coordinates, for the globe.
    */
-  async searchUsers(q: string): Promise<string[]> {
+  async searchUsers(q: string, opts: { located?: boolean } = {}): Promise<string[]> {
     if (q.length < 2) return []
     const rows = await this.get<{ username?: string }[]>(
-      `/v1/search?type=users&limit=8&q=${encodeURIComponent(q)}`)
+      `/v1/search?type=users&limit=8${opts.located ? '&located=1' : ''}&q=${encodeURIComponent(q)}`)
     return rows.map(r => r.username ?? '').filter(Boolean)
   }
 

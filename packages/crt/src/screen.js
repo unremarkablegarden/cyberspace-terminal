@@ -31,8 +31,8 @@ export class Screen {
     this.onKeyUp = e => { this.program?.keyUp?.(this, e) }
   }
 
-  /** Set the beam tint by name. See PHOSPHORS in config.js. */
-  setPhosphor(name) { this.crt.setPhosphor(name) }
+  /** Set the beam tint by name or as [r, g, b]. See Crt.setPhosphor. */
+  setPhosphor(tint) { this.crt.setPhosphor(tint) }
 
   start() {
     addEventListener('keydown', this.onKeyDown)

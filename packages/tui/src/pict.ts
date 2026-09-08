@@ -31,13 +31,19 @@ export interface DistinctCells {
 /**
  * Distinct bitmaps first, so the bank is asked once and either holds the whole
  * block or none of it.
+ *
+ * A cell with nothing lit is a picture cell too, with an all-zero bitmap: as a
+ * space it would take the ground of a panel drawn under it, and the picture's
+ * black would show as a hole. The zero bitmap is one shared entry.
  */
 export function distinctCells(block: { cols: number; rows: number; cells: (Uint16Array | undefined)[] }): DistinctCells {
   const distinct: Uint16Array[] = []
   const nth = new Map<string, number>()
   const cell = new Int32Array(block.cols * block.rows).fill(-1)
+  const rows = block.cells.find(b => b)?.length
+  const blank = rows ? new Uint16Array(rows) : undefined
   for (let i = 0; i < cell.length; i++) {
-    const bits = block.cells[i]
+    const bits = block.cells[i] ?? blank
     if (!bits) continue
     const key = String.fromCharCode(...bits)
     let n = nth.get(key)

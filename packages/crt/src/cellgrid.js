@@ -101,6 +101,11 @@ export class CellGrid {
    *
    * `bits` is one word per row, bit (cellW-1) leftmost. Not copied — the grid
    * holds the reference for as long as the cell is on screen.
+   *
+   * A longer bitmap carries more planes, each cellH rows, drawn where every
+   * plane before it is unlit: two planes are main and ground (BG_LEVEL in
+   * term.js), three are main, faint (FAINT_LEVEL) and ground. A picture can
+   * so keep a dim line and a shaded area under its bright pixels in one cell.
    */
   putGlyph(x, y, bits, attr = NORMAL, inv = 0) {
     if (x < 0 || y < 0 || x >= this.cols || y >= this.rows) return

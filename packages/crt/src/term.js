@@ -192,6 +192,12 @@ export class Term extends CellGrid {
         // Smear only when the bold is synthetic.
         const smear = bold && !(face && face === this.bold)
 
+        // Extra planes of a bitmap, if any. See CellGrid.putGlyph: two planes
+        // are main + ground, three are main + faint + ground.
+        const planes = pic ? Math.floor(pic.length / cellH) : 1
+        const faintAt = planes >= 3 ? cellH : -1
+        const groundAt = planes >= 3 ? cellH * 2 : planes === 2 ? cellH : -1
+
         for (let y = 0; y < cellH; y++) {
           // Zero, not skip, where a foreign face is shorter than the cell:
           // unpainted rows leave gaps in an inverse bar.
@@ -203,13 +209,27 @@ export class Term extends CellGrid {
           if (joinCol && shift > 0 && (row & 1)) bits |= (1 << shift) - 1
           // Synthetic bold: smear one pixel right.
           if (smear) bits |= bits >>> 1
+          // The other planes, widened the same way and joined across the gap.
+          const widen = (at) => {
+            if (at < 0) return 0
+            const low = pic[at + y] ?? 0
+            let b = shift >= 0 ? low << shift : low >>> -shift
+            if (shift > 0 && (low & 1)) b |= (1 << shift) - 1
+            return b
+          }
+          const faint = widen(faintAt)
+          const under = widen(groundAt)
           // A background level counts as something to draw; without it the
           // blank rows of a panel are skipped and the fill comes out striped.
-          if (!bits && !inv && !gnd) continue
+          if (!bits && !faint && !under && !inv && !gnd) continue
           let p = (oy + y) * w + ox
           for (let x = 0; x < adv; x++, p++) {
-            const on = (bits >>> (adv - 1 - x)) & 1
-            fb[p] = (inv ? !on : on) ? lvl : gnd
+            const k = adv - 1 - x
+            const on = (bits >>> k) & 1
+            fb[p] = (inv ? !on : on) ? lvl
+              : ((faint >>> k) & 1) ? FAINT_LEVEL
+              : ((under >>> k) & 1) ? BG_LEVEL
+              : gnd
           }
         }
       }

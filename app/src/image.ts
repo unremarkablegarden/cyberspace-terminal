@@ -286,7 +286,7 @@ async function toLuma(src: string | Uint8Array): Promise<Luma> {
 }
 
 /** Cell geometry, read on each call: F1 can change the font under a running program. */
-function metricsOf(term: TermMetrics): CellMetrics {
+export function metricsOf(term: TermMetrics): CellMetrics {
   return { cellW: term.font.cellW, cellH: term.font.cellH, advance: term.advance, stretch: term.stretch }
 }
 
@@ -295,6 +295,8 @@ export interface TermMetrics {
   font: { cellW: number; cellH: number }
   advance: number
   stretch?: number
+  /** The coverage face (6x13), the smallest text on the machine. Null until loaded. */
+  fallback?: { cellW: number; cellH: number; glyphs: Map<number, number[]> } | null
 }
 
 /** A picture and the slots it holds, which are released together. */

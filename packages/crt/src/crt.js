@@ -60,10 +60,15 @@ export class CRT {
     this.build()
   }
 
-  /** Set the beam tint by name. See PHOSPHORS in config.js. */
-  setPhosphor(name) {
-    const tint = PHOSPHORS[name]
-    if (tint) this.phosphor = tint
+  /**
+   * Set the beam tint: a name from PHOSPHORS in config.js, or a [r, g, b]
+   * multiplier in 0..1 for a tint the page mixed itself. An unknown name
+   * leaves the tint as it was.
+   */
+  setPhosphor(tint) {
+    if (Array.isArray(tint)) { this.phosphor = tint; return }
+    const named = PHOSPHORS[tint]
+    if (named) this.phosphor = named
   }
 
   /** Overlay uniform values onto the current tuning. See PRESETS in config.js. */

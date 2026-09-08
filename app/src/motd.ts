@@ -106,8 +106,8 @@ function welcome(user: string | null): Span[][] {
     user
       ? [say('Type '), cmd('help'), say(' for commands.')]
       : [say('Type '), cmd('login'), say(' to connect, '), cmd('help'), say(' for commands.')],
-    [say('e.g. '), cmd('circ'), say(', '), cmd('feed'), say(', '), cmd('cmail'), say(', '),
-     cmd('shutdown')],
+    [say('e.g. '), cmd('feed'), say(', '), cmd('circ'), say(', '), cmd('cmail'), say(', '),
+     cmd('globe')],
     [],
     [say('To write your own programs;')],
     [cmd('cd bin/docs'), say(' then '), cmd('less README.txt'), say(' and '), cmd('less API.txt')],

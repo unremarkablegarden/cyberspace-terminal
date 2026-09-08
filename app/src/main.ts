@@ -127,6 +127,12 @@ const tty = new Tty((data, urgent) => {
 tty.clipboard = text => { void navigator.clipboard?.writeText(text) }
 
 xt.onBell(() => snd.beep(880, 0.09))
+// The reveal blip a kernel program asks for. See OSC_BLIP in kernel/tty.ts.
+xt.parser.registerOscHandler(777, data => {
+  if (data !== 'blip') return false
+  snd.blip(1400)
+  return true
+})
 
 let halted = false
 let killSession: (() => void) | null = null
@@ -355,6 +361,7 @@ const program = {
       // Image decoding is faceplate-only, and the metrics depend on the font
       // loaded right now, which F1 can change under a running program.
       pictures: () => pictureHost(s.term),
+      face: s.term,
       pickFile,
       saveFile,
       onHome: flush => { flushHome = flush },
