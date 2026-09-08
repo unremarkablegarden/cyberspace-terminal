@@ -6,7 +6,7 @@
 // about where a character is. Hard newlines are ordinary characters in the
 // string, inserted by Enter.
 
-import { Surface, type Rect } from './surface.js'
+import type { Grid, Rect } from './surface.js'
 import { NORMAL } from './attrs.js'
 import { wordLeft, wordRight, selRange } from './edits.js'
 import type { KeyInput } from './keys.js'
@@ -296,7 +296,7 @@ export class TextBuffer {
  * Paint a buffer into `r` and place the cursor on its caret. The view scrolls to
  * follow the caret only. Does not clear the rect.
  */
-export function drawBuffer(s: Surface, buf: TextBuffer, r: Rect, attr = NORMAL): Fold[] {
+export function drawBuffer(s: Grid, buf: TextBuffer, r: Rect, attr = NORMAL): Fold[] {
   buf.setWidth(r.w)
   const rows = buf.rows()
   const caret = buf.rowAt(rows)

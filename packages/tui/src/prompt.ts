@@ -28,6 +28,11 @@ export interface PromptOptions {
    */
   suggest?: (value: string) => Promise<string[]>
   /**
+   * Called when the box changes on its own, with no key to prompt the stack to
+   * repaint: a search starting or an answer arriving. The caller paints.
+   */
+  onUpdate?: () => void
+  /**
    * The chosen line, or null if dismissed. A highlighted suggestion takes
    * precedence over the typed text; with none highlighted the typed text is the
    * answer, so a name absent from the index can still be entered.
@@ -74,6 +79,10 @@ export class PromptPopup implements Screen {
   private timer: number | null = null
   /** Sequence number of the newest request. Older answers are discarded. */
   private seq = 0
+  /** A query is in flight. */
+  private busy = false
+  /** The newest query answered with nothing. */
+  private empty = false
   private closed = false
 
   constructor(private opts: PromptOptions) {
@@ -166,6 +175,8 @@ export class PromptPopup implements Screen {
     const value = this.input.value.trim()
     if (value.length < (this.opts.minChars ?? DEFAULTS.minChars)) {
       this.items = []
+      this.busy = false
+      this.empty = false
       this.seq++
       return
     }
@@ -173,16 +184,30 @@ export class PromptPopup implements Screen {
     const mine = ++this.seq
     this.timer = window.setTimeout(() => {
       this.timer = null
+      this.busy = true
+      this.empty = false
+      this.repaint()
       void this.opts.suggest!(value)
         .then((items) => {
           // A stale answer, or the box closed while the request was in flight.
           if (this.closed || mine !== this.seq) return
           this.items = items.slice(0, this.opts.rows ?? DEFAULTS.rows)
           this.index = -1
-          this.redraw?.()
+          this.empty = this.items.length === 0
         })
         .catch(() => { /* no suggestions is a fine answer */ })
+        .finally(() => {
+          if (this.closed || mine !== this.seq) return
+          this.busy = false
+          this.repaint()
+        })
     }, this.opts.debounceMs ?? DEFAULTS.debounceMs)
+  }
+
+  /** Redraw on the stack's grid, then have the caller paint it. */
+  private repaint(): void {
+    this.redraw?.()
+    this.opts.onUpdate?.()
   }
 
   /**
@@ -262,6 +287,9 @@ export class PromptPopup implements Screen {
 
       const top = inner.y + 2
       const rows = inner.h - 2
+      // Not an item, so the arrows never land on it.
+      const state = this.busy ? 'Searching...' : this.empty ? 'Not found' : ''
+      if (state && !this.items.length) term.text(inner.x + 2, top, state, DIM)
       for (let i = 0; i < rows; i++) {
         const item = this.items[i]
         if (item === undefined) break

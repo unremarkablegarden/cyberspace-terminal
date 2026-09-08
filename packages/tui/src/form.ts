@@ -42,6 +42,8 @@ export interface FormOptions {
   onFeedback?: (kind: 'move' | 'submit' | 'fail' | 'cancel' | 'edge' | 'inert', e: KeyInput) => void
   /** Repaint after onSubmit settles, which no key triggers. */
   onRepaint?: () => void
+  /** Status shown DIM while onSubmit runs. */
+  pending?: string
   /** Shown in the bottom rule. Defaults to ↵ OK  ESC Cancel. */
   hint?: string | Span[]
   /** Columns of text after the labels. */
@@ -65,13 +67,20 @@ export class FormPopup implements Screen {
   constructor(private opts: FormOptions) {
     this.labelW = opts.fields.reduce((n, f) => Math.max(n, cells(f.label)), 0) + 1
     this.inputs = opts.fields.map(f => {
-      const input = new InputLine({ prompt: f.label.padEnd(this.labelW), maxLength: f.maxLength ?? 64, mask: f.mask })
+      const input = new InputLine({ prompt: f.label.padStart(this.labelW - 1) + ' ', maxLength: f.maxLength ?? 64, mask: f.mask })
       if (f.value) input.set(f.value)
       return input
     })
     // Start on the first empty field, so a prefilled form opens on what is missing.
     const empty = this.inputs.findIndex(i => !i.value)
     this.focus = empty === -1 ? this.inputs.length - 1 : empty
+  }
+
+  /** Replaces the status while onSubmit runs, e.g. to clear pending once a stage is past. */
+  notice(text: string) {
+    if (this.closed || !this.busy) return
+    this.status = text
+    this.opts.onRepaint?.()
   }
 
   get values(): string[] {
@@ -133,7 +142,7 @@ export class FormPopup implements Screen {
 
   private async submit(): Promise<void> {
     this.busy = true
-    this.status = ''
+    this.status = this.opts.pending ?? ''
     this.opts.onRepaint?.()
     const values = this.values
     let error: FormError | null
@@ -144,6 +153,7 @@ export class FormPopup implements Screen {
     }
     if (this.closed) return
     this.busy = false
+    this.status = ''
     if (error === null) {
       this.finish(values)
       return

@@ -715,6 +715,7 @@ export function cmailProgram(
         ],
         bounds: outer,
         suggest: value => api.searchUsers(value.replace(/^@/, '')).catch(() => []),
+        onUpdate: paintNow,
         onFeedback: (kind) => {
           if (kind === 'edge') snd.beep(220, 0.04)
           else if (kind === 'move') snd.tick()

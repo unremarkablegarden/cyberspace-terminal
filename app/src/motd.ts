@@ -114,7 +114,7 @@ function welcome(user: string | null): Span[][] {
     [say('User program repo: '), cmd('browse'), say(' and '), cmd('publish')],
     [],
     [say('Supporters can sync their home directory to the mainframe with '), cmd('sync'), say('.')],
-    [say('For regular users files live in your browser memory.')],
+    [say('For regular users files reside in local browser memory.')],
     [],
   )
   return lines

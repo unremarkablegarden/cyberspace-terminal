@@ -149,12 +149,13 @@ export function cyberspacePrograms(api: ApiClient, hooks?: CsHooks, snd: ChatSou
         }
         const form: FormPopup = new FormPopup({
           title: 'LOGIN',
-          fields: [{ label: 'login:', value: p.argv[1] }, { label: 'Password:', mask: '*' }],
+          fields: [{ label: 'Login:', value: p.argv[1] }, { label: 'Password:', mask: '*' }],
           shadow: true,
+          pending: 'Authenticating...',
           // The upper half, so the log fits beneath.
           bounds: { x: 0, y: 0, w: tty.cols, h: Math.floor(tty.rows / 2) },
           onSubmit: ([email, password]) => api.login(email.trim(), password).then(
-            () => unlock(password).then(() => dial(line, snd)).then(() => null),
+            () => { form.notice('Access granted'); return unlock(password).then(() => dial(line, snd)).then(() => null) },
             e => ({
               message: e instanceof ApiError && e.status === 401
                 ? 'Login incorrect'
@@ -258,27 +259,6 @@ export function cyberspacePrograms(api: ApiClient, hooks?: CsHooks, snd: ChatSou
         return 1
       }
       return fail(p, 'finger', e)
-    }
-  }
-
-  const feed: Program = async p => {
-    if (!api.authed) {
-      p.err('feed: not logged in\n')
-      return 1
-    }
-    const n = Math.min(50, Math.max(1, Number(p.argv[1]) || 10))
-    try {
-      const posts = await api.get<Record<string, unknown>[]>(`/v1/posts?limit=${n}`)
-      for (const post of posts) {
-        const author = String(post.authorUsername ?? '?')
-        const title = typeof post.title === 'string' && post.title.trim()
-          ? post.title.trim()
-          : String(post.content ?? '').split('\n')[0].slice(0, 48)
-        p.out(`\x1b[2m${when(post.createdAt)}\x1b[0m  \x1b[1m${author.padEnd(16)}\x1b[0m ${title}\n`)
-      }
-      return 0
-    } catch (e) {
-      return fail(p, 'feed', e)
     }
   }
 
@@ -399,5 +379,5 @@ export function cyberspacePrograms(api: ApiClient, hooks?: CsHooks, snd: ChatSou
     }
   }
 
-  return { login, logout, whoami, finger, feed, upload, pages, import: importProgram }
+  return { login, logout, whoami, finger, upload, pages, import: importProgram }
 }

@@ -182,3 +182,18 @@
 - New BIOS screen
 - A globe beside the nameplate on the motd
 - Fixed pictures rendering about a third too narrow (the face stretches the raster; chat, `view` and braille drawings all corrected)
+
+## v0.5.1
+
+- Added missing user program API image functions
+- Login box update
+- Feed
+    - `feed`: full-screen feed reader
+    - Records listed in boxes; arrow keys select, Enter opens a post with its replies
+    - `R`: reply
+    - `W`: compose a post (title, topics, blog/NSFW/vent flags); `^S` saves it as a note
+    - `L`: copy a link from the post
+    - `B`: author profile
+    - `U`: author's posts; `feed @user` opens them directly
+    - `F`: find a member
+    - State management
