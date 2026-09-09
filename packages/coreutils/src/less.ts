@@ -63,6 +63,8 @@ export const less: Program = async p => {
   p.tty.setRaw()
   p.out('\x1b[?1049h')
   s.invalidate()
+  // Frames drawn while stopped are dropped; back in the foreground, redraw.
+  p.onCont = () => { s.invalidate(); paint() }
 
   try {
     paint()

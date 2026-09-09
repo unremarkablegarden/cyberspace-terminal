@@ -27,7 +27,7 @@ export interface RunMessage {
   version?: string
   username?: string
   /** Which brokered capabilities the host wired, so the worker offers only those. */
-  caps: { api: boolean; feed: boolean; image: boolean }
+  caps: { api: boolean; feed: boolean; image: boolean; run: boolean }
   /** The face's cell metrics; present when the page has a picture bank. */
   metrics?: CellMetrics
   /** Handles this run may assign bitmaps to. */
@@ -52,7 +52,7 @@ export type WorkerMessage =
   | { t: 'snd'; method: string; args: unknown[] }
   | { t: 'copy'; text: string }
   | { t: 'pict'; codes: number[]; bits: Uint16Array[] }
-  | { t: 'cap'; id: number; kind: 'api.get' | 'api.post' | 'api.del' | 'feed.page' | 'feed.profile' | 'image'; args: unknown[] }
+  | { t: 'cap'; id: number; kind: 'api.get' | 'api.post' | 'api.del' | 'feed.page' | 'feed.profile' | 'image' | 'run'; args: unknown[] }
   | { t: 'exit'; code: number }
   | { t: 'fault'; message: string }
 
@@ -165,6 +165,9 @@ function brokerDeps(msg: RunMessage): CompatDeps {
   }
   if (msg.caps.image) {
     deps.image = url => call('image', [url]) as Promise<Uint8Array>
+  }
+  if (msg.caps.run) {
+    deps.run = (name, argv) => call('run', [name, argv]) as Promise<number>
   }
   const metrics = msg.metrics
   if (metrics) {

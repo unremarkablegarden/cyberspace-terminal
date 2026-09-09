@@ -913,6 +913,22 @@ export function circProgram(
     s.invalidate()
     paint()
 
+    // Stopped: out of the room as far as the server knows, the log kept.
+    p.onStop = () => {
+      closeStream()
+      if (heartbeat) { clearInterval(heartbeat); heartbeat = null }
+      if (room) void api.delete(`/v1/circ/${room.id}/presence`).catch(() => {})
+    }
+    p.onCont = () => {
+      if (room) {
+        void beat()
+        connect(room.id)
+        heartbeat = setInterval(() => { void beat(); void fetchUsers() }, heartbeatMs)
+      }
+      s.invalidate()
+      paint()
+    }
+
     try {
       const parked = readState(p.takeState())
       if (parked?.draft) { input.set(parked.draft); paint() }

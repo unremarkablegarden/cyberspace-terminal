@@ -23,10 +23,10 @@ import {
   NORMAL, BRIGHT, BOLD, DIM, FAINT,
   type CellMetrics, type P3, type View, type Span, type TextLine, type Rect, type PixelFont,
 } from '@cyberspace/tui'
-import type { ApiClient } from './api.js'
+import { ApiError, type ApiClient } from './api.js'
 import { SILENT, type ChatSound } from './chat.js'
 import { bioLines, fetchProfile, portraitFits, PFP_COLS, PFP_ROWS, type Portrait } from './bio.js'
-import { when } from './feedutil.js'
+import { when, type FeedProfile } from './feedutil.js'
 
 export interface GlobeDeps {
   /** The baked outline file. See tools/globe.ts for the format. */
@@ -141,6 +141,9 @@ const TURN_DONE = 1e-3
 const ZOOM_MIN = 1
 const ZOOM_MAX = 16
 const ZOOM_STEP = 1.25
+/** Fraction of the remaining zoom (in log space) applied per tick, and the remainder applied whole. */
+const ZOOM_EASE = TURN_EASE
+const ZOOM_DONE = 1e-3
 /** Eye distance in model units. See View. */
 const FOCAL = 6
 /** The site's opening view: Europe and Africa, tilted down from the north. */
@@ -172,6 +175,14 @@ const HINT_FIND: Span[] = [{ text: ' / ', inverse: true, attr: DIM }, { text: ' 
 const HINT_CARD: Span[] = [{ text: ' ↵ ', inverse: true, attr: DIM }, { text: ' Card ' }]
 const HINT_SELECT: Span[] = [{ text: ' ↵ ', inverse: true, attr: DIM }, { text: ' Select ' }]
 const HINT_HELP: Span[] = [{ text: ' ? ', inverse: true, attr: DIM }, { text: ' Help ' }]
+/** The footer while a member's card is open: the card's own keys, nothing else. */
+const HINT_MAIL: Span[] = [{ text: ' C ', inverse: true, attr: DIM }, { text: ' C-Mail ' }]
+const HINT_POKE: Span[] = [{ text: ' P ', inverse: true, attr: DIM }, { text: ' Poke ' }]
+const HINT_CLOSE: Span[] = [{ text: ' ESC ', inverse: true, attr: DIM }, { text: ' Close ' }]
+const hintFollow = (following: boolean | undefined): Span[] =>
+  [{ text: ' F ', inverse: true, attr: DIM }, { text: following === undefined ? ' ... ' : following ? ' Unfollow ' : ' Follow ' }]
+/** Pages of the caller's following list read to learn whether a member is followed. 50 a page. */
+const FOLLOW_PAGES = 10
 /** On the top rule, right, beside the clock: the cap alone says enough. */
 const HINT_EXIT: Span[] = [{ text: ' ESC ', inverse: true, attr: DIM }]
 const POPUP_HINT = (...pairs: string[]): string => pairs.join('  ')
@@ -408,7 +419,7 @@ export function globeProgram(api: ApiClient, deps: GlobeDeps, snd: ChatSound = S
     const s = new Surface(cols, rows)
     const stack = new ScreenStack(s as never)
     const narrow = cols < NARROW
-    const want = p.argv[1]?.replace(/^@/, '') || undefined
+    let want = p.argv[1]?.replace(/^@/, '') || undefined
 
     p.out('Reading...')
     let world: World
@@ -424,6 +435,8 @@ export function globeProgram(api: ApiClient, deps: GlobeDeps, snd: ChatSound = S
     let yaw = parked.yaw ?? YAW0
     let pitch = parked.pitch ?? PITCH0
     let zoom = parked.zoom ?? ZOOM_MIN
+    /** Where the zoom keys have sent the view; tick() eases `zoom` towards it. */
+    let zoomTarget = zoom
     let spin = parked.spin ?? true
     /** Spin was on when the selection was made, and returns when it is cleared. */
     let spinHeld = false
@@ -440,6 +453,8 @@ export function globeProgram(api: ApiClient, deps: GlobeDeps, snd: ChatSound = S
     let status = ''
     let running = true
     let quit = false
+    /** The open member card, while there is one. `following` is unknown until the list is read. */
+    let card: { profile: FeedProfile; popup: TextPopup; following?: boolean } | undefined
 
     const outer: Rect = { x: 0, y: 0, w: cols, h: rows }
     const inner: Rect = { x: 1, y: 1, w: cols - 2, h: rows - 2 }
@@ -454,7 +469,7 @@ export function globeProgram(api: ApiClient, deps: GlobeDeps, snd: ChatSound = S
     const park = (): void => {
       p.setState({
         // A held spin parks as on, so a restore holds it again for the restored selection.
-        v: STATE_VERSION, yaw, pitch, zoom, spin: spin || spinHeld, back: showBack, night: showNight,
+        v: STATE_VERSION, yaw, pitch, zoom: zoomTarget, spin: spin || spinHeld, back: showBack, night: showNight,
         ...(sel >= 0 && { sel: pins[sel]!.username }),
       } satisfies GlobeState)
     }
@@ -662,18 +677,7 @@ export function globeProgram(api: ApiClient, deps: GlobeDeps, snd: ChatSound = S
         s.text(inner.x, inner.y + inner.h - 1, text, pin && !status ? BRIGHT | BOLD : NORMAL)
       }
 
-      // Whole groups go from the front until the rest fits.
-      // The rest of the keys are in the help box: the row is full at 80 columns.
-      const groups: Span[][] = [
-        HINT_TURN,
-        ...(api.authed ? [HINT_FIND] : []),
-        ...(pin ? [HINT_CARD] : pins.length ? [HINT_SELECT] : []),
-        HINT_ZOOM, HINT_SPIN, HINT_HELP,
-      ]
-      const width = (g: Span[][]): number => g.flat().reduce((n, sp) => n + cells(sp.text), 2)
-      const budget = cols - 2
-      while (groups.length > 1 && width(groups) > budget) groups.shift()
-      label(s, outer, groups.flat(), { edge: 'bottom', align: 'right', max: budget })
+      drawFooter(pin !== undefined)
       s.showCursor = false
       yaw = wrapAngle(yaw)
       park()
@@ -697,6 +701,10 @@ export function globeProgram(api: ApiClient, deps: GlobeDeps, snd: ChatSound = S
         const next = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, pitch + dp))
         pendPitch = next === pitch + dp ? pendPitch - dp : 0
         pitch = next
+      }
+      if (zoom !== zoomTarget) {
+        const r = zoomTarget / zoom
+        zoom = Math.abs(Math.log(r)) < ZOOM_DONE ? zoomTarget : zoom * r ** ZOOM_EASE
       }
       paint()
     }
@@ -741,6 +749,120 @@ export function globeProgram(api: ApiClient, deps: GlobeDeps, snd: ChatSound = S
       tty.paint(s.render())
     }
 
+    /**
+     * The bottom rule. With a card open only the card's keys are offered; the
+     * rest of the time whole groups go from the front until the rest fits, and
+     * the keys left out are in the help box (the row is full at 80 columns).
+     */
+    const drawFooter = (selected: boolean): void => {
+      const groups: Span[][] = card
+        ? api.authed ? [HINT_MAIL, hintFollow(card.following), HINT_POKE, HINT_CLOSE] : [HINT_CLOSE]
+        : [
+          HINT_TURN,
+          ...(api.authed ? [HINT_FIND] : []),
+          ...(selected ? [HINT_CARD] : pins.length ? [HINT_SELECT] : []),
+          HINT_ZOOM, HINT_SPIN, HINT_HELP,
+        ]
+      const width = (g: Span[][]): number => g.flat().reduce((n, sp) => n + cells(sp.text), 2)
+      const budget = cols - 2
+      while (groups.length > 1 && width(groups) > budget) groups.shift()
+      // Cleared first: the rule is redrawn in place when the follow state arrives.
+      s.text(outer.x + 1, outer.y + outer.h - 1, '─'.repeat(outer.w - 2), DIM)
+      label(s, outer, groups.flat(), { edge: 'bottom', align: 'right', max: budget })
+    }
+
+    /** The result of a card action, in the card's rule; the popup is gone if the card closed meanwhile. */
+    const report = (text: string): void => {
+      if (!card) return
+      card.popup.say(text)
+      tty.paint(s.render())
+    }
+
+    const failure = (err: unknown): string =>
+      err instanceof ApiError ? (err.code === 'NO_CARRIER' ? 'NO CARRIER' : err.message.toUpperCase()) : 'ERROR'
+
+    /**
+     * Whether the caller follows this member: the API has no flag for it, so
+     * the caller's following list is read, a page at a time, until the member
+     * turns up or FOLLOW_PAGES pages are exhausted (then taken as not followed).
+     */
+    const readFollowing = async (userId: string): Promise<boolean> => {
+      let cursor: string | null = null
+      for (let page = 0; page < FOLLOW_PAGES; page++) {
+        const res: { rows: { followedId?: string }[]; cursor: string | null } =
+          await api.page<{ followedId?: string }>(`/v1/follows?type=following&limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`)
+        if (res.rows.some(r => r.followedId === userId)) return true
+        cursor = res.cursor
+        if (!cursor) break
+      }
+      return false
+    }
+
+    const toggleFollow = async (): Promise<void> => {
+      const c = card
+      if (!c || c.following === undefined) { snd.beep(220, 0.04); return }
+      const them = c.profile.userId
+      if (!them || them === api.userId) { snd.beep(220, 0.12); report(them ? 'THAT IS YOU' : 'NO ID'); return }
+      snd.tick()
+      try {
+        if (c.following) {
+          await api.delete(`/v1/follows/${encodeURIComponent(`${api.userId}_${them}`)}`)
+          c.following = false
+          report('UNFOLLOWED')
+        } else {
+          await api.post('/v1/follows', { followedId: them })
+          c.following = true
+          report('FOLLOWING')
+        }
+        snd.blip(520, 0.09, 0)
+      } catch (err) {
+        // Already following: the list was stale, and the state is now known.
+        if (err instanceof ApiError && err.status === 409) c.following = true
+        else if (err instanceof ApiError && err.status === 404 && c.following) c.following = false
+        snd.beep(220, 0.12)
+        report(failure(err))
+      }
+      if (card === c) { drawFooter(true); tty.paint(s.render()) }
+    }
+
+    /** Members poked in this run: one poke each, whatever the server would allow. */
+    const poked = new Set<string>()
+
+    const poke = async (): Promise<void> => {
+      const c = card
+      if (!c) return
+      if (poked.has(c.profile.username)) { snd.beep(220, 0.12); report('ALREADY POKED'); return }
+      snd.tick()
+      try {
+        await api.post(`/v1/users/${encodeURIComponent(c.profile.username)}/poke`, {})
+        poked.add(c.profile.username)
+        snd.blip(520, 0.09, 0)
+        report('POKED')
+      } catch (err) {
+        snd.beep(220, 0.12)
+        report(failure(err))
+      }
+    }
+
+    /**
+     * C-Mail with the member: the card closes and the shell is asked to run
+     * cmail as its own job. The globe is stopped by the switch and comes back
+     * through the switcher or its name. Under a shell without job control
+     * there is nothing to switch to.
+     */
+    const openMail = (username: string): void => {
+      if (!card) return
+      card = undefined
+      stack.pop()
+      if (!p.kernel.jobs.fg) {
+        status = 'cmail: no job control'
+        snd.beep(220, 0.12)
+        paint()
+        return
+      }
+      void p.kernel.jobs.switchTo({ launch: `cmail @${username}` })
+    }
+
     let cardLoading = false
     /** The member's card, as feed's B box: bio beside the portrait, facts under a rule. */
     const openCard = async (pin: Pin): Promise<void> => {
@@ -770,7 +892,6 @@ export function globeProgram(api: ApiClient, deps: GlobeDeps, snd: ChatSound = S
         }
         if (!running || stack.active) return
       }
-      paint()
       const site = profile.website?.url
       const popup: TextPopup = new TextPopup({
         title: `@${profile.username}`,
@@ -781,10 +902,16 @@ export function globeProgram(api: ApiClient, deps: GlobeDeps, snd: ChatSound = S
           ])
           : undefined,
         lines: bioLines(profile, profile.joined ? when(profile.joined) : undefined, width, portrait),
-        hint: site ? POPUP_HINT('L Link', 'ESC Close') : POPUP_HINT('ESC Close'),
-        action: site
-          ? { key: 'l', silent: true, run: () => { tty.copy(site); popup.say('COPIED'); tty.paint(s.render()) } }
-          : undefined,
+        // The card's keys are advertised on the globe's footer beneath, see drawFooter.
+        hint: site ? POPUP_HINT('L Link') : undefined,
+        actions: [
+          ...(site ? [{ key: 'l', silent: true, run: () => { tty.copy(site); popup.say('COPIED'); tty.paint(s.render()) } }] : []),
+          ...(api.authed ? [
+            { key: 'c', silent: true, run: () => openMail(profile.username) },
+            { key: 'f', silent: true, run: () => { void toggleFollow() } },
+            { key: 'p', silent: true, run: () => { void poke() } },
+          ] : []),
+        ],
         bounds: inner,
         shadow: true,
         onFeedback: kind => {
@@ -792,13 +919,26 @@ export function globeProgram(api: ApiClient, deps: GlobeDeps, snd: ChatSound = S
           else if (kind === 'move') snd.tick()
         },
         onDone: () => {
+          card = undefined
           stack.pop()
           s.invalidate()
           paint()
         },
       })
+      card = { profile, popup }
+      // The footer is drawn before the push, so the snapshot beneath carries it.
+      paint()
       stack.push(popup)
       tty.paint(s.render())
+      if (api.authed && profile.userId) {
+        const mine = card
+        readFollowing(profile.userId).then(following => {
+          if (card !== mine) return
+          mine.following = following
+          drawFooter(true)
+          tty.paint(s.render())
+        }).catch(() => {})
+      }
     }
 
     const confirmQuit = (): void => {
@@ -826,6 +966,7 @@ export function globeProgram(api: ApiClient, deps: GlobeDeps, snd: ChatSound = S
         ['U', 'Day/night line on, off'], ['TAB  N', 'Next member'], ['P', 'Previous member'], ['R', 'A member at random'],
         ['/', 'Find a member'], ['↵', 'Select the member under the crosshair', 'Card, once selected'],
         ['ESC', 'Deselect; then exit'], ['Q', 'Exit'],
+        ['C  F  P', 'On the card: C-Mail, follow or unfollow, poke'],
       ]
       const KEY_W = 6
       stack.push(new TextPopup({
@@ -858,17 +999,18 @@ export function globeProgram(api: ApiClient, deps: GlobeDeps, snd: ChatSound = S
       switch (k.key) {
         // Arrows drag the surface: left brings what is to the right into view.
         // The turn is queued and eased in by tick(); held keys add up.
-        case 'ArrowLeft': pendYaw += STEP / zoom; ease = null; break
-        case 'ArrowRight': pendYaw -= STEP / zoom; ease = null; break
-        case 'ArrowUp': pendPitch -= STEP / zoom; ease = null; break
-        case 'ArrowDown': pendPitch += STEP / zoom; ease = null; break
+        case 'ArrowLeft': pendYaw += STEP / zoomTarget; ease = null; break
+        case 'ArrowRight': pendYaw -= STEP / zoomTarget; ease = null; break
+        case 'ArrowUp': pendPitch -= STEP / zoomTarget; ease = null; break
+        case 'ArrowDown': pendPitch += STEP / zoomTarget; ease = null; break
+        // Zoom moves the target; tick() eases the view to it, so held keys add up.
         case '-': case '_':
-          if (zoom <= ZOOM_MIN) snd.beep(220, 0.04)
-          zoom = Math.max(ZOOM_MIN, zoom / ZOOM_STEP)
+          if (zoomTarget <= ZOOM_MIN) snd.beep(220, 0.04)
+          zoomTarget = Math.max(ZOOM_MIN, zoomTarget / ZOOM_STEP)
           break
         case '=': case '+':
-          if (zoom >= ZOOM_MAX) snd.beep(220, 0.04)
-          zoom = Math.min(ZOOM_MAX, zoom * ZOOM_STEP)
+          if (zoomTarget >= ZOOM_MAX) snd.beep(220, 0.04)
+          zoomTarget = Math.min(ZOOM_MAX, zoomTarget * ZOOM_STEP)
           break
         // Explicit, so a later deselect leaves the choice alone.
         case 's': case 'S': spin = !spin; spinHeld = false; break
@@ -925,7 +1067,24 @@ export function globeProgram(api: ApiClient, deps: GlobeDeps, snd: ChatSound = S
     s.invalidate()
     p.setResume(want ? `globe @${want}` : 'globe')
 
-    const timer = setInterval(tick, TICK_MS)
+    let timer = setInterval(tick, TICK_MS)
+    p.onStop = () => clearInterval(timer)
+    p.onCont = () => {
+      timer = setInterval(tick, TICK_MS)
+      s.invalidate()
+      paint()
+    }
+    // `globe @user` typed while this run exists: turn to the member. Before
+    // the pins arrive the name waits for the load, as an argument does.
+    p.onArgs = argv => {
+      const who = argv[1]?.replace(/^@/, '')
+      if (!who) return
+      if (!pins.length) { want = who; return }
+      const i = findPin(who)
+      if (i >= 0) goTo(i)
+      else { status = `@${who}: no location`; snd.beep(220, 0.12) }
+      p.setResume(`globe @${who}`)
+    }
     try {
       paint()
       if (api.authed) {

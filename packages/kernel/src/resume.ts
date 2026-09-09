@@ -1,4 +1,4 @@
-// The foreground program's resume point: a command line plus opaque state.
+// A program's resume point: a command line plus opaque state. One per job.
 //
 // Only the line is stored, never a live object, since a program holding
 // listeners cannot be serialised. It records the command line that restarts it
@@ -11,20 +11,17 @@ export class Resume {
   /** That program's own state. Read when the session is written. Must be JSON. */
   state: unknown = null
 
-  private pendingLine: string | null = null
   private pendingState: unknown = null
 
-  /** Install a saved session, to be claimed when the shell starts. */
+  /** Install a saved state, to be claimed when the program starts. */
   restore(line: string | null, state: unknown): void {
-    this.pendingLine = line
+    this.line = line
     this.pendingState = state
   }
 
-  /** Claimed once by the shell, before its first read. */
-  takeLine(): string | null {
-    const line = this.pendingLine
-    this.pendingLine = null
-    return line
+  /** What a session stores: the live state, or the restored one while the program has not started. */
+  get parked(): unknown {
+    return this.state ?? this.pendingState
   }
 
   /**

@@ -1,8 +1,8 @@
 // A modal of labelled fields, submitted together.
 //
-// The rows are the fields alone. A status rule and row appear under them only
-// while there is a message to show, so a form with nothing to report is as
-// tall as its fields.
+// The rows are the fields alone. A status rule and its rows appear under them
+// only while there is a message to show, so a form with nothing to report is
+// as tall as its fields.
 //
 // Submission is asynchronous: the box stays open while onSubmit runs, keys are
 // held, and an error comes back as the status line with the caret returned to
@@ -15,6 +15,7 @@ import type { Screen } from './screen.js'
 import type { KeyInput } from './keys.js'
 import { cells, clear, frame, ground, hline, keyHint, label, shadow, type Rect, type Span } from './box.js'
 import { InputLine } from './input.js'
+import { wrap } from './wrap.js'
 
 export interface FormField {
   label: string
@@ -81,6 +82,15 @@ export class FormPopup implements Screen {
     if (this.closed || !this.busy) return
     this.status = text
     this.opts.onRepaint?.()
+  }
+
+  /**
+   * The status wrapped to the box. A refusal can be longer than the box is
+   * wide; wrapping grows the box rather than cutting the message, which at 44
+   * columns loses most of it.
+   */
+  private statusRows(w: number): string[] {
+    return this.status ? wrap(this.status, Math.max(1, w - 4)) : []
   }
 
   get values(): string[] {
@@ -183,8 +193,8 @@ export class FormPopup implements Screen {
       Math.max(16, b.w - 4),
       Math.max(this.labelW + (this.opts.width ?? WIDTH) + 4, cells(this.opts.title) + 6, hintW + 6),
     )
-    // The fields and the two border rows; a rule and a row more while a status shows.
-    const h = this.inputs.length + 2 + (this.status ? 2 : 0)
+    // The fields and the two border rows; a rule and the status rows more while a status shows.
+    const h = this.inputs.length + 2 + (this.status ? 1 + this.statusRows(w).length : 0)
     return { x: b.x + Math.floor((b.w - w) / 2), y: b.y + Math.floor((b.h - h) / 2), w, h }
   }
 
@@ -205,10 +215,11 @@ export class FormPopup implements Screen {
     this.inputs[this.focus].draw(term, { ...field, y: inner.y + this.focus })
     term.showCursor = !this.busy
 
-    if (this.status) {
+    const rows = this.statusRows(r.w)
+    if (rows.length) {
       const y = inner.y + this.inputs.length
       hline(term, y, r.x, r.x + r.w - 1, NORMAL)
-      term.text(inner.x + 1, y + 1, this.status.slice(0, inner.w - 2), this.busy ? DIM : NORMAL)
+      rows.forEach((row, i) => term.text(inner.x + 1, y + 1 + i, row, this.busy ? DIM : NORMAL))
     }
 
     ground(term, r)

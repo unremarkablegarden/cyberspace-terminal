@@ -57,6 +57,15 @@ export class Readline {
   // repaint: the incremental diff tracks plain text and cannot place inverse.
   private selShown = false
 
+  /**
+   * The stdin read a cancelled read() left pending, taken up by the next
+   * read() so no keystroke is lost between them.
+   */
+  private inflight: Promise<Uint8Array | null> | null = null
+  private cancelFn: (() => void) | null = null
+  /** The line being typed when read() was cancelled; the next read() starts with it. */
+  private kept = ''
+
   constructor(
     private tty: TtyControl,
     private stdin: Source,
@@ -97,8 +106,17 @@ export class Readline {
     return true
   }
 
-  /** Read one line. Returns null on EOF (^D at an empty line). */
-  async read(prompt: string): Promise<string | null> {
+  /**
+   * Interrupt a read() from outside: it resolves undefined and the row is
+   * ended, so what the shell prints next starts on a fresh line. The line
+   * typed so far comes back on the next read().
+   */
+  cancel(): void {
+    this.cancelFn?.()
+  }
+
+  /** Read one line. Returns null on EOF (^D at an empty line), undefined when cancelled. */
+  async read(prompt: string): Promise<string | null | undefined> {
     this.tty.setRaw()
     this.prompt = prompt
     this.buf = ''
@@ -109,19 +127,40 @@ export class Readline {
     this.draft = ''
     this.tty.echo(prompt)
     this.drawn(0, '', 0)
+    if (this.kept) {
+      this.buf = this.kept
+      this.cursor = this.kept.length
+      this.kept = ''
+      this.redraw()
+    }
 
+    let cancelled = false
+    const cancelP = new Promise<void>(res => {
+      this.cancelFn = () => { cancelled = true; res() }
+    })
     let pending = ''
-    for (;;) {
-      if (!pending) {
-        const chunk = await this.stdin.read()
-        if (chunk === null) return this.buf ? this.finish() : null
-        pending = dec.decode(chunk)
+    try {
+      for (;;) {
+        if (!pending) {
+          this.inflight ??= this.stdin.read()
+          const chunk = await Promise.race([this.inflight, cancelP.then(() => null)])
+          if (cancelled) {
+            this.kept = this.buf
+            this.tty.echo('\r\n')
+            return undefined
+          }
+          this.inflight = null
+          if (chunk === null) return this.buf ? this.finish() : null
+          pending = dec.decode(chunk)
+        }
+        const [key, rest] = nextKey(pending)
+        pending = rest
+        const done = await this.key(key)
+        if (done === 'eof') return null
+        if (done === 'line') return this.finish()
       }
-      const [key, rest] = nextKey(pending)
-      pending = rest
-      const done = await this.key(key)
-      if (done === 'eof') return null
-      if (done === 'line') return this.finish()
+    } finally {
+      this.cancelFn = null
     }
   }
 

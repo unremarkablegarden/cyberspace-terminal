@@ -59,6 +59,8 @@ export interface TextOptions {
    * `silent` marks keys the caller sounds itself, so the key click is suppressed.
    */
   action?: { key: string; run: () => void; silent?: boolean }
+  /** Several such keys. `action` is the one-key form of the same thing. */
+  actions?: { key: string; run: () => void; silent?: boolean }[]
   /** Shown in the bottom rule. */
   hint?: TextLabel
   /** Region to centre within. Defaults to the whole grid. */
@@ -134,10 +136,15 @@ export class TextPopup implements Screen {
   }
 
   /** As SelectPopup: the scroll keys sound themselves, so the key click is suppressed. */
+  /** Every extra key the caller wired, from either option. */
+  private get actions(): { key: string; run: () => void; silent?: boolean }[] {
+    return [...(this.opts.action ? [this.opts.action] : []), ...(this.opts.actions ?? [])]
+  }
+
   silentKey(e: KeyInput): boolean {
     if (e.metaKey || e.altKey || e.ctrlKey) return false
-    const action = this.opts.action
-    if (action?.silent && e.key.toLowerCase() === action.key.toLowerCase()) return true
+    const key = e.key.toLowerCase()
+    if (this.actions.some(a => a.silent && a.key.toLowerCase() === key)) return true
     return e.key === 'ArrowUp' || e.key === 'ArrowDown'
   }
 
@@ -171,8 +178,8 @@ export class TextPopup implements Screen {
       return true
     }
 
-    const action = this.opts.action
-    if (action && e.key.toLowerCase() === action.key.toLowerCase()) {
+    const action = this.actions.find(a => a.key.toLowerCase() === e.key.toLowerCase())
+    if (action) {
       action.run()
       return true
     }

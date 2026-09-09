@@ -89,6 +89,13 @@ export interface CompatDeps {
     profile?(username: string): Promise<Record<string, unknown> | null>
   }
   /**
+   * Hand the terminal to another program and wait for it: C-Mail with a
+   * member, the feed. The host decides which names are allowed (kernel
+   * handoff.ts) and answers NO CARRIER for the rest. Absent on a host with no
+   * kernel behind it.
+   */
+  run?: (name: string, argv: string[]) => Promise<number>
+  /**
    * Fetch a remote image, returning its raw bytes. A program cannot reach the
    * network itself, so this is the only path in, and the host checks the URL
    * host against a whitelist before fetching. Absent when unconfigured.
@@ -374,6 +381,32 @@ export function runGridProgram(deps: CompatDeps): (p: Proc, program: UserProgram
       },
 
       api: apiCap,
+
+      /**
+       * Run another program on this terminal and come back. In screen mode
+       * the screen is left for the duration and repainted from the grid after;
+       * in line mode the other program prints into the same scrollback.
+       */
+      run: async (name: unknown, argv: unknown = []): Promise<number> => {
+        if (!deps.run) throw new Error('NO CARRIER')
+        if (typeof name !== 'string') throw new Error('run: name must be a string')
+        const args = Array.isArray(argv) ? argv.map(String) : []
+        const wasInScreen = inScreen
+        if (wasInScreen) {
+          inScreen = false
+          p.out('\x1b[?1049l\x1b[?25h')
+        }
+        try {
+          return await deps.run(name, args)
+        } finally {
+          if (wasInScreen && screens.length) {
+            inScreen = true
+            p.out('\x1b[?1049h\x1b[?25l')
+            surface.invalidate()
+            grid.dirty = true
+          }
+        }
+      },
 
       get username() { return deps.username?.() ?? p.env.USER ?? 'guest' },
       version: deps.version ?? '0.1',

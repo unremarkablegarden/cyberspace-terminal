@@ -1,21 +1,22 @@
-// Session persistence: restores the scrollback, working directory and running
-// program after a reload.
+// Session persistence: restores the scrollback, working directory and job
+// table after a reload.
 //
 // Only the serialised screen is stored, never a live object. A program holding
-// listeners cannot be serialised, so it records the command line that restarts
-// it (`resume`) plus an opaque state blob, and the shell runs that line again.
-// `circ` keeps its resume line pointed at the current room for this reason.
+// listeners cannot be serialised, so each job records the command line that
+// restarts it plus an opaque state blob; the jobs come back parked and the
+// shell runs the line again when one is foregrounded. `circ` keeps its resume
+// line pointed at the current room for this reason.
 //
 // This module holds the format, the validator and the shell loop. main.ts
 // decides where the bytes are stored.
 
 import type { Arrival } from './baud'
-import { readText, writeLines, type Kernel, type Proc, type Tty } from '@cyberspace/kernel'
+import { readText, writeLines, type Kernel, type ParkedJob, type Proc, type Tty } from '@cyberspace/kernel'
 import { shellMain } from '@cyberspace/shell'
 import { ENV } from './config'
 
 /** Bump when the shape changes. A mismatch is discarded, never migrated. */
-export const SESSION_VERSION = 1
+export const SESSION_VERSION = 2
 
 /**
  * Maximum age of a session worth restoring.
@@ -37,16 +38,16 @@ export interface TerminalSession {
   /** The screen serialised as ANSI, scrollback included. See @xterm/addon-serialize. */
   screen: string
   cwd: string
-  /** Command line that brings the running program back, e.g. `circ hackers`. */
-  resume: string | null
   /**
-   * Program-defined state, stored verbatim and never inspected here.
-   *
-   * `resume` restarts a program but cannot express where inside itself it was,
-   * so the program defines its own format. Handed back through takeState() when
-   * the resume line runs. Must be JSON-serialisable.
+   * The job table. Each entry is the command line that brings the program
+   * back, e.g. `circ hackers`, and the program's own state, stored verbatim and
+   * never inspected here: the line restarts a program but cannot express where
+   * inside itself it was, so the program defines its own format and reads it
+   * back through takeState() when the line runs. Must be JSON-serialisable.
    */
-  state: unknown
+  jobs: ParkedJob[]
+  /** Index into `jobs` of the job that held the terminal, or null for the shell. */
+  fg: number | null
 }
 
 /**
@@ -63,7 +64,16 @@ export function parseSession(raw: unknown, uid: string, now: number): TerminalSe
   if (now - s.at > SESSION_MAX_AGE || s.at > now) return null
 
   if (typeof s.screen !== 'string' || typeof s.cwd !== 'string' || !s.cwd) return null
-  if (s.resume !== null && (typeof s.resume !== 'string' || !s.resume)) return null
+  if (!Array.isArray(s.jobs)) return null
+  const jobs: ParkedJob[] = []
+  for (const j of s.jobs as unknown[]) {
+    if (!j || typeof j !== 'object') return null
+    const e = j as Record<string, unknown>
+    if (typeof e.name !== 'string' || !e.name || typeof e.line !== 'string' || !e.line) return null
+    // Absent means the program stored no state.
+    jobs.push({ name: e.name, line: e.line, state: e.state ?? null })
+  }
+  if (s.fg !== null && (typeof s.fg !== 'number' || !Number.isInteger(s.fg) || s.fg < 0 || s.fg >= jobs.length)) return null
 
   return {
     v: SESSION_VERSION,
@@ -71,9 +81,8 @@ export function parseSession(raw: unknown, uid: string, now: number): TerminalSe
     uid: s.uid,
     screen: s.screen,
     cwd: s.cwd,
-    resume: s.resume as string | null,
-    // Absent means the program stored no state.
-    state: s.state ?? null,
+    jobs,
+    fg: s.fg as number | null,
   }
 }
 

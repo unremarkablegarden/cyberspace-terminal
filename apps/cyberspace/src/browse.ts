@@ -840,6 +840,7 @@ async function runOnce(p: Proc, test: TestRun): Promise<void> {
       stdout: p.stdout,
       stderr: p.stderr,
       tty: p.tty,
+      parent: p,
     })
     const kill = () => task.kill()
     p.signal.addEventListener('abort', kill, { once: true })

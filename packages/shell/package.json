@@ -1,6 +1,6 @@
 {
   "name": "@cyberspace/shell",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "POSIX-subset shell: pipelines, redirects, globs, line editor.",
   "type": "module",
   "exports": {

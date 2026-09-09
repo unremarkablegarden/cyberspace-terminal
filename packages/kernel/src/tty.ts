@@ -8,6 +8,10 @@
 //
 // Echo is marked urgent on the way out, so a host that rate-limits program
 // output does not rate-limit keystroke echo.
+//
+// Job control: each job gets a JobTty view of this device. One view is in the
+// foreground and owns the keyboard, the screen and the mode; the others read
+// nothing, buffer their stdout and drop their frames. foreground() switches.
 
 import { type Source, type Sink, bytes, dec, Pipe } from './pipe.js'
 
@@ -66,7 +70,11 @@ export interface TtyControl {
 export class Tty implements TtyControl {
   cols: number
   rows: number
+  /** Handlers for a process reading this device directly. A foreground view's own take precedence. */
   onSigint: (() => void) | null = null
+  onSigtstp: (() => void) | null = null
+  /** The job view holding the terminal, or null while the shell has it. */
+  fgView: JobTty | null = null
 
   /** Whether the running program wants a caret shown. See paint(). */
   caret = true
@@ -133,6 +141,52 @@ export class Tty implements TtyControl {
     return this.quiet.has(key)
   }
 
+  /** A job's own view of this device. See JobTty. */
+  view(): JobTty {
+    return new JobTty(this)
+  }
+
+  /**
+   * Hand the terminal to a job view, or to the shell (null).
+   *
+   * The outgoing holder's alt screen is left so the shell's scrollback shows
+   * again; the incoming view's is re-entered and its buffered output flushed.
+   * Its program repaints on cont(), so nothing on screen is saved.
+   */
+  foreground(view: JobTty | null): void {
+    if (this.fgView === view) return
+    if (this.fgView) this.fgView.fg = false
+    // Only when the alt screen is up: see `alt`.
+    if (this.alt) this.paint('\x1b[?1049l\x1b[?25h')
+    this.fgView = view
+    if (!view) {
+      this.setCooked()
+      return
+    }
+    view.fg = true
+    this.raw = view.raw
+    this.line = ''
+    this.quiet = new Set(view.quiet)
+    this.paced = view.paced
+    this.caret = view.caret
+    if (view.alt) this.paint('\x1b[?1049h')
+    view.flush()
+  }
+
+  /** Where keystrokes go: the foreground view, else whoever reads the device itself. */
+  private get target(): Pipe {
+    return this.fgView?.keys ?? this.readers
+  }
+
+  private sigint(): void {
+    ;(this.fgView ? this.fgView.onSigint : this.onSigint)?.()
+  }
+
+  /** The ^Z handler in force, or null when ^Z is an ordinary byte. */
+  private get sigtstp(): (() => void) | null {
+    return this.fgView ? this.fgView.onSigtstp : this.onSigtstp
+  }
+
   /** Host side: keystroke bytes arrive here. */
   input(data: Uint8Array | string): void {
     if (this.raw) {
@@ -140,9 +194,16 @@ export class Tty implements TtyControl {
       // through as a byte and lets the program decide. That would leave a
       // program busy writing, enumerating or waiting on the network unable to
       // be stopped. The byte is delivered too, so a program can still tidy up.
-      const text = dec.decode(bytes(data))
-      if (text.includes('\x03')) this.onSigint?.()
-      this.readers.write(bytes(data))
+      let text = dec.decode(bytes(data))
+      if (text.includes('\x03')) this.sigint()
+      // ^Z is taken out of the stream when a job can be stopped: the program
+      // is losing the keyboard and has no use for the byte.
+      const tstp = this.sigtstp
+      if (tstp && text.includes('\x1a')) {
+        text = text.replaceAll('\x1a', '')
+        tstp()
+      }
+      if (text) this.target.write(bytes(text))
       return
     }
     for (const ch of dec.decode(bytes(data))) this.cookedKey(ch)
@@ -152,17 +213,26 @@ export class Tty implements TtyControl {
     if (ch === '\x03') {
       this.echo('^C\r\n')
       this.line = ''
-      this.onSigint?.()
+      this.sigint()
+      return
+    }
+    if (ch === '\x1a') {
+      const tstp = this.sigtstp
+      if (tstp) {
+        this.echo('^Z\r\n')
+        this.line = ''
+        tstp()
+      }
       return
     }
     if (ch === '\x04') {
       // EOF only at an empty line, as termios does.
-      if (this.line === '') this.readers.write(EOF_MARK)
+      if (this.line === '') this.target.write(EOF_MARK)
       return
     }
     if (ch === '\r' || ch === '\n') {
       this.echo('\r\n')
-      this.readers.write(this.line + '\n')
+      this.target.write(this.line + '\n')
       this.line = ''
       return
     }
@@ -241,3 +311,128 @@ export class Tty implements TtyControl {
 }
 
 const EOF_MARK = new Uint8Array([4])
+
+/** Bytes of stdout kept for a job that is not in the foreground; the oldest go first past this. */
+const HOLD_MAX = 64 * 1024
+
+/**
+ * One job's terminal.
+ *
+ * Holds the job's own mode (raw, silenced keys, pacing, caret, alt screen) and
+ * applies it to the device only while in the foreground, so a job that is
+ * stopped mid-frame leaves nothing on the device and comes back as it was.
+ * Reads block while not in the foreground because nothing writes `keys`.
+ * stdout is held and flushed on foreground; paint and echo are dropped, since
+ * a frame is a diff against the frame before it and is wrong out of sequence.
+ */
+export class JobTty implements TtyControl {
+  /** Set by Tty.foreground(). */
+  fg = false
+  keys = new Pipe()
+  raw = false
+  alt = false
+  caret = true
+  paced = true
+  quiet = new Set<string>()
+  /** Set by the shell for the job; the device consults them while the view is in the foreground. */
+  onSigint: (() => void) | null = null
+  onSigtstp: (() => void) | null = null
+
+  private held: Uint8Array[] = []
+  private heldBytes = 0
+
+  constructor(private root: Tty) {}
+
+  get cols(): number { return this.root.cols }
+  get rows(): number { return this.root.rows }
+
+  setRaw(): void {
+    this.raw = true
+    if (this.fg) this.root.setRaw()
+  }
+
+  setCooked(): void {
+    this.raw = false
+    this.caret = true
+    this.quiet.clear()
+    this.paced = true
+    if (this.fg) this.root.setCooked()
+  }
+
+  setPaced(on: boolean): void {
+    this.paced = on
+    if (this.fg) this.root.setPaced(on)
+  }
+
+  silence(keys: string[]): void {
+    this.quiet = new Set(keys)
+    if (this.fg) this.root.silence(keys)
+  }
+
+  isSilent(key: string): boolean {
+    return this.quiet.has(key)
+  }
+
+  echo(s: string): void {
+    if (this.fg) this.root.echo(s)
+  }
+
+  paint(s: string): void {
+    const hide = s.lastIndexOf('\x1b[?25l')
+    const show = s.lastIndexOf('\x1b[?25h')
+    if (hide !== -1 || show !== -1) this.caret = show > hide
+    this.trackAlt(s)
+    if (this.fg) this.root.paint(s)
+  }
+
+  copy(text: string): void {
+    this.root.copy(text)
+  }
+
+  get stdin(): Source {
+    const view = this
+    return {
+      isInteractive: true,
+      async read() {
+        const c = await view.keys.read()
+        if (c && c.length === 1 && c[0] === 4) return null
+        return c
+      },
+      interrupt: () => {
+        const old = this.keys
+        this.keys = new Pipe()
+        old.end()
+      },
+    }
+  }
+
+  get stdout(): Sink {
+    return {
+      write: (data: Uint8Array | string) => {
+        const s = typeof data === 'string' ? data : dec.decode(data)
+        this.trackAlt(s)
+        if (this.fg) { this.root.stdout.write(s); return }
+        const b = bytes(s)
+        this.held.push(b)
+        this.heldBytes += b.length
+        while (this.heldBytes > HOLD_MAX && this.held.length > 1) {
+          this.heldBytes -= this.held.shift()!.length
+        }
+      },
+      end() {},
+    }
+  }
+
+  /** Write out what was held while stopped. Called by Tty.foreground(). */
+  flush(): void {
+    const chunks = this.held.splice(0)
+    this.heldBytes = 0
+    for (const c of chunks) this.root.stdout.write(c)
+  }
+
+  private trackAlt(s: string): void {
+    const up = Math.max(s.lastIndexOf('\x1b[?1049h'), s.lastIndexOf('\x1b[?47h'))
+    const down = Math.max(s.lastIndexOf('\x1b[?1049l'), s.lastIndexOf('\x1b[?47l'))
+    if (up !== -1 || down !== -1) this.alt = up > down
+  }
+}

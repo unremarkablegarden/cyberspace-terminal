@@ -170,6 +170,19 @@ connection throws NO CARRIER.
 See ~/bin/docs/NETWORK.txt.
 
 
+ctx.run — ANOTHER PROGRAM
+
+  const code = await ctx.run(name, argv)
+
+  await ctx.run('cmail', ['@name'])     open C-Mail with a member
+  await ctx.run('feed')
+
+The named program takes the terminal until it exits; the call returns
+its exit code and the program's own screen is put back. Allowed names:
+cmail, circ, feed, globe, finger, browse. Any other name throws
+NO CARRIER.
+
+
 WHAT IS INERT
 
 Present on ctx, and does nothing useful:
@@ -232,6 +245,14 @@ COMING BACK
 
 A reload within ten minutes restores the screen and runs that line
 again. Programs for this machine only.
+
+  p.onStop = () => ...       the job left the foreground (^Z, the switcher):
+                            close streams, stop timers, keep state
+  p.onCont = () => ...       it is back: reconnect and repaint; frames
+                            drawn while stopped were dropped
+
+Without them a stopped job is frozen by the terminal alone: reads block,
+output waits, and it comes back to a blank screen until it draws.
 
 
 A WASM PROGRAM

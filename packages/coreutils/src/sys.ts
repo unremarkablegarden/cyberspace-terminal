@@ -71,8 +71,8 @@ export const falseCmd: Program = () => 1
  * as a program without being named anywhere.
  */
 const SHELL = new Set([
-  'cat', 'clear', 'cp', 'date', 'echo', 'env', 'false', 'grep', 'head', 'hostname',
-  'less', 'ls', 'mkdir', 'motd', 'mv', 'reboot', 'rm', 'rmdir', 'sh', 'sleep',
+  'cat', 'clear', 'cp', 'date', 'echo', 'env', 'false', 'fg', 'grep', 'head', 'hostname',
+  'kill', 'less', 'ls', 'mkdir', 'motd', 'mv', 'ps', 'reboot', 'rm', 'rmdir', 'sh', 'sleep',
   'sort', 'tail', 'touch', 'true', 'uname', 'uniq', 'wc', 'which', 'whoami',
 ])
 

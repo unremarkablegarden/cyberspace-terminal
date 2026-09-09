@@ -105,6 +105,18 @@ function fail(p: Proc, name: string, e: unknown): number {
   return 1
 }
 
+/**
+ * What login(1) says in place of the server's wording. An unverified address is
+ * refused on every authenticated request, and the machine sends no verification
+ * mail, so the message names where to ask for one. Null leaves the error alone.
+ */
+function loginError(e: unknown): string | null {
+  if (!(e instanceof ApiError)) return null
+  if (e.status === 401) return 'Login incorrect'
+  if (e.code === 'EMAIL_NOT_VERIFIED') return 'E-mail not verified; verify at cyberspace.online'
+  return null
+}
+
 const when = (v: unknown): string => {
   const d = typeof v === 'number' || typeof v === 'string' ? new Date(v) : null
   return d && !isNaN(d.getTime()) ? d.toISOString().slice(0, 10) : ''
@@ -157,9 +169,8 @@ export function cyberspacePrograms(api: ApiClient, hooks?: CsHooks, snd: ChatSou
           onSubmit: ([email, password]) => api.login(email.trim(), password).then(
             () => { form.notice('Access granted'); return unlock(password).then(() => dial(line, snd)).then(() => null) },
             e => ({
-              message: e instanceof ApiError && e.status === 401
-                ? 'Login incorrect'
-                : (e as { reason?: string; message?: string }).reason ?? (e as Error).message ?? String(e),
+              message: loginError(e)
+                ?? (e as { reason?: string; message?: string }).reason ?? (e as Error).message ?? String(e),
               clear: [1],
             })),
           onDone: v => done(v && v[0].trim()),
@@ -184,8 +195,9 @@ export function cyberspacePrograms(api: ApiClient, hooks?: CsHooks, snd: ChatSou
       try {
         username = await api.login(email, password)
       } catch (e) {
-        if (e instanceof ApiError && e.status === 401) {
-          p.err('Login incorrect\n')
+        const known = loginError(e)
+        if (known) {
+          p.err(known + '\n')
           return 1
         }
         return fail(p, 'login', e)
@@ -213,6 +225,8 @@ export function cyberspacePrograms(api: ApiClient, hooks?: CsHooks, snd: ChatSou
       p.err('logout: not logged in\n')
       return 1
     }
+    // Stopped jobs hold presence and a token that are about to be gone.
+    p.kernel.jobs.killAll()
     // The last sync needs the token; the key goes with the session.
     await hooks?.onLeave?.().catch(() => {})
     hooks?.homeKey?.clear()

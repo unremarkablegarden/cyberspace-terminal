@@ -5,6 +5,7 @@
 import { configure, fs, InMemory } from '@zenfs/core'
 import { Kernel } from '../packages/kernel/src/kernel.ts'
 import { Tty } from '../packages/kernel/src/tty.ts'
+import { Resume } from '../packages/kernel/src/resume.ts'
 import { Terminal } from '../app/node_modules/@xterm/headless/lib-headless/xterm-headless.js'
 import { feedProgram } from '../apps/cyberspace/src/feed.ts'
 import type { ApiClient } from '../apps/cyberspace/src/api.ts'
@@ -53,6 +54,8 @@ const api = {
 } as unknown as ApiClient
 
 const kernel = new Kernel()
+// One resume slot shared by every run, as a job's would be.
+let resume = new Resume()
 const feed = feedProgram(api)
 
 function boot(argv: string[]) {
@@ -61,7 +64,7 @@ function boot(argv: string[]) {
   const tty = new Tty(d => { out += new TextDecoder().decode(d); xt.write(d) }, 80, 24)
   const task = kernel.spawn(feed, {
     argv, env: { HOME: '/home/x' }, cwd: '/home/x',
-    stdin: tty.stdin, stdout: tty.stdout, stderr: tty.stdout, tty,
+    stdin: tty.stdin, stdout: tty.stdout, stderr: tty.stdout, tty, resume,
   })
   // The raw stream is checked for control sequences; the screen for text, since
   // the diff renderer may split a label across writes.
@@ -71,14 +74,14 @@ function boot(argv: string[]) {
   }
   return { tty, task, out: () => out, screen, reset: () => { out = '' } }
 }
-const state = () => kernel.resume.state as { v: number; screens: { author?: string; sel: number; open?: { id: string }; modal?: string }[]; draft?: { body: string } }
+const state = () => resume.state as { v: number; screens: { author?: string; sel: number; open?: { id: string }; modal?: string }[]; draft?: { body: string } }
 
 // --- a fresh run -------------------------------------------------------------
 {
   const m = boot(['feed'])
   await sleep(1500)
   ok('alt screen entered', m.out().includes('\x1b[?1049h'))
-  ok('resume line is feed', kernel.resume.line === 'feed')
+  ok('resume line is feed', resume.line === 'feed')
   ok('first page fetched', calls.some(c => c.startsWith('GET /v1/posts?limit=')))
   ok('settings and me read', calls.includes('GET /v1/settings') && calls.includes('GET /v1/users/me'))
   ok('titles printed', m.screen().includes('Post number 1') && m.screen().includes('Post number 5'))
@@ -101,14 +104,14 @@ const state = () => kernel.resume.state as { v: number; screens: { author?: stri
   m.tty.input('\x1b[B'); await sleep(100)
   m.reset(); m.tty.input('u'); await sleep(1200)
   ok('U pushes bob list', state()?.screens.length === 2 && state()?.screens[1]?.author === 'bob', JSON.stringify(state()?.screens))
-  ok('resume line stays feed (the stack is in the state)', kernel.resume.line === 'feed')
+  ok('resume line stays feed (the stack is in the state)', resume.line === 'feed')
   ok('bob posts fetched', calls.some(c => c.startsWith('GET /v1/users/bob/posts')))
   ok('bob profile fetched', calls.includes('GET /v1/users/bob'))
   ok('only bob printed', m.screen().includes('Post number 2') && !m.screen().includes('Post number 1'))
 
   m.tty.input('\x1b'); await sleep(200)
   ok('Escape pops back', state()?.screens.length === 1)
-  ok('resume line back to feed', kernel.resume.line === 'feed')
+  ok('resume line back to feed', resume.line === 'feed')
 
   m.reset(); m.tty.input('w'); await sleep(200)
   m.tty.input('draft words'); await sleep(200)
@@ -130,7 +133,8 @@ const state = () => kernel.resume.state as { v: number; screens: { author?: stri
 // --- restore ----------------------------------------------------------------
 {
   calls.length = 0
-  kernel.resume.restore('feed', {
+  resume = new Resume()
+  resume.restore('feed', {
     v: 1,
     screens: [{ sel: 1, open: { id: 'p2', scroll: 0, sel: 0 } }, { author: 'bob', sel: 1 }],
     draft: { title: 't', body: 'parked body', topics: '', blog: false, nsfw: false, vent: false },
@@ -141,7 +145,7 @@ const state = () => kernel.resume.state as { v: number; screens: { author?: stri
   ok('stack restored', s?.screens.length === 2 && s.screens[1]?.author === 'bob', JSON.stringify(s?.screens))
   ok('inner selection restored', s?.screens[1]?.sel === 1)
   ok('open post restored underneath', s?.screens[0]?.open?.id === 'p2')
-  ok('resume line stays feed', kernel.resume.line === 'feed')
+  ok('resume line stays feed', resume.line === 'feed')
   ok('draft restored', s?.draft?.body === 'parked body')
   ok('bob list printed', m.screen().includes('Post number 4'))
   ok('restored replies fetched once', calls.filter(c => c.includes('/v1/posts/p2/replies')).length === 1)
@@ -155,7 +159,7 @@ const state = () => kernel.resume.state as { v: number; screens: { author?: stri
 {
   const m = boot(['feed', '@bob'])
   await sleep(1500)
-  ok('argv author', kernel.resume.line === 'feed @bob')
+  ok('argv author', resume.line === 'feed @bob')
   ok('argv list only bob', m.screen().includes('Post number 2') && !m.screen().includes('Post number 1'))
   ok('single screen', state()?.screens.length === 1 && state()?.screens[0]?.author === 'bob', JSON.stringify(state()?.screens))
   m.tty.input('\x1b'); await sleep(200); m.tty.input('y'); await sleep(300)

@@ -11,6 +11,20 @@ export const MOBILE = /mobi|android/i.test(navigator.userAgent) && !/ipad|tablet
 /** An iPad: touch on a 'Mac' or 'iPad' user agent. Its keyboards have no F row or Escape. */
 export const TABLET = !MOBILE && navigator.maxTouchPoints > 1 && /ipad|macintosh/i.test(navigator.userAgent)
 
+/** A Mac, an iPhone or an iPad: the machines whose host modifier is Cmd. */
+export const MAC = /Mac|iPhone|iPad|iPod/.test(navigator.platform)
+  || /Macintosh|MacIntel|MacPPC|Mac68K/.test(navigator.userAgent)
+
+/**
+ * The platform's own modifier, as the site reads it (usePlatform): Cmd on a
+ * Mac, Ctrl everywhere else. It carries the keys the machine answers itself,
+ * the switcher among them, so on Windows and Linux ^K reaches the switcher
+ * rather than the shell's kill-to-end-of-line. The site takes the same key for
+ * its command palette.
+ */
+export const hostModifier = (e: { metaKey: boolean; ctrlKey: boolean }): boolean =>
+  MAC ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey
+
 export const COLS = MOBILE ? 44 : 80
 export const ROWS = MOBILE ? 20 : 25
 export const HOME = '/home/guest'

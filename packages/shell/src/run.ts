@@ -2,7 +2,7 @@
 
 import {
   Pipe, fileSource, fileSink, fs, paths,
-  type Proc, type Task, type Source, type Sink, type Program,
+  type Proc, type Task, type Source, type Sink, type Program, type Job,
 } from '@cyberspace/kernel'
 import { parse, ParseError, type Cmd } from './parse.js'
 import { expandWord, expandOne, type ExpandCtx } from './expand.js'
@@ -10,6 +10,14 @@ import { expandWord, expandOne, type ExpandCtx } from './expand.js'
 export class ShellExit {
   constructor(public code: number) {}
 }
+
+/** Thrown out of a pipeline when its job was stopped; the rest of the list is abandoned. */
+export class JobStopped {
+  constructor(public job: Job) {}
+}
+
+/** Exit status of a stopped job, as bash reports it. */
+export const STOPPED_STATUS = 148
 
 export interface ShellState {
   proc: Proc
@@ -20,7 +28,23 @@ export interface ShellState {
    */
   exported: Set<string>
   status: number
+  /**
+   * Set by the exit builtin, read by runLine after the pipeline. The builtin
+   * runs as a process, so a throw from it would be caught by the kernel and
+   * reported as an error rather than ending the shell.
+   */
+  exiting?: number
+  /** Whether the last `exit` was refused for stopped jobs; a second in a row goes through. */
+  warnedJobs?: boolean
+  /** Set by the fg builtin: the job to foreground once the fg pipeline itself has exited. */
+  foregroundNext?: Job
 }
+
+/** Whether this shell has the job table, and so runs each pipeline as a job. */
+export const jobControl = (sh: ShellState): boolean => sh.proc.kernel.jobs.owns(sh.proc)
+
+/** The line ps and the Stopped notice print: the expanded words, stages joined by a pipe. */
+const lineOf = (argvs: string[][]): string => argvs.map(a => a.join(' ')).join(' | ')
 
 /** Set a shell variable, publishing it to the environment when it is exported. */
 export function setVar(sh: ShellState, name: string, value: string): void {
@@ -47,15 +71,74 @@ export async function runLine(sh: ShellState, src: string): Promise<number> {
     throw e
   }
 
+  let sawExit = false
   for (const { op, pipeline } of list.items) {
     if (op === '&&' && sh.status !== 0) continue
     if (op === '||' && sh.status === 0) continue
-    sh.status = await runPipeline(sh, pipeline.cmds)
+    try {
+      sh.status = await runPipeline(sh, pipeline.cmds)
+    } catch (e) {
+      if (!(e instanceof JobStopped)) throw e
+      sh.status = STOPPED_STATUS
+      break
+    }
+    if (sh.exiting !== undefined) {
+      const code = sh.exiting
+      sh.exiting = undefined
+      sawExit = true
+      if (refuseExit(sh)) break
+      throw new ShellExit(code)
+    }
+    if (sh.foregroundNext) {
+      const job = sh.foregroundNext
+      sh.foregroundNext = undefined
+      try {
+        sh.status = await foregroundJob(sh, job)
+      } catch (e) {
+        if (!(e instanceof JobStopped)) throw e
+        sh.status = STOPPED_STATUS
+        break
+      }
+    }
   }
+  // Any other command resets the exit refusal.
+  if (!sawExit) sh.warnedJobs = false
   return sh.status
 }
 
-async function runPipeline(sh: ShellState, cmds: Cmd[]): Promise<number> {
+/**
+ * The exit refusal: with jobs in the table the first `exit` is refused and the
+ * second in a row goes through, killing them, as bash does. True when refused.
+ */
+export function refuseExit(sh: ShellState): boolean {
+  const jobs = sh.proc.kernel.jobs
+  if (!jobControl(sh) || !jobs.list().length) return false
+  if (sh.warnedJobs) {
+    jobs.killAll()
+    return false
+  }
+  sh.warnedJobs = true
+  sh.proc.err('There are stopped jobs.\n')
+  return true
+}
+
+/**
+ * Run a parked job's line again. Only the first pipeline of the line is the
+ * job; the shell stored the line the program declared, which is one command.
+ */
+export async function runParked(sh: ShellState, job: Job): Promise<void> {
+  const list = parse(job.line)
+  const cmds = list.items[0]?.pipeline.cmds ?? []
+  await runPipeline(sh, cmds, job)
+}
+
+/**
+ * Run a pipeline. Under job control the pipeline is a job: its processes get
+ * the job's terminal view and resume slot, and the shell waits for either the
+ * exit or a stop. `job` is a parked job being spawned again; otherwise a job
+ * is created for the pipeline.
+ */
+async function runPipeline(sh: ShellState, cmds: Cmd[], job?: Job): Promise<number> {
   // Pure assignment: set shell variables.
   if (cmds.length === 1 && !cmds[0].words.length) {
     for (const a of cmds[0].assigns) {
@@ -96,26 +179,42 @@ async function runPipeline(sh: ShellState, cmds: Cmd[]): Promise<number> {
     stages.push({ argv, program, env, redirs })
   }
 
+  const jobs = sh.proc.kernel.jobs
+  if (jobControl(sh) && !job) {
+    // One job per program: the name runs again, the running job comes back.
+    const existing = stages.length === 1 ? jobs.byName(paths.basename(stages[0].argv[0])) : undefined
+    if (existing) {
+      if (stages[0].argv.length > 1) jobs.args(existing, stages[0].argv)
+      return foregroundJob(sh, existing)
+    }
+    job = jobs.create(lineOf(stages.map(s => s.argv)))
+  }
+  const tty = job ? job.tty : sh.proc.tty
+  // The terminal goes to the job before its processes start. See Jobs.start.
+  if (job) jobs.start(job)
+
   // Wire the stages, then start them all.
   const tasks: Task[] = []
   const sinksToClose: Sink[] = []
-  let prevOut: Source = sh.proc.stdin
+  // The job's view of the keyboard, when the shell's stdin is the keyboard.
+  const ttyIn: Source = job && sh.proc.stdin.isInteractive ? job.tty.stdin : sh.proc.stdin
+  let prevOut: Source = ttyIn
 
   for (let i = 0; i < stages.length; i++) {
     const st = stages[i]
     const last = i === stages.length - 1
 
-    let stdin: Source = i === 0 ? sh.proc.stdin : prevOut
+    let stdin: Source = i === 0 ? ttyIn : prevOut
     let stdout: Sink
     let nextIn: Source | null = null
     if (last) {
-      stdout = sh.proc.stdout
+      stdout = job ? job.tty.stdout : sh.proc.stdout
     } else {
       const pipe = new Pipe()
       stdout = pipe
       nextIn = pipe
     }
-    let stderr: Sink = sh.proc.stderr
+    let stderr: Sink = job ? job.tty.stdout : sh.proc.stderr
 
     try {
       for (const r of st.redirs) {
@@ -128,8 +227,11 @@ async function runPipeline(sh: ShellState, cmds: Cmd[]): Promise<number> {
         }
       }
     } catch (e) {
-      sh.proc.err(`sh: ${(e as Error).message ?? e}\n`)
       for (const t of tasks) t.kill()
+      // Drop the job before the message: it holds the terminal from the line
+      // above, and remove() hands it back to the shell.
+      if (job) jobs.remove(job)
+      sh.proc.err(`sh: ${(e as Error).message ?? e}\n`)
       return 1
     }
 
@@ -140,7 +242,8 @@ async function runPipeline(sh: ShellState, cmds: Cmd[]): Promise<number> {
       stdin,
       stdout,
       stderr,
-      tty: sh.proc.tty,
+      tty,
+      resume: job?.resume,
     })
     // EOF the pipe into the next stage when this one exits.
     if (nextIn) {
@@ -151,25 +254,39 @@ async function runPipeline(sh: ShellState, cmds: Cmd[]): Promise<number> {
     prevOut = nextIn ?? prevOut
   }
 
-  // ^C kills the whole foreground pipeline and restores the terminal.
+  if (job) {
+    // ^C kills the job; ^Z stops it. The terminal is restored by
+    // Tty.foreground(null) when the job leaves the foreground either way.
+    job.tty.onSigint = () => { for (const t of tasks) t.kill() }
+    job.tty.onSigtstp = () => { void jobs.stop(job) }
+    jobs.attach(job, tasks)
+    try {
+      return await foregroundJob(sh, job)
+    } finally {
+      await Promise.all(sinksToClose.map(s => s.end()))
+    }
+  }
+
+  // No job control: a nested shell, a script. ^C kills the pipeline and
+  // restores the terminal.
   //
   // The kill alone is not enough for a full-screen program: killed mid-paint it
   // never reaches its own finally, so the alt screen and raw mode would outlive
   // it and leave the prompt invisible. Both calls are idempotent, so they cost
   // nothing when the program does clean up.
-  const tty = sh.proc.tty as {
+  const plain = tty as {
     onSigint?: (() => void) | null
     setCooked?: () => void
     paint?: (s: string) => void
     alt?: boolean
   } | undefined
-  const prevSigint = tty?.onSigint
-  if (tty) {
-    tty.onSigint = () => {
+  const prevSigint = plain?.onSigint
+  if (plain) {
+    plain.onSigint = () => {
       for (const t of tasks) t.kill()
       // Only when the alt screen is up: see Tty.alt.
-      tty.paint?.(tty.alt ? '\x1b[?1049l\x1b[?25h' : '\x1b[?25h')
-      tty.setCooked?.()
+      plain.paint?.(plain.alt ? '\x1b[?1049l\x1b[?25h' : '\x1b[?25h')
+      plain.setCooked?.()
     }
   }
 
@@ -177,12 +294,37 @@ async function runPipeline(sh: ShellState, cmds: Cmd[]): Promise<number> {
     const codes = await Promise.all(tasks.map(t => t.wait))
     return codes[codes.length - 1]
   } finally {
-    if (tty) tty.onSigint = prevSigint ?? null
-    // The program has exited, so its resume point is discarded: the next bare
-    // `circ` opens on the default room.
-    sh.proc.kernel.resume.clear()
+    if (plain) plain.onSigint = prevSigint ?? null
     await Promise.all(sinksToClose.map(s => s.end()))
   }
+}
+
+/**
+ * Put a job in the foreground and wait. A parked job is spawned first. Returns
+ * the exit code; throws JobStopped when the job was stopped instead, after
+ * printing the Stopped line.
+ */
+export async function foregroundJob(sh: ShellState, job: Job): Promise<number> {
+  const jobs = sh.proc.kernel.jobs
+  if (job.state === 'parked') {
+    job.state = 'fg'
+    await runParked(sh, job)
+    // runParked ran the whole foreground; a parked job that stopped again threw.
+    return sh.status
+  }
+  jobs.foreground(job)
+  const outcome = await Promise.race([
+    job.exited.then(code => ({ code })),
+    job.stopped.then(() => ({ stopped: true as const })),
+  ])
+  if ('stopped' in outcome) {
+    sh.proc.out(`[${job.id}]+ Stopped  ${job.line}\n`)
+    throw new JobStopped(job)
+  }
+  // The program has exited, so its resume point goes with the job: the next
+  // bare `circ` opens on the default room.
+  jobs.remove(job)
+  return outcome.code
 }
 
 // --- builtins -------------------------------------------------------------
@@ -241,13 +383,63 @@ const BUILTINS: Record<string, Builtin> = {
   },
 
   exit(sh, p) {
-    throw new ShellExit(p.argv[1] ? Number(p.argv[1]) || 0 : sh.status)
+    sh.exiting = p.argv[1] ? Number(p.argv[1]) || 0 : sh.status
+    return 0
+  },
+
+  fg(sh, p) {
+    if (!jobControl(sh)) { p.err('fg: no job control\n'); return 1 }
+    const jobs = sh.proc.kernel.jobs
+    const word = p.argv[1]
+    const job = word === undefined ? jobs.current : jobByWord(sh, word)
+    if (!job) {
+      p.err(word === undefined ? 'fg: no current job\n' : `fg: ${word}: no such job\n`)
+      return 1
+    }
+    // fg itself is the foreground pipeline; the job goes up once fg is done.
+    sh.foregroundNext = job
+    return 0
+  },
+
+  ps(sh, p) {
+    if (!jobControl(sh)) { p.err('ps: no job control\n'); return 1 }
+    p.out('  PID STAT CMD\n')
+    const row = (pid: number | null, stat: string, cmd: string) =>
+      p.out(`${(pid === null ? '-' : String(pid)).padStart(5)} ${stat.padEnd(4)} ${cmd}\n`)
+    row(sh.proc.pid, 'R', 'sh')
+    for (const job of sh.proc.kernel.jobs.list()) {
+      const stat = job.state === 'fg' ? 'R' : 'T'
+      if (!job.tasks.length) { row(null, stat, job.line); continue }
+      for (const t of job.tasks) row(t.pid, stat, t.proc.argv.join(' '))
+    }
+    return 0
+  },
+
+  kill(sh, p) {
+    if (!jobControl(sh)) { p.err('kill: no job control\n'); return 1 }
+    const word = p.argv[1]
+    if (!word) { p.err('usage: kill pid | %job\n'); return 1 }
+    const job = jobByWord(sh, word)
+    if (!job) { p.err(`kill: ${word}: no such process\n`); return 1 }
+    sh.proc.kernel.jobs.kill(job)
+    return 0
   },
 
   history(sh, p) {
     void sh
     return 0 // replaced by the shell, which owns the history
   },
+}
+
+/** A job by `%n`, by pid, or by program name. */
+function jobByWord(sh: ShellState, word: string): Job | undefined {
+  const jobs = sh.proc.kernel.jobs
+  if (word.startsWith('%')) return jobs.byId(Number(word.slice(1)))
+  if (/^\d+$/.test(word)) {
+    const pid = Number(word)
+    return jobs.list().find(j => j.tasks.some(t => t.pid === pid))
+  }
+  return jobs.byName(word)
 }
 
 export function setHistoryBuiltin(fn: Builtin): void {

@@ -67,6 +67,7 @@ export function viewProgram(pictures: () => ChatPictures): Program {
       p.tty!.paint(s.render())
     }
 
+    p.onCont = () => { s.invalidate(); paint() }
     p.tty.setRaw()
     // Clear the progress line before switching to the alt screen, so it does not
     // reappear on exit.

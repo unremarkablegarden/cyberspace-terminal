@@ -238,8 +238,8 @@ export function entryLines(m: ChatMessage, width: number, opts: EntryOptions = {
   // name. In an action it sits within the sentence rather than its own column,
   // so the span moves with it and carries the highlight weight.
   const name: LineSpan = m.action
-    ? { at: head.length, len: nick(m).length, attr: BRIGHT | lit }
-    : { at: 6, len: NICK_W, attr: BRIGHT }
+    ? { at: head.length, len: nick(m).length, attr: BRIGHT | BOLD | lit }
+    : { at: 6, len: NICK_W, attr: BRIGHT | BOLD }
 
   // The timestamp is drawn DIM so the name reads first. An action has no
   // timestamp; it runs from the margin.
@@ -329,7 +329,7 @@ export function narrowLines(m: ChatMessage, width: number, opts: EntryOptions = 
     attr: NORMAL | lit,
     spans: [
       { at: 0, len: time.length, attr: DIM | lit },
-      { at: time.length + 1, len: who.length, attr: BRIGHT | lit },
+      { at: time.length + 1, len: who.length, attr: BRIGHT | BOLD | lit },
     ],
     bar: forMe,
     barFrom: 0,

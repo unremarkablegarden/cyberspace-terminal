@@ -47,4 +47,31 @@ console.log(rows(s).filter(r => r.trim()).join('\n'))
 for (const ch of 'pw') key(ch)
 key('Enter'); await tick()
 console.log('done:', done)
+
+// A refusal wider than the box, on a 44-column phone: the status wraps over
+// rows and the box grows, rather than the message being cut at the margin.
+const VERIFY = 'E-mail not verified; verify at cyberspace.online'
+const narrow = new Surface(44, 20)
+const box = new FormPopup({
+  title: 'LOGIN',
+  fields: [{ label: 'E-Mail:', value: 'a@b.c' }, { label: 'Password:', mask: '*' }],
+  bounds: { x: 0, y: 0, w: 44, h: 20 },
+  onSubmit: async () => ({ message: VERIFY, clear: [1] }),
+  onDone: () => {},
+})
+const quiet = box.rect(narrow).h
+const type = (k: string) => box.onKey({ key: k, ctrlKey: false, shiftKey: false, metaKey: false, altKey: false })
+for (const ch of 'pw') type(ch)
+type('Enter')
+await tick()
+box.draw(narrow)
+const r = box.rect(narrow)
+const shown = rows(narrow).map(l => l.trim()).filter(Boolean)
+const inside = (l: string) => l.replace(/^\u2502/, '').replace(/\u2502$/, '').trim()
+const said = shown.map(inside).filter(l => VERIFY.startsWith(l) || VERIFY.endsWith(l)).join(' ')
+console.log('--- 44 columns')
+console.log(shown.join('\n'))
+console.log('box grew by the status rows:', r.h === quiet + 3, `${quiet} -> ${r.h}`)
+console.log('message whole across rows:', said === VERIFY)
+console.log('rows fit the box:', shown.every(l => l.length <= r.w))
 process.exit(0)

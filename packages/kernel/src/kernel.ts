@@ -6,6 +6,7 @@ import { basename, join, resolve } from './paths.js'
 import { dec, type Sink } from './pipe.js'
 import { isWasm, runWasi } from './wasi.js'
 import { Resume } from './resume.js'
+import { Jobs } from './jobs.js'
 
 export class Kernel {
   readonly fs = fs.promises
@@ -13,10 +14,12 @@ export class Kernel {
   release = '0'
   /** Extra executable-file formats, tried after wasm and shebangs. */
   fileHandlers: ((path: string, data: Uint8Array) => Program | null)[] = []
-  /** Resume slot for the foreground program. See Resume. */
-  readonly resume = new Resume()
+  /** The job table. See jobs.ts. */
+  readonly jobs = new Jobs()
   private programs = new Map<string, Program>()
   private nextPid = 1
+  /** Tasks each process spawned on its own terminal, for stop() and cont(). */
+  private children = new WeakMap<Proc, Set<Task>>()
 
   register(name: string, program: Program): void {
     this.programs.set(name, program)
@@ -80,6 +83,7 @@ export class Kernel {
   spawn(program: Program, opts: SpawnOptions): Task {
     const pid = this.nextPid++
     const ac = new AbortController()
+    const resume = opts.resume ?? new Resume()
 
     let killed = false
 
@@ -112,10 +116,13 @@ export class Kernel {
       tty: opts.tty,
       out: s => stdout.write(s),
       err: s => stderr.write(s),
-      setResume: line => { this.resume.line = line },
-      setState: value => { this.resume.state = value },
-      takeState: () => this.resume.takeState(),
+      setResume: line => { resume.line = line },
+      setState: value => { resume.state = value },
+      takeState: () => resume.takeState(),
     }
+    const kids = new Set<Task>()
+    this.children.set(proc, kids)
+    const siblings = opts.parent ? this.children.get(opts.parent) : undefined
     const run = (async () => {
       try {
         const code = await program(proc)
@@ -130,9 +137,10 @@ export class Kernel {
     let resolveKill!: (code: number) => void
     const killedP = new Promise<number>(res => { resolveKill = res })
 
-    return {
+    const task: Task = {
       pid,
       proc,
+      resume,
       wait: Promise.race([run, killedP]),
       kill() {
         killed = true
@@ -140,7 +148,18 @@ export class Kernel {
         opts.stdin.interrupt?.()
         resolveKill(130)
       },
+      async stop() {
+        for (const kid of kids) await kid.stop()
+        await proc.onStop?.()
+      },
+      cont() {
+        proc.onCont?.()
+        for (const kid of kids) kid.cont()
+      },
     }
+    siblings?.add(task)
+    void task.wait.then(() => siblings?.delete(task))
+    return task
   }
 
   /** Create the base tree and stamp /bin with one marker per program. */

@@ -9,7 +9,7 @@
 // asks for is trusted more than the capability it names: api stays /v1/, image
 // stays behind the host's whitelist, and the token is never on this channel.
 
-import { dec, type Proc, type Program } from '@cyberspace/kernel'
+import { dec, runOnTty, allowedHandoff, type Proc, type Program } from '@cyberspace/kernel'
 import { PICT_RANGE, type CompatDeps, type CompatPictures } from './host.js'
 import type { MainMessage, RunMessage, WorkerMessage } from './program.worker.js'
 
@@ -53,10 +53,18 @@ export function jsFileHandler(deps: CompatDeps): (path: string, data: Uint8Array
 }
 
 async function serve(
-  deps: CompatDeps, pictures: CompatPictures | undefined,
+  p: Proc, deps: CompatDeps, pictures: CompatPictures | undefined,
   kind: Extract<WorkerMessage, { t: 'cap' }>['kind'], args: unknown[],
 ): Promise<unknown> {
   switch (kind) {
+    // The name is checked here, on this side of the worker: the list is the
+    // whole grant, and a forged message names nothing else.
+    case 'run': {
+      const name = String(args[0])
+      if (!allowedHandoff(name)) throw new Error('NO CARRIER')
+      const argv = Array.isArray(args[1]) ? (args[1] as unknown[]).map(String) : []
+      return runOnTty(p, name, argv)
+    }
     case 'api.get': return deps.api ? deps.api.get(v1(args[0])) : Promise.reject(new Error('NO CARRIER'))
     case 'api.post': return deps.api ? deps.api.post(v1(args[0]), args[1]) : Promise.reject(new Error('NO CARRIER'))
     case 'api.del': return deps.api ? deps.api.del(v1(args[0])) : Promise.reject(new Error('NO CARRIER'))
@@ -113,7 +121,7 @@ function runInWorker(p: Proc, source: string, deps: CompatDeps): Promise<number>
         case 'copy': p.tty?.copy(m.text); return
         case 'pict': pictures?.set(m.codes, bitmaps(m.bits)); return
         case 'cap':
-          serve(deps, pictures, m.kind, m.args).then(
+          serve(p, deps, pictures, m.kind, m.args).then(
             value => worker.postMessage({ t: 'cap-result', id: m.id, ok: true, value } satisfies MainMessage),
             (err: unknown) => worker.postMessage({ t: 'cap-result', id: m.id, ok: false, error: (err as Error)?.message ?? String(err) } satisfies MainMessage),
           )
@@ -149,7 +157,7 @@ function runInWorker(p: Proc, source: string, deps: CompatDeps): Promise<number>
       rows: p.tty?.rows ?? (Number(p.env.LINES) || 25),
       version: deps.version,
       username: deps.username?.(),
-      caps: { api: !!deps.api, feed: !!deps.feed, image: !!deps.image },
+      caps: { api: !!deps.api, feed: !!deps.feed, image: !!deps.image, run: true },
       metrics: pictures?.metrics(),
       pict: pictures?.range(PICT_RANGE),
     }

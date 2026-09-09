@@ -74,7 +74,11 @@ export interface PagesSite {
 export class ApiClient {
   username: string | null = null
   userId: string | null = null
-  /** Supporter, subscriber or admin: the tier that gets ~/public_html and home sync. */
+  /**
+   * The tier that gets ~/public_html and home sync. The API publishes one
+   * `isSupporter` for both kinds of supporter, a lifetime grant and an active
+   * subscription; admins pass the same gates.
+   */
   supporter = false
   onAuthChange: ((username: string | null) => void) | null = null
 
@@ -102,7 +106,15 @@ export class ApiClient {
     this.#idToken = r.idToken
     this.#refreshToken = r.refreshToken
     this.storage.set(r.refreshToken)
-    await this.loadMe()
+    // A profile that will not load is not a session. An unverified address
+    // authenticates and is then refused on every request, so the token is
+    // dropped rather than left for the machine to keep failing with.
+    try {
+      await this.loadMe()
+    } catch (e) {
+      this.logout()
+      throw e
+    }
     return this.username ?? email
   }
 
@@ -217,11 +229,11 @@ export class ApiClient {
   private async loadMe(): Promise<void> {
     const me = await this.get<{
       username?: string; userId?: string
-      isSupporter?: boolean; isSubscriber?: boolean; isSiteAdmin?: boolean
+      isSupporter?: boolean; isSiteAdmin?: boolean
     }>('/v1/users/me')
     this.username = me.username ?? null
     this.userId = me.userId ?? null
-    this.supporter = me.isSupporter === true || me.isSubscriber === true || me.isSiteAdmin === true
+    this.supporter = me.isSupporter === true || me.isSiteAdmin === true
     this.onAuthChange?.(this.username)
   }
 

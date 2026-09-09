@@ -8,7 +8,8 @@ persistent local filesystem, wasm programs. Part of
 No account required. Guest machines are fully local; `login` connects to the
 Cyberspace API.
 
-- Shell: pipelines, redirection, globs, `$?`, history, tab completion
+- Shell: pipelines, redirection, globs, `$?`, history, tab completion,
+  job control (`^Z`, `fg`, `ps`, `kill`; `CMD-K`/`CTRL-K` switches programs)
 - Filesystem: ZenFS on OPFS; the home directory persists in the browser, and
   follows a supporter between devices, encrypted on the machine (`sync`)
 - Programs: JS modules, wasm32-wasi binaries and `#!` scripts run as

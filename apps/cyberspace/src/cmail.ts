@@ -34,10 +34,15 @@ import { helpLines, routeSlash, slashNames, type LocalCommand } from './slash.js
 
 interface Conversation {
   conversationId: string
-  otherUser: { userId: string; username: string }
+  otherUser: { userId: string; username: string; deleted?: boolean }
   lastMessage: string
   lastMessageAt: number
   unreadCount: number
+}
+
+function gone(u: Conversation['otherUser']): boolean {
+  const name = (u.username ?? '').trim()
+  return u.deleted === true || name === '' || name === '[deleted]'
 }
 
 interface Msg extends MsgBody {
@@ -233,9 +238,9 @@ export function cmailProgram(
           // background, and full brightness would be a bright patch mid-row.
           s.text(listRect.x, y, (head + body).padEnd(listRect.w), on ? DIM : NORMAL, on ? 1 : 0)
           if (c.unreadCount > 0) s.text(listRect.x, y, mark, BRIGHT, on ? 1 : 0)
-          // The name is BRIGHT outside the bar and DIM|BOLD inside it, as in
+          // The name is BRIGHT|BOLD outside the bar and DIM|BOLD inside it, as in
           // select.ts.
-          s.text(listRect.x + MARK_W, y, name, on ? DIM | BOLD : BRIGHT, on ? 1 : 0)
+          s.text(listRect.x + MARK_W, y, name, on ? DIM | BOLD : BRIGHT | BOLD, on ? 1 : 0)
           const when = whenLabel(c.lastMessageAt).padStart(TIME_W)
           s.text(listRect.x + listRect.w - TIME_W, y, when, DIM, on ? 1 : 0)
         }
@@ -260,8 +265,11 @@ export function cmailProgram(
         // A conversation exists from the moment a thread is opened, before
         // anything is sent. The site's inbox hides those (blank lastMessage);
         // the same rule here, or the mailbox lists empty threads.
+        // A deleted account is a tombstone: the API flags it, and older ones
+        // hold a blank or '[deleted]' username. Nothing can be sent to one, so
+        // the thread is hidden rather than listed under a dead name.
         convs = (await api.get<Conversation[]>('/v1/cmail'))
-          .filter(c => (c.lastMessage ?? '') !== '')
+          .filter(c => (c.lastMessage ?? '') !== '' && !gone(c.otherUser))
           .map(c => ({
             ...c,
             otherUser: { ...c.otherUser, username: plain(c.otherUser.username) },
@@ -592,7 +600,13 @@ export function cmailProgram(
       p.setResume(`cmail @${threadOther}`)
       s.invalidate()
       drawThread()
+      connectThread()
+      markRead()
+      return true
+    }
 
+    const connectThread = (): void => {
+      stopStream?.()
       stopStream = followList(
         api,
         token => `${base}/dm_messages/${encodeURIComponent(convId)}.json` +
@@ -617,8 +631,6 @@ export function cmailProgram(
           markRead()
           feed()
         })
-      markRead()
-      return true
     }
 
     const leaveThread = (): void => {
@@ -818,6 +830,32 @@ export function cmailProgram(
     tty.silence(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown'])
     p.out('\x1b[?1049h')
     s.invalidate()
+
+    p.onStop = () => {
+      stopStream?.()
+      stopStream = null
+      if (readTimer) { clearTimeout(readTimer); readTimer = null }
+    }
+    /** A member named by `cmail @user` while stopped; opened on the next onCont. */
+    let pendingWho: string | undefined
+    p.onArgs = argv => { pendingWho = argv[1]?.replace(/^@/, '') || undefined }
+    p.onCont = () => {
+      s.invalidate()
+      if (pendingWho) {
+        const who = pendingWho
+        pendingWho = undefined
+        void openThread(who).then(ok => {
+          if (ok || !running) return
+          indexStatus = `no such member: @${who}`
+          snd.beep(220, 0.12)
+          if (mode === 'thread' && convId) { connectThread(); drawThread() }
+          else { drawIndex(); void loadIndex() }
+        })
+        return
+      }
+      if (mode === 'thread' && convId) { connectThread(); drawThread() }
+      else void loadIndex()
+    }
 
     try {
       const parked = readState(p.takeState())

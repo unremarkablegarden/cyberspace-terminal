@@ -53,6 +53,8 @@ export interface FeedReply {
 
 export interface FeedProfile {
   username: string
+  /** The account id, the key follows are filed under. */
+  userId?: string
   /** Only when set and different from the username. */
   displayName?: string
   bio?: string
@@ -117,6 +119,7 @@ export interface ApiReply extends Attached {
 }
 
 export interface ApiUser {
+  userId?: string
   username?: string
   displayName?: string
   bio?: string
@@ -200,7 +203,7 @@ export function toReply(reply: ApiReply): FeedReply {
   }
 }
 
-/** Badges follow the profile header's rules. isSubscriber is not public, so SUPPORTER reads isSupporter only. */
+/** Badges follow the profile header's rules. */
 export function toProfile(user: ApiUser, fallback: string): FeedProfile {
   const badges: string[] = []
   if (user.isSiteAdmin) badges.push('ADMIN')
@@ -213,6 +216,7 @@ export function toProfile(user: ApiUser, fallback: string): FeedProfile {
   const joined = ms(user.createdAt)
   return {
     username,
+    userId: user.userId,
     displayName: name && name !== username ? name : undefined,
     bio: user.bio ? decodeEntities(user.bio) : undefined,
     joined: joined || undefined,
@@ -225,9 +229,7 @@ export function toProfile(user: ApiUser, fallback: string): FeedProfile {
       ? { text: user.websiteName || user.websiteUrl, url: user.websiteUrl }
       : undefined,
     badges,
-    // The site shows the picture for supporters, subscribers and admins. The
-    // API strips isSubscriber from another member's profile, so a subscriber
-    // who is not also a supporter shows none here.
+    // A square picture is a supporter's, as on the site. Admins carry no supporter flag and get one too.
     picture: user.profilePictureUrl && (user.isSupporter || user.isSiteAdmin)
       ? user.profilePictureUrl
       : undefined,

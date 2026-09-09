@@ -24,6 +24,7 @@ import { bootMachine } from './machine'
 import { writeMotd } from './motd'
 import { ConfigBox, restoreSettings } from './settings'
 import { Screensaver } from './saver'
+import { JobPalette } from './palette'
 import { saverPrefs } from './prefs'
 import { Scrollback } from './scrollback'
 import { Keyboard } from './input'
@@ -150,6 +151,7 @@ let standbyAbort: AbortController | null = null
 let screen: CrtScreen
 let config: ConfigBox | null = null
 let saver: Screensaver | null = null
+let palette: JobPalette | null = null
 /** Time of the last key or pointer press, for the idle screensaver. */
 let lastActive = Date.now()
 
@@ -159,7 +161,8 @@ const keyboard = new Keyboard({
   snd,
   scroll,
   config: () => config,
-  overlay: () => (config?.open ? config : saver?.open ? saver : null),
+  palette: () => palette,
+  overlay: () => (config?.open ? config : saver?.open ? saver : palette?.open ? palette : null),
   activity: () => { lastActive = Date.now() },
   skipBoot: () => {
     if (!bootAbort) return false
@@ -199,6 +202,7 @@ async function shutdownProgram(p: Proc): Promise<number> {
   halted = true
   live = false
   await withGrid(() => implode(screen.term, snd))
+  machine?.jobs.killAll()
   killSession?.()
   return 0
 }
@@ -264,6 +268,7 @@ async function rebootProgram(p: Proc): Promise<number> {
   halted = true
   live = false
   await withGrid(() => implode(screen.term, snd))
+  machine?.jobs.killAll()
   // Drop the mark that would make the reload a warm boot.
   store.remove('lastSeen')
   rebootOnto()
@@ -301,8 +306,7 @@ function saveSession(): void {
       excludeModes: true,
     }),
     cwd: shell.env.PWD || ENV.HOME,
-    resume: machine.resume.line,
-    state: machine.resume.state,
+    ...machine.jobs.park(),
   }
   try {
     store.set('session', JSON.stringify(blob))
@@ -336,6 +340,7 @@ const program = {
     restoreSettings(s, snd)
     config = new ConfigBox(s, snd, () => void writeMotd(api.username))
     saver = new Screensaver(s, snd, () => halted || !live)
+    palette = new JobPalette(s, snd, () => machine)
     // The idle timer. Coarse on purpose: the timeout is in minutes.
     setInterval(() => {
       const prefs = saverPrefs()
@@ -438,7 +443,8 @@ const program = {
       // Written straight to the parser, bypassing the rate limiter: restoring a
       // screen is a repaint, not program output.
       xt.write(saved.screen + '\r\x1b[2K')
-      kernel.resume.restore(saved.resume, saved.state)
+      kernel.jobs.device(tty)
+      kernel.jobs.restore(saved.jobs, saved.fg)
     }
     void runSession({
       kernel,
@@ -471,6 +477,10 @@ const program = {
 
   key(_s: unknown, e: KeyboardEvent): void {
     keyboard.key(e)
+  },
+
+  keyUp(_s: unknown, e: KeyboardEvent): void {
+    keyboard.keyUp(e)
   },
 }
 

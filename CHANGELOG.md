@@ -185,8 +185,7 @@
 
 ## v0.5.1
 
-- Added missing user program API image functions
-- Login box update
+- `globe`: Wireframe Earth with member pins
 - Feed
     - `feed`: full-screen feed reader
     - Records listed in boxes; arrow keys select, Enter opens a post with its replies
@@ -197,7 +196,34 @@
     - `U`: author's posts; `feed @user` opens them directly
     - `F`: find a member
     - State management
-    - Profile pictures in the member card and bio
+    - Profile pictures in the user card and bio
 - Config: PHOSPHOR `custom`, own hue/saturation/lightness
 - `edit`: opening screen revealed a line at a time
-- `globe`: Wireframe Earth with member pins
+- Added missing user program API image functions
+- Login box update
+- `circ`, `cmail`: bold usernames in the log and mailbox
+- `cmail`: conversations with deleted accounts are hidden
+
+## v0.5.2
+
+- `globe`
+    - User card actions
+        - `C` opens C-Mail with the user
+        - `F` follow or unfollow
+        - `P` poke
+- `globe`: zoom eases between steps
+- `cmail @user`, `globe @user` opens that user
+- User programs
+    - `ctx.run(name, argv)` hands the terminal to `cmail`, `circ`, `feed`, `globe`, `finger` or `browse`
+
+## v0.6
+
+- Jobs
+    - `^Z` backgrounds program and returns to the prompt
+    - `fg` brings it back
+    - `CMD-K` / `CTRL-K` switches between running programs
+    - `ps`, `kill`
+    - `exit` with stopped jobs asks twice
+- Fixed subscribers being refused `sync`, `~/public_html`
+- Fixed the login error for an unverified e-mail address
+- Fixed C-Mail from Globe

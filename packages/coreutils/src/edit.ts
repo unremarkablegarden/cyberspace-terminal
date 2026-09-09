@@ -179,6 +179,8 @@ export const edit: Program = async p => {
   p.tty.setRaw()
   p.out('\x1b[?1049h')
   s.invalidate()
+  // Frames drawn while stopped are dropped; back in the foreground, redraw.
+  p.onCont = () => { s.invalidate(); paint() }
 
   try {
     // Folded at the text width, which drawBuffer sets on the first paint.

@@ -384,6 +384,16 @@ class FeedScreen implements Screen {
     this.poll = setInterval(() => { void this.checkNew() }, POLL_MS)
   }
 
+  /** Job control: no polling while stopped. */
+  pause(): void {
+    if (this.poll) clearInterval(this.poll)
+    this.poll = null
+  }
+
+  resume(): void {
+    this.listen()
+  }
+
   private async checkNew(): Promise<void> {
     if (this.closed || this.loading) return
     let fresh: FeedEntry[]
@@ -1678,6 +1688,8 @@ export function feedProgram(api: ApiClient, snd: FeedSound = SILENT, pictures?: 
       const restoring = screens
       host.push(root)
       void root.start(restoring)
+      p.onStop = () => root.pause()
+      p.onCont = () => { root.resume(); s.invalidate(); host.paint() }
 
       while (running) {
         const chunk = await p.stdin.read()

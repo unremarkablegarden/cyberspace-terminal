@@ -7,9 +7,11 @@ import { bytes } from '@cyberspace/kernel'
 import type { Sound } from '@cyberspace/crt/audio'
 import { softKeydownWanted, softInputKeys, SENTINEL } from '@cyberspace/crt/softkeys'
 import { aliasKey, encodeKey, encodeKeyName } from './keys'
+import { hostModifier, MAC } from './config'
 import type { Baud } from './baud'
 import type { Scrollback } from './scrollback'
 import type { ConfigBox } from './settings'
+import type { JobPalette } from './palette'
 
 /** A screen covering the machine that takes every key: the config box, the screensaver. */
 export interface Overlay {
@@ -24,6 +26,8 @@ export interface KeyboardDeps {
   snd: Sound
   scroll: Scrollback
   config: () => ConfigBox | null
+  /** The job switcher. CMD-K (CTRL-K off a Mac) opens and steps it; letting the modifier go chooses. */
+  palette: () => JobPalette | null
   /** The overlay taking keys, if any. The config box when open, else the screensaver when up. */
   overlay: () => Overlay | null
   /** Any input path: a key or a pointer press. Feeds the idle timer. */
@@ -121,6 +125,18 @@ export class Keyboard {
     }
     // ev, not e: aliasKey drops the repeat flag when it rewrites the event.
     this.d.markRepeat?.(!!ev.repeat)
+    // The switcher before the key click: it ticks for itself. The chord is
+    // Cmd+K on a Mac and Ctrl+K elsewhere, as on the site. e.code, not e.key:
+    // with Option or AltGr held the character is the layout's, not the letter.
+    if (hostModifier(e) && !e.altKey && e.code === 'KeyK') {
+      e.preventDefault()
+      const palette = this.d.palette()
+      const overlay = this.d.overlay()
+      if (palette && this.d.live() && (!overlay?.open || overlay === palette)) {
+        palette.step(e.shiftKey ? -1 : 1)
+      }
+      return
+    }
     this.click(e)
     // ^C skips the cold boot. Kept out of the tty: no shell exists yet.
     if (e.ctrlKey && e.key === 'c' && this.d.skipBoot()) {
@@ -154,10 +170,15 @@ export class Keyboard {
     this.d.tty.input(bytes(str))
   }
 
+  /** A key released. Only the switcher's modifier matters: letting go takes its row. */
+  keyUp(e: KeyboardEvent): void {
+    if (e.key === (MAC ? 'Meta' : 'Control')) this.d.palette()?.release()
+  }
+
   /** Pasted text goes in as if typed. */
   paste(text: string): void {
     this.wake()
-    if (this.d.config()?.open || !this.d.live()) return
+    if (this.d.overlay()?.open || !this.d.live()) return
     this.d.tty.input(bytes(text.replace(/\r\n?/g, '\r')))
   }
 

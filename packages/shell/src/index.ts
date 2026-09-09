@@ -2,7 +2,10 @@
 
 import { fs, paths, type Proc, type Program, readText } from '@cyberspace/kernel'
 import { Readline, type Completion } from './readline.js'
-import { runLine, ShellExit, setHistoryBuiltin, builtinNames, type ShellState } from './run.js'
+import {
+  runLine, foregroundJob, refuseExit, ShellExit, JobStopped, STOPPED_STATUS,
+  setHistoryBuiltin, builtinNames, type ShellState,
+} from './run.js'
 
 export { builtinNames } from './run.js'
 
@@ -71,39 +74,93 @@ export const shellMain: Program = async (p: Proc) => {
     return 0
   })
 
-  // A saved session resumes by running its command line again rather than being
-  // restored. The host stored the line; this is where the shell claims it.
-  const resumed = p.kernel.resume.takeLine()
-  if (resumed) {
-    p.tty.setCooked()
-    // The state blob is left in place for the spawned program to claim.
-    await runLine(sh, resumed).catch(() => {})
+  const jobs = p.kernel.jobs
+  // The first interactive shell owns the job table; one started inside a job
+  // runs its pipelines plainly.
+  const control = jobs.claim(p)
+  try {
+    return await promptLoop(sh, p, rl, saveHistory, control)
+  } finally {
+    if (control) jobs.release(p)
+  }
+}
+
+async function promptLoop(
+  sh: ShellState, p: Proc, rl: Readline, saveHistory: (line: string) => void, control: boolean,
+): Promise<number> {
+  const jobs = p.kernel.jobs
+  const tty = p.tty!
+
+  const foreground = async (job: Parameters<typeof foregroundJob>[1]): Promise<void> => {
+    try {
+      sh.status = await foregroundJob(sh, job)
+    } catch (e) {
+      if (!(e instanceof JobStopped)) throw e
+      sh.status = STOPPED_STATUS
+    }
   }
 
-  for (;;) {
-    const line = await rl.read(prompt(sh))
-    if (line === null) {
-      p.out('logout\n')
-      return 0
-    }
-    const trimmed = line.trim()
-    if (!trimmed) continue
+  // A saved session resumes by foregrounding the job it was in, which spawns
+  // the program again from its own resume line; the state blob is claimed by
+  // the program. The host filled the table; this is where the shell claims it.
+  const pending = control ? jobs.takePendingFg() : null
+  if (pending) {
+    tty.setCooked()
+    await foreground(pending).catch(() => {})
+  }
 
-    if (rl.history[rl.history.length - 1] !== trimmed) {
-      rl.history.push(trimmed)
-      if (rl.history.length > HISTMAX) rl.history.shift()
-      saveHistory(trimmed)
-    }
+  // The host's switcher: a request wakes the prompt.
+  const off = control ? jobs.onRequest(() => rl.cancel()) : () => {}
+  try {
+    for (;;) {
+      if (control) for (const note of jobs.takeNotes()) p.out(note + '\n')
+      // A request made while a job had the terminal is waiting here already;
+      // one made at the prompt cancels the read.
+      let req = jobs.take()
+      let line: string | null | undefined
+      const prompted = !req
+      if (prompted) {
+        line = await rl.read(prompt(sh))
+        if (line === undefined) req = jobs.take()
+      }
+      if (req) {
+        tty.setCooked()
+        if ('fg' in req) { await foreground(req.fg); continue }
+        // A launch reads like a typed command, prompt included.
+        if (!prompted) tty.echo(prompt(sh))
+        tty.echo(req.launch + '\r\n')
+        line = req.launch
+      }
+      if (line === undefined) continue
+      if (line === null) {
+        // A killed shell reads EOF; it must not go round again and take the
+        // keyboard from its successor.
+        if (p.signal.aborted) return 130
+        if (refuseExit(sh)) continue
+        p.out('logout\n')
+        return 0
+      }
+      const trimmed = line.trim()
+      if (!trimmed) continue
 
-    try {
-      // Cooked while a job runs: line input with echo, ^C -> SIGINT.
-      p.tty.setCooked()
-      await runLine(sh, trimmed)
-    } catch (e) {
-      if (e instanceof ShellExit) return e.code
-      p.err(`sh: ${(e as Error)?.message ?? e}\n`)
-      sh.status = 1
+      if (rl.history[rl.history.length - 1] !== trimmed) {
+        rl.history.push(trimmed)
+        if (rl.history.length > HISTMAX) rl.history.shift()
+        saveHistory(trimmed)
+      }
+
+      try {
+        // Cooked while a job runs: line input with echo, ^C -> SIGINT.
+        tty.setCooked()
+        await runLine(sh, trimmed)
+      } catch (e) {
+        if (e instanceof ShellExit) return e.code
+        p.err(`sh: ${(e as Error)?.message ?? e}\n`)
+        sh.status = 1
+      }
     }
+  } finally {
+    off()
   }
 }
 
