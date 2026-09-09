@@ -15,12 +15,19 @@ export const PAGES_TYPES: Record<string, string> = {
   css: 'text/css; charset=utf-8',
   js: 'text/javascript; charset=utf-8',
   txt: 'text/plain; charset=utf-8',
+  csv: 'text/csv; charset=utf-8',
+  // Source listings serve as text/plain so a browser shows them instead of
+  // offering a download.
+  r: 'text/plain; charset=utf-8',
+  py: 'text/plain; charset=utf-8',
   gif: 'image/gif',
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
   png: 'image/png',
   mid: 'audio/midi',
   midi: 'audio/midi',
+  woff: 'font/woff',
+  woff2: 'font/woff2',
 }
 
 const SEGMENT = /^[a-z0-9_-][a-z0-9._-]{0,63}$/
@@ -49,7 +56,7 @@ export const pagesContentType = (path: string): string =>
   PAGES_TYPES[pagesExtension(path)] ?? 'application/octet-stream'
 
 export const isPagesText = (path: string): boolean =>
-  ['html', 'css', 'js', 'txt'].includes(pagesExtension(path))
+  ['html', 'css', 'js', 'txt', 'csv', 'r', 'py'].includes(pagesExtension(path))
 
 /** An 88×31 button: gif or png. */
 export const isPagesButton = (path: string): boolean =>

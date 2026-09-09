@@ -224,6 +224,7 @@
     - `CMD-K` / `CTRL-K` switches between running programs
     - `ps`, `kill`
     - `exit` with stopped jobs asks twice
+- `~/public_html` takes .woff, .woff2, .r, .py and .csv
 - Fixed subscribers being refused `sync`, `~/public_html`
 - Fixed the login error for an unverified e-mail address
 - Fixed C-Mail from Globe

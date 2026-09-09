@@ -36,7 +36,7 @@ function refuse(errno: ErrnoError['errno'], reason: string): ErrnoError {
 }
 
 /** The server's wording for a name the path rule refuses. */
-const BAD_PATH = 'bad path — lowercase letters, digits, dot, dash, underscore; html css js txt gif jpg png mid'
+const BAD_PATH = 'bad path — lowercase letters, digits, dot, dash, underscore; html css js txt csv r py gif jpg png mid woff'
 
 const S_IFMT = 0o170000
 const S_IFREG = 0o100000
