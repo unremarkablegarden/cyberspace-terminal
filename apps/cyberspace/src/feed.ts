@@ -7,6 +7,10 @@
 // (write.ts). Pages come from the API; new posts are polled for and queued
 // behind an `N NEW` banner rather than spliced into a list being read.
 //
+// Unsent writing does not live here: both composers hand every keystroke to
+// FeedDrafts (feeddraft.ts), which the host backs with a store that outlives
+// the program.
+//
 // Ported from the original web terminal's feed.ts. The one structural change:
 // the Firestore service became REST calls and a client-side filter (feedutil).
 
@@ -25,6 +29,7 @@ import {
   type FeedLink, type FeedProfile, type FeedReply, type PostDraft,
 } from './feedutil.js'
 import { WriteScreen, type FeedHost, type FeedSound } from './write.js'
+import { FeedDrafts, type DraftStore, type ReplyDraft } from './feeddraft.js'
 import { bioLines, fetchProfile, portraitFits, PFP_COLS, PFP_ROWS, type Portrait } from './bio.js'
 
 /** Letter-spaced masthead. */
@@ -87,9 +92,9 @@ const COPIED_MS = 1500
 const POPUP_HINT = (...pairs: string[]): string => pairs.join('  ')
 
 /** Bump when FeedSnapshot or FeedState changes. A mismatch is dropped. */
-const STATE_VERSION = 1
+const STATE_VERSION = 2
 
-type FeedModal = 'links' | 'find' | 'bio'
+type FeedModal = 'links' | 'find' | 'bio' | 'reply' | 'write'
 
 /** Where one screen was: an index, an id and two numbers. Content is refetched. */
 interface FeedSnapshot {
@@ -102,7 +107,6 @@ interface FeedSnapshot {
 interface FeedState {
   v: number
   screens: FeedSnapshot[]
-  draft?: PostDraft
 }
 
 const EMPTY_DRAFT: PostDraft = { title: '', body: '', topics: '', blog: false, nsfw: false, vent: false }
@@ -283,6 +287,9 @@ interface FeedEnv {
   state(screens: FeedSnapshot[]): void
   draft(): PostDraft
   setDraft(d: PostDraft): void
+  /** Unsent replies, by the post they answer. */
+  reply(postId: string): ReplyDraft | null
+  setReply(postId: string, d: ReplyDraft | null): void
 }
 
 class FeedScreen implements Screen {
@@ -481,6 +488,8 @@ class FeedScreen implements Screen {
     if (modal === 'links') this.openLinks()
     else if (modal === 'find') this.openFind()
     else if (modal === 'bio') void this.openBio()
+    else if (modal === 'reply') this.openReply()
+    else if (modal === 'write') this.openWrite()
   }
 
   // --- layout -----------------------------------------------------------------
@@ -1310,14 +1319,24 @@ class FeedScreen implements Screen {
       return
     }
     const card = this.open ? this.cards[this.readSel] : undefined
-    const parent = card?.replyId ? { id: card.replyId, username: card.username } : undefined
+    // A restored box answers the draft's parent: the cursor is on the record,
+    // not on the card that was open when it was typed.
+    const kept = this.env.reply(entry.id)
+    const parent = card?.replyId
+      ? { id: card.replyId, username: card.username }
+      : kept?.parentId && kept.parentUsername
+        ? { id: kept.parentId, username: kept.parentUsername }
+        : undefined
     const to = parent?.username ?? entry.username
 
+    this.modal = 'reply'
     this.host.push(new EditorPopup({
       title: 'REPLY',
       note: `to @${to}`,
-      hint: POPUP_HINT('^D Post', 'ESC Cancel'),
+      hint: POPUP_HINT('^S Post', 'ESC Cancel'),
       confirm: 'Sure? Y/N',
+      initial: kept?.text,
+      caret: 'end',
       maxLength: REPLY_MAX,
       bounds: this.pane,
       shadow: true,
@@ -1326,25 +1345,36 @@ class FeedScreen implements Screen {
         else if (kind === 'submit') this.snd.blip(660, 0.06, 0)
         else if (kind === 'cancel') this.snd.blip(420, 0.09, 0)
       },
+      onEdit: (text) => {
+        this.env.setReply(entry.id, text.trim()
+          ? { text, ...(parent && { parentId: parent.id, parentUsername: parent.username }) }
+          : null)
+      },
       onDone: (text) => {
+        this.modal = undefined
         this.host.pop()
+        // A cancel keeps the draft; only a sent reply drops it.
         if (text) void this.post(entry, text, parent)
       },
     }))
+    this.save()
   }
 
   /** The composer, pushed like a modal. A publish refetches so the new post is at the top. */
   private openWrite(): void {
     if (this.posting) { this.snd.beep(220, 0.12); return }
+    this.modal = 'write'
     this.host.push(new WriteScreen(this.host, {
       draft: this.env.draft(),
       onDraft: d => this.env.setDraft(d),
       done: (published) => {
+        this.modal = undefined
         this.host.pop()
         if (this.closed) return
         if (published) void this.refresh()
       },
     }))
+    this.save()
   }
 
   /** Send the reply, then refetch the thread and select it. */
@@ -1376,6 +1406,7 @@ class FeedScreen implements Screen {
       return
     }
     entry.replies += 1
+    this.env.setReply(entry.id, null)
     this.pendingReply = id
     this.replyCache.delete(entry.id)
     if (this.open) void this.loadReplies(entry.id)
@@ -1563,11 +1594,13 @@ class FeedScreen implements Screen {
   }
 }
 
+const MODALS = new Set<FeedModal>(['links', 'find', 'bio', 'reply', 'write'])
+
 /** The parked state, if it is this program's and the current shape. Every field is checked. */
 function readState(raw: unknown): FeedState {
   const none: FeedState = { v: STATE_VERSION, screens: [] }
   if (!raw || typeof raw !== 'object') return none
-  const state = raw as { v?: unknown; screens?: unknown; draft?: unknown }
+  const state = raw as { v?: unknown; screens?: unknown }
   if (state.v !== STATE_VERSION || !Array.isArray(state.screens)) return none
 
   const out: FeedSnapshot[] = []
@@ -1582,26 +1615,14 @@ function readState(raw: unknown): FeedState {
       open: open && typeof open.id === 'string'
         ? { id: open.id, scroll: Math.max(0, Number(open.scroll) || 0), sel: Math.max(0, Number(open.sel) || 0) }
         : undefined,
-      modal: s.modal === 'links' || s.modal === 'find' || s.modal === 'bio' ? s.modal : undefined,
+      modal: MODALS.has(s.modal as FeedModal) ? (s.modal as FeedModal) : undefined,
     })
   }
   // Only the root may be authorless; the stack is cut at the first bad entry.
   const bad = out.findIndex((s, i) => i > 0 && !s.author)
   const screens = bad === -1 ? out : out.slice(0, bad)
 
-  let draft: PostDraft | undefined
-  const d = state.draft as Record<string, unknown> | undefined
-  if (d && typeof d.body === 'string') {
-    draft = {
-      title: typeof d.title === 'string' ? d.title : '',
-      body: d.body,
-      topics: typeof d.topics === 'string' ? d.topics : '',
-      blog: d.blog === true,
-      nsfw: d.nsfw === true,
-      vent: d.vent === true,
-    }
-  }
-  return { v: STATE_VERSION, screens, draft }
+  return { v: STATE_VERSION, screens }
 }
 
 /** The reader's own filter, from their settings and lists. Failure opens the filter. */
@@ -1626,12 +1647,15 @@ async function loadFilter(api: ApiClient): Promise<{ filter: FeedFilter; blog: b
 }
 
 /**
- * feed [@user]. The draft in the composer lives in this closure for the
- * session and in the parked state for a reload.
+ * feed [@user]. `store` holds unsent writing between runs; without one the
+ * drafts last only as long as the page.
  */
-export function feedProgram(api: ApiClient, snd: FeedSound = SILENT, pictures?: ChatPictureHost): Program {
-  let draft: PostDraft | null = null
-
+export function feedProgram(
+  api: ApiClient,
+  snd: FeedSound = SILENT,
+  pictures?: ChatPictureHost,
+  store?: DraftStore,
+): Program {
   return async (p: Proc) => {
     if (!p.tty) { p.err('feed: no tty\n'); return 1 }
     if (!api.authed) { p.err('feed: not logged in\n'); return 1 }
@@ -1642,14 +1666,14 @@ export function feedProgram(api: ApiClient, snd: FeedSound = SILENT, pictures?: 
     let running = true
 
     const author = p.argv[1]?.replace(/^@/, '') || undefined
+    const drafts = new FeedDrafts(store, api.username ?? '')
     const parked = readState(p.takeState())
-    if (parked.draft) draft = parked.draft
     let screens: FeedSnapshot[] = parked.screens
     // A restore only fits the list it was parked from.
     if (screens[0] && (screens[0].author ?? undefined) !== author) screens = []
 
     const park = (): void => {
-      p.setState({ v: STATE_VERSION, screens, ...(draft && { draft }) } satisfies FeedState)
+      p.setState({ v: STATE_VERSION, screens } satisfies FeedState)
     }
 
     const host: FeedHost = {
@@ -1673,14 +1697,16 @@ export function feedProgram(api: ApiClient, snd: FeedSound = SILENT, pictures?: 
 
     try {
       const { filter, blog } = await loadFilter(api)
-      if (!draft) draft = { ...EMPTY_DRAFT, blog }
       const env: FeedEnv = {
         host,
         pics,
         filter,
         state: shot => { screens = shot; park() },
-        draft: () => draft ?? { ...EMPTY_DRAFT, blog },
-        setDraft: d => { draft = d; park() },
+        // A fresh draft takes the member's default for the blog flag; a kept one has its own.
+        draft: () => drafts.post() ?? { ...EMPTY_DRAFT, blog },
+        setDraft: d => drafts.setPost(d),
+        reply: id => drafts.reply(id),
+        setReply: (id, d) => drafts.setReply(id, d),
       }
       const done = (): void => { running = false; p.stdin.interrupt?.() }
       const root = new FeedScreen(env, done, { author })
@@ -1705,6 +1731,8 @@ export function feedProgram(api: ApiClient, snd: FeedSound = SILENT, pictures?: 
       running = false
       // Pop what is left so every screen's dispose runs (timers, reveals).
       while (stack.active) stack.pop()
+      // The debounced write would never fire once the program is gone.
+      drafts.flush()
       unwatchPics?.()
       pics?.release()
       p.out('\x1b[?1049l\x1b[?25h')

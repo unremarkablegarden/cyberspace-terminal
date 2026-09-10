@@ -48,6 +48,13 @@ const homeKey = new HomeKey({
   get: () => localStorage.getItem('csterm.homekey'),
   set: v => (v ? localStorage.setItem('csterm.homekey', v) : localStorage.removeItem('csterm.homekey')),
 })
+// Unsent writing in feed's composers, beside the session: the same store, and
+// the factory reset takes it with every other csterm.* key.
+const drafts = {
+  get: () => localStorage.getItem('csterm.feeddrafts'),
+  set: (v: string | null) =>
+    (v ? localStorage.setItem('csterm.feeddrafts', v) : localStorage.removeItem('csterm.feeddrafts')),
+}
 // The last home sync before the session ends; set once the machine is up.
 let flushHome: () => Promise<void> = () => Promise.resolve()
 
@@ -369,6 +376,7 @@ const program = {
       face: s.term,
       pickFile,
       saveFile,
+      drafts,
       onHome: flush => { flushHome = flush },
     })
     // A kernel that fails while the animation plays would otherwise surface

@@ -209,6 +209,21 @@ export function systemLines(text: string, width: number, indent = HEAD_W): LogLi
   return hangingWrap(' '.repeat(indent), text, width).map(line => ({ text: line }))
 }
 
+/**
+ * A system line with the clock filled in, for lines the room reports rather
+ * than the client: an arrival, a departure. The nick column stays empty, since
+ * nobody said it. Wide layout only — narrow has no gutter to write into.
+ */
+export function stampedLines(text: string, width: number, at: number): LogLine[] {
+  const rows = systemLines(text, width)
+  const first = rows[0]
+  if (!first) return rows
+  const time = hhmm(at)
+  first.text = time + first.text.slice(time.length)
+  first.spans = [{ at: 0, len: time.length, attr: DIM }]
+  return rows
+}
+
 /** One entry as drawn rows, wide layout: a 17-column gutter with the text hung under it. */
 export function entryLines(m: ChatMessage, width: number, opts: EntryOptions = {}): LogLine[] {
   if (m.system) return systemLines(m.content ?? '', width)

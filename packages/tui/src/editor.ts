@@ -32,6 +32,11 @@ export interface EditorOptions {
    * ^C and Escape cancel.
    */
   onSave?: (text: string) => void
+  /**
+   * The text after every key that changed it, untrimmed. For a caller keeping
+   * a draft of what is being typed; the box itself keeps nothing.
+   */
+  onEdit?: (text: string) => void
   /** The widget plays no sound itself. `reject` is a refused key. */
   onFeedback?: (kind: 'edge' | 'submit' | 'cancel' | 'reject', e?: KeyInput) => void
   /** Shown in the bottom rule while editing. */
@@ -51,6 +56,8 @@ export interface EditorOptions {
   width?: number
   /** Fold long lines to the width. Default on. */
   wrap?: boolean
+  /** Where the caret opens in `initial`. Default 'start'. */
+  caret?: 'start' | 'end'
 }
 
 const DEFAULTS = { rows: 8, width: 56, maxLength: 4096 }
@@ -71,6 +78,7 @@ export class EditorPopup implements Screen {
       initial: opts.initial,
       maxLength: opts.maxLength ?? DEFAULTS.maxLength,
       wrap: opts.wrap,
+      caret: opts.caret,
       width: opts.width ?? DEFAULTS.width,
       onReject: () => this.opts.onFeedback?.('reject'),
     })
@@ -113,12 +121,18 @@ export class EditorPopup implements Screen {
         this.cancel(e)
         return true
       }
-      if (e.key === 'k') return this.buf.killLine()
+      if (e.key === 'k') return this.edited(this.buf.killLine())
       return false
     }
 
     if (e.key === 'Escape') { this.cancel(e); return true }
-    return this.buf.key(e)
+    return this.edited(this.buf.key(e))
+  }
+
+  /** Report the text after a key the buffer took. A movement key reports too; the caller compares. */
+  private edited(used: boolean): boolean {
+    if (used) this.opts.onEdit?.(this.buf.text)
+    return used
   }
 
   private answer(e: KeyInput): boolean {

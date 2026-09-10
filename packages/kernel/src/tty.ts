@@ -283,7 +283,9 @@ export class Tty implements TtyControl {
       isInteractive: true,
       async read() {
         const c = await tty.readers.read()
-        if (c && c.length === 1 && c[0] === 4) return null
+        // 0x04 is EOF only in cooked mode, where cookedKey() writes it alone at
+        // an empty line. Raw mode hands ^D to the program, which may bind it.
+        if (!tty.raw && c && c.length === 1 && c[0] === 4) return null
         return c
       },
       interrupt: () => this.flushReaders(),
@@ -395,7 +397,8 @@ export class JobTty implements TtyControl {
       isInteractive: true,
       async read() {
         const c = await view.keys.read()
-        if (c && c.length === 1 && c[0] === 4) return null
+        // Cooked mode only; see Tty.stdin.
+        if (!view.raw && c && c.length === 1 && c[0] === 4) return null
         return c
       },
       interrupt: () => {

@@ -20,12 +20,14 @@ import {
   type LogLine, type Span, type Rect, type KeyInput, type Screen,
 } from '@cyberspace/tui'
 import { ApiClient, ApiError } from './api.js'
+import { bioLines, fetchProfile, loadPortrait } from './bio.js'
 import { artLines, bodyOf, followList, hasStyle, type MsgBody } from './chatui.js'
 import {
   ARROWS, ASLEEP, BLIP_HZ, Blinker, HEAD_W, SILENT, Typewriter, entryLines, entryParts,
-  mentions, narrowLines, nick, printing, systemLines, type ChatMessage,
+  mentions, narrowLines, nick, printing, stampedLines, systemLines, type ChatMessage,
   type ChatPictureHost, type ChatSound, type ChatUser, type Picture,
 } from './chat.js'
+import { when } from './feedutil.js'
 import { helpLines, routeSlash, slashNames, type LocalCommand } from './slash.js'
 
 interface Room {
@@ -56,6 +58,8 @@ const SIDEBAR_W = 16
 /** Below this width the pane and gutter leave too few columns for the text. */
 const NARROW = 60
 const MAX_MSGS = 200
+/** Local lines kept. A ceiling against growth, not a display limit. */
+const MAX_SYSTEM = 200
 const IDLE_MS = 5 * 60_000
 /** Maximum names offered in the completion box at once. */
 const SUGGEST_MAX = 6
@@ -83,30 +87,40 @@ const LOCAL_NAMES = ['rooms', 'who', 'quit', 'exit']
 const SLASH = slashNames('chat', LOCAL)
 
 /**
- * The key legend, drawn as inverse keycaps. Modal hints use plain text instead,
- * so a second row of caps does not compete with this one.
+ * The key legend, a cap and its word per group. Modal hints use plain text
+ * instead, so a second row of caps does not compete with this one.
  */
-const HINT: Span[] = [
-  { text: ' ^H ', inverse: true, attr: DIM },
-  { text: ' Help ' },
-  { text: ' ^J ', inverse: true, attr: DIM },
-  { text: ' Rooms ' },
-  { text: ` ${ARROWS} `, inverse: true, attr: DIM },
-  { text: ' Scroll ' },
-  { text: ' ESC ', inverse: true, attr: DIM },
-  { text: ' Exit' },
+const HINT: Span[][] = [
+  [{ text: ' ^H ', inverse: true, attr: DIM }, { text: ' Help ' }],
+  [{ text: ' ^J ', inverse: true, attr: DIM }, { text: ' Rooms ' }],
+  [{ text: ' ^U ', inverse: true, attr: DIM }, { text: ' User ' }],
+  [{ text: ` ${ARROWS} `, inverse: true, attr: DIM }, { text: ' Scroll ' }],
+  [{ text: ' ESC ', inverse: true, attr: DIM }, { text: ' Exit' }],
 ]
 
-/** The legend for a narrow room, where there is no pane and Who joins the row. */
-const HINT_NARROW: Span[] = [
-  { text: ' ^H ', inverse: true, attr: DIM },
-  { text: ' Help ' },
-  { text: ' ^J ', inverse: true, attr: DIM },
-  { text: ' Rooms ' },
-  { text: ' ^U ', inverse: true, attr: DIM },
-  { text: ' Who ' },
-  { text: ' ESC ', inverse: true, attr: DIM },
+/** The legend for a narrow room, where there is no pane and the roster is a box. */
+const HINT_NARROW: Span[][] = [
+  [{ text: ' ^H ', inverse: true, attr: DIM }, { text: ' Help ' }],
+  [{ text: ' ^J ', inverse: true, attr: DIM }, { text: ' Rooms ' }],
+  [{ text: ' ^U ', inverse: true, attr: DIM }, { text: ' User ' }],
+  [{ text: ' ESC ', inverse: true, attr: DIM }],
 ]
+
+/** The legend while the pane holds the selection. */
+const HINT_PICK: Span[][] = [
+  [{ text: ` ${ARROWS} `, inverse: true, attr: DIM }, { text: ' Pick ' }],
+  [{ text: ' ↵ ', inverse: true, attr: DIM }, { text: ' Bio ' }],
+  [{ text: ' C ', inverse: true, attr: DIM }, { text: ' Mail ' }],
+  [{ text: ' ESC ', inverse: true, attr: DIM }, { text: ' Back' }],
+]
+
+/** Groups dropped from the front until the legend fits the rule. */
+function legend(groups: Span[][], budget: number): Span[] {
+  const kept = groups.slice()
+  const width = (g: Span[][]): number => g.flat().reduce((n, sp) => n + cells(sp.text), 2)
+  while (kept.length > 1 && width(kept) > budget) kept.shift()
+  return kept.flat()
+}
 
 const HELP = helpLines('chat', LOCAL)
 
@@ -166,7 +180,7 @@ export function circProgram(
     const msgs = new Map<string, Msg>()
     let users: ChatUser[] = []
     /** Lines generated locally, merged into the log by timestamp. */
-    let system: { text: string; at: number }[] = []
+    let system: { text: string; at: number; stamp?: boolean }[] = []
     let scroll = 0
     let lastLines = 0
     let status = ''
@@ -177,6 +191,20 @@ export function circProgram(
     let switching = false
     /** Whether this room's roster has been revealed. Only the first one is. */
     let rostered = false
+    /**
+     * Names in the room as of the last roster, folded name to display name.
+     * A map, not a set: somebody who left is gone from the new roster, so their
+     * name has to come from here. Null until the first roster arrives, which is
+     * the room as it already was rather than a queue of arrivals. Separate from
+     * `rostered`, which is only ever set in the wide layout.
+     */
+    let known: Map<string, string> | null = null
+    /** Whether arrivals and departures are reported. The member's own setting. */
+    let joinsShown = true
+    /** Member selected in the pane, by name: the roster is re-sorted on every heartbeat. */
+    let picking: string | null = null
+    /** First pane row drawn while picking, so the selection stays in view. */
+    let userTop = 0
 
     let stopStream: (() => void) | null = null
     let heartbeat: ReturnType<typeof setInterval> | null = null
@@ -254,14 +282,21 @@ export function circProgram(
     const pics = pictures?.()
     const unwatchPics = pics?.onLoad(() => paint())
 
+    const local = (text: string, stamp: boolean): void => {
+      system.push({ text: plain(text), at: Date.now(), stamp })
+      if (system.length > MAX_SYSTEM) system = system.slice(-MAX_SYSTEM)
+      paint()
+    }
+
     // Server replies (/fortune, /8ball and the rest) arrive here, so they are
     // folded like a message body.
     const say = (text: string, complaint = false): void => {
-      system.push({ text: plain(text), at: Date.now() })
-      if (system.length > 40) system = system.slice(-40)
+      local(text, false)
       if (complaint) snd.beep(220, 0.09)
-      paint()
     }
+
+    /** An arrival or a departure. Stamped: the room reports it, not the client. */
+    const note = (text: string): void => local(text, true)
 
     // Never the reader's own lines: /me and /8ball carry the author's name in the text.
     const namesMe = (m: ChatMessage, text: string): boolean =>
@@ -284,7 +319,10 @@ export function circProgram(
         ...wire.displayed.map(m => ({ at: m.timestamp ?? 0, src: m.imageUrl, lines: () => lineOf(m) })),
         ...system.map(s => ({
           at: s.at,
-          lines: () => systemLines(s.text, logRect.w, narrow ? 0 : undefined),
+          // Narrow has no gutter, so a stamped line falls back to the plain one.
+          lines: () => s.stamp && !narrow
+            ? stampedLines(s.text, logRect.w, s.at)
+            : systemLines(s.text, logRect.w, narrow ? 0 : undefined),
         })),
       ]
       entries.sort((a, b) => a.at - b.at)
@@ -333,10 +371,16 @@ export function circProgram(
     }
 
     /** One name in the online pane, with its idle marker. */
-    const entry = (u: ChatUser): Span[] => {
+    const entry = (u: ChatUser, on?: boolean): Span[] => {
       const name = { text: nick(u) }
       // Drawn DIM and after the name, so scanning the pane lands on names.
-      return u.asleep ? [{ text: `${ASLEEP} `, attr: DIM }, name] : [name]
+      if (on !== true) return u.asleep ? [{ text: `${ASLEEP} `, attr: DIM }, name] : [name]
+      // The selection bar runs the width of the pane, so the row is padded and
+      // every span carries the inversion: an uninverted marker leaves a gap.
+      const marker = u.asleep ? `${ASLEEP} ` : ''
+      const pad = Math.max(0, sidebarRect.w - cells(marker + name.text))
+      const bar: Span[] = [{ text: name.text + ' '.repeat(pad), inverse: true }]
+      return marker ? [{ text: marker, attr: DIM, inverse: true }, ...bar] : bar
     }
 
     /**
@@ -505,7 +549,7 @@ export function circProgram(
         attr: BRIGHT | BOLD,
         max: narrow ? cols - 4 - onlineW : splitX - 2,
       })
-      label(s, outer, narrow ? HINT_NARROW : HINT, { edge: 'bottom', align: 'right' })
+      label(s, outer, legend(picking ? HINT_PICK : narrow ? HINT_NARROW : HINT, cols - 2), { edge: 'bottom', align: 'right' })
       label(s, outer, online, { align: 'right', max: onlineMax })
 
       const picSpans: PicSpan[] = []
@@ -541,9 +585,13 @@ export function circProgram(
       drawSuggest()
 
       // roll.count is Infinity when no reveal is running, so the slice is the
-      // whole list without a separate check.
+      // whole list without a separate check. While picking, the window follows
+      // the selection instead.
       if (!narrow) {
-        drawList(s, sidebarRect, users.slice(0, roll.count).map(u => ({ text: entry(u) })))
+        const shown = picking
+          ? users.slice(userTop, userTop + sidebarRect.h)
+          : users.slice(0, roll.count)
+        drawList(s, sidebarRect, shown.map(u => ({ text: entry(u, picking === u.username) })))
       }
 
       // Redraw the status rule, then the current activity on its right.
@@ -551,7 +599,8 @@ export function circProgram(
       if (status) s.text(cols - 4 - cells(status), splitY, ` ${status} `, BRIGHT)
 
       input.draw(s, inputRect)
-      s.showCursor = true
+      // Hidden while the pane holds the selection: the line is not taking keys.
+      s.showCursor = !picking
       tty.paint(s.render())
     }
 
@@ -609,6 +658,26 @@ export function circProgram(
         })
     }
 
+    /**
+     * Arrivals and departures since the last roster, as IRC prints them.
+     *
+     * The roster is polled on the heartbeat, so a name can be up to
+     * `heartbeatMs` late and a reconnect inside that window is never seen at
+     * all — which is the reason there is no separate flap delay here. Own name
+     * skipped: IRC does not announce you to yourself.
+     */
+    const announce = (): void => {
+      const next = new Map(users.map(u => [u.username.toLowerCase(), u.username]))
+      if (known === null || !joinsShown) { known = next; return }
+      for (const [name, shown] of next) {
+        if (name !== me && !known.has(name)) note(`* ${shown} joined *`)
+      }
+      for (const [name, shown] of known) {
+        if (name !== me && !next.has(name)) note(`* ${shown} left *`)
+      }
+      known = next
+    }
+
     const fetchUsers = async (): Promise<void> => {
       if (!room) return
       const asked = room.id
@@ -616,7 +685,10 @@ export function circProgram(
       // A roster request in flight across a room change belongs to the old room.
       if (room?.id !== asked) return
       if (rows) {
+        const held = pickIndex()
         users = roster(rows)
+        if (picking) repick(held)
+        announce()
         // Revealed for a room's first roster only. This also runs on the
         // heartbeat, which must not reprint the pane every half minute.
         if (!rostered && !narrow) {
@@ -649,6 +721,8 @@ export function circProgram(
       }
       room = null
       users = []
+      picking = null
+      userTop = 0
       msgs.clear()
     }
 
@@ -676,6 +750,7 @@ export function circProgram(
       system = []
       primed = false
       rostered = false
+      known = null
       void api.post(`/v1/circ/${next.id}/read`, {}).catch(() => {})
       connect(next.id)
       void fetchUsers()
@@ -730,13 +805,165 @@ export function circProgram(
       open(new TextPopup({ title: 'COMMANDS', lines: HELP, onDone: () => close(), shadow: true }))
     }
 
-    const openWho = (): void => {
-      // Shares the sidebar's row builder, so the markers cannot drift apart.
-      open(new TextPopup({
-        title: `ONLINE (${users.length})`,
-        lines: users.length ? users.map(entry) : [[{ text: 'nobody', attr: DIM }]],
-        onDone: () => close(),
+    // --- the pane's selection -------------------------------------------------
+
+    const pickIndex = (): number => users.findIndex(u => u.username === picking)
+
+    /** Pull the window so row i is drawn. */
+    const showPick = (i: number): void => {
+      const h = Math.max(1, sidebarRect.h)
+      if (i < userTop) userTop = i
+      else if (i >= userTop + h) userTop = i - h + 1
+      userTop = Math.max(0, Math.min(userTop, Math.max(0, users.length - h)))
+    }
+
+    const enterPick = (): void => {
+      const first = users[0]
+      if (!first) { snd.beep(220, 0.04); return }
+      picking = first.username
+      userTop = 0
+      snd.tick()
+      paint()
+    }
+
+    const leavePick = (): void => {
+      picking = null
+      paint()
+    }
+
+    /**
+     * The selection after a roster change: the same member, or whoever now holds
+     * the row they held. `held` is their index before the new roster was sorted.
+     */
+    const repick = (held: number): void => {
+      if (!users.length) { picking = null; userTop = 0; return }
+      let i = pickIndex()
+      if (i < 0) i = Math.max(0, Math.min(users.length - 1, held))
+      picking = users[i]!.username
+      showPick(i)
+    }
+
+    const movePick = (by: number): void => {
+      const i = pickIndex()
+      if (i < 0) { enterPick(); return }
+      const next = Math.max(0, Math.min(users.length - 1, i + by))
+      if (next === i) { snd.beep(220, 0.04); return }
+      picking = users[next]!.username
+      snd.tick()
+      showPick(next)
+      paint()
+    }
+
+    /**
+     * C-Mail with a member: the shell is asked to run cmail as its own job, and
+     * circ is stopped by the switch. It comes back through the switcher or its
+     * name. Under a shell without job control there is nothing to switch to.
+     */
+    const openMail = (who: string): void => {
+      if (stack.active) close()
+      if (!p.kernel.jobs.fg) {
+        status = 'cmail: no job control'
+        snd.beep(220, 0.12)
+        paint()
+        return
+      }
+      void p.kernel.jobs.switchTo({ launch: `cmail @${who}` })
+    }
+
+    let cardLoading = false
+
+    /** A member's card, as the globe's: the bio beside their picture, facts under a rule. */
+    const openCard = async (who: string): Promise<void> => {
+      if (cardLoading || stack.active) return
+      cardLoading = true
+      status = 'LOADING'
+      paint()
+      const profile = await fetchProfile(api, who)
+      cardLoading = false
+      if (!running || stack.active) return
+      status = ''
+      if (!profile) {
+        status = `no such member: @${who}`
+        snd.beep(220, 0.12)
+        paint()
+        return
+      }
+      const width = Math.max(24, Math.min(56, cols - 10))
+      const portrait = await loadPortrait(pics, profile, width)
+      if (!running || stack.active) return
+      const site = profile.website?.url
+      const popup: TextPopup = new TextPopup({
+        title: `@${profile.username}`,
+        note: profile.badges.length
+          ? profile.badges.flatMap((b, i): Span[] => [
+            ...(i ? [{ text: ' ' }] : []),
+            { text: ` ${b} `, inverse: true, attr: DIM },
+          ])
+          : undefined,
+        lines: bioLines(profile, profile.joined ? when(profile.joined) : undefined, width, portrait),
+        // The card's other keys are on the footer below it, which the box does
+        // not cover: only the site, which the footer has no room for.
+        hint: site ? 'L Link' : undefined,
+        actions: [
+          ...(site ? [{ key: 'l', silent: true, run: () => { tty.copy(site); popup.say('COPIED'); repaint() } }] : []),
+          { key: 'c', silent: true, run: () => openMail(profile.username) },
+        ],
+        // Above the input divider, so the line being typed stays visible.
+        bounds: { x: 0, y: 0, w: cols, h: splitY },
         shadow: true,
+        onFeedback: (kind) => {
+          if (kind === 'edge') snd.beep(220, 0.04)
+          else if (kind === 'move') snd.tick()
+        },
+        onDone: () => close(),
+      })
+      // The screen beneath is redrawn first: the stack snapshots it, and it
+      // still carries LOADING on the status rule.
+      paint()
+      open(popup)
+    }
+
+    /** The pane as a box, for a room too narrow to draw one. */
+    const openWho = (): void => {
+      // A snapshot: the heartbeat replaces the roster under the box.
+      const list = users.slice()
+      if (!list.length) {
+        open(new TextPopup({
+          title: 'ONLINE (0)',
+          lines: [[{ text: 'nobody', attr: DIM }]],
+          onDone: () => close(),
+          shadow: true,
+        }))
+        return
+      }
+      open(new SelectPopup({
+        title: `ONLINE (${list.length})`,
+        hint: `${ARROWS} ↵  C Mail`,
+        items: list.map(u => (u.asleep ? `${ASLEEP} ` : '') + nick(u)),
+        // The idle marker reads DIM here as it does in the pane.
+        decorate: (g, row, i, on) => {
+          if (!list[i]?.asleep) return
+          g.text(row.x, row.y, ASLEEP, DIM, on ? 1 : 0)
+        },
+        bounds: { x: 0, y: 0, w: cols, h: splitY },
+        trimTop: 1,
+        shadow: true,
+        onRepaint: repaint,
+        onFeedback: (kind) => {
+          if (kind === 'edge') snd.beep(220, 0.04)
+          else if (kind === 'move') snd.tick()
+        },
+        onKey: (e, i) => {
+          const u = list[i]
+          if (!u || e.ctrlKey || e.metaKey || e.altKey || e.key.toLowerCase() !== 'c') return false
+          openMail(u.username)
+          return true
+        },
+        onDone: (item, index) => {
+          const u = item === null ? null : list[index]
+          close()
+          if (u) void openCard(u.username)
+        },
       }))
     }
 
@@ -856,6 +1083,24 @@ export function circProgram(
       paint()
     }
 
+    /**
+     * Keys while the pane holds the selection. The mode owns bare letters, so
+     * C can reach C-Mail; a key it does not use is dropped rather than typed
+     * into the line.
+     */
+    const pickKey = (k: KeyInput): void => {
+      if (k.key === 'ArrowUp') { movePick(-1); return }
+      if (k.key === 'ArrowDown') { movePick(1); return }
+      if (k.key === 'PageUp') { movePick(-sidebarRect.h); return }
+      if (k.key === 'PageDown') { movePick(sidebarRect.h); return }
+      if (k.key === 'Escape') { leavePick(); return }
+      if (k.ctrlKey || k.metaKey || k.altKey) return
+      const who = picking
+      if (!who) return
+      if (k.key === 'Enter') { void openCard(who); return }
+      if (k.key.toLowerCase() === 'c') openMail(who)
+    }
+
     const onKey = (k: KeyInput): void => {
       if (stack.active) { stack.key(k); tty.paint(s.render()); return }
 
@@ -864,6 +1109,14 @@ export function circProgram(
       roll.finish()
 
       if (k.ctrlKey && !k.shiftKey && k.key === 'c') { askQuit(); return }
+      // Before Escape, which the pane's mode answers with its own exit.
+      if (k.ctrlKey && k.key === 'u') {
+        if (narrow) openWho()
+        else if (picking) leavePick()
+        else enterPick()
+        return
+      }
+      if (picking) { pickKey(k); return }
       if (k.key === 'Escape') {
         if (suggest) { closeSuggest(); paint(); return }
         askQuit()
@@ -871,7 +1124,6 @@ export function circProgram(
       }
       if (k.ctrlKey && k.key === 'h') { openHelp(); return }
       if (k.ctrlKey && k.key === 'j') { void openRooms(); return }
-      if (k.ctrlKey && k.key === 'u' && narrow) { openWho(); return }
 
       // While the names box is open it takes the arrows and Tab, which are its
       // whole interaction; an arrow scrolling the log would leave the cycle stuck.
@@ -932,6 +1184,12 @@ export function circProgram(
     try {
       const parked = readState(p.takeState())
       if (parked?.draft) { input.set(parked.draft); paint() }
+
+      // Not awaited: the first roster never announces anything, so a late
+      // answer cannot be missed. Unreachable settings leave the notices on.
+      void api.get<{ showChatJoinLeave?: boolean }>('/v1/settings')
+        .then(cfg => { joinsShown = cfg.showChatJoinLeave !== false })
+        .catch(() => {})
 
       const target = p.argv[1] ?? (await loadRooms().catch(() => []))[0]?.slug
       if (!target || !await joinRoom(target)) {

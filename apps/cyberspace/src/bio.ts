@@ -30,9 +30,38 @@ export interface Portrait {
   lines?: string[]
 }
 
+/**
+ * What a card needs of a picture bank: the halftone rows for the profile
+ * picture, and the row count its slot will take. The chat and globe banks both
+ * satisfy it.
+ */
+export interface BioPictures {
+  slot(maxCols: number, maxRows: number, ratio?: number): number
+  load(src: string, key: string, maxCols: number, maxRows: number): Promise<{ lines: string[] }>
+}
+
 /** Whether a box this wide has room for the picture beside the words. */
 export function portraitFits(width: number): boolean {
   return width >= PFP_COLS + PFP_GAP + PFP_MIN_TEXT
+}
+
+/**
+ * The picture for a card, ready to hand to bioLines. Nothing when there is
+ * none, when the bank cannot read it, or when the box is too narrow for both:
+ * the caller awaits this, so a column with no rows would stay blank.
+ */
+export async function loadPortrait(
+  pics: BioPictures | undefined, p: FeedProfile, width: number,
+): Promise<Portrait | undefined> {
+  if (!pics || !p.picture || !portraitFits(width)) return undefined
+  const portrait: Portrait = { cols: PFP_COLS, rows: pics.slot(PFP_COLS, PFP_ROWS, 1) }
+  try {
+    portrait.lines = (await pics.load(p.picture, p.picture, PFP_COLS, PFP_ROWS)).lines
+  } catch (err) {
+    console.error('portrait failed', err)
+    return undefined
+  }
+  return portrait.lines.some(row => row.trim()) ? portrait : undefined
 }
 
 /**

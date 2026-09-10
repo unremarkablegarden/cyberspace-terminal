@@ -56,7 +56,11 @@ const api = {
 const kernel = new Kernel()
 // One resume slot shared by every run, as a job's would be.
 let resume = new Resume()
-const feed = feedProgram(api)
+// The host's draft store, in a variable so a run can be handed one already written.
+let slot: string | null = null
+const drafts = (): { post?: { d: { body: string } }; replies?: Record<string, { d: { text: string } }> } | null =>
+  (slot ? JSON.parse(slot) : null)
+const feed = feedProgram(api, undefined, undefined, { get: () => slot, set: v => { slot = v } })
 
 function boot(argv: string[]) {
   let out = ''
@@ -74,7 +78,7 @@ function boot(argv: string[]) {
   }
   return { tty, task, out: () => out, screen, reset: () => { out = '' } }
 }
-const state = () => resume.state as { v: number; screens: { author?: string; sel: number; open?: { id: string }; modal?: string }[]; draft?: { body: string } }
+const state = () => resume.state as { v: number; screens: { author?: string; sel: number; open?: { id: string }; modal?: string }[] }
 
 // --- a fresh run -------------------------------------------------------------
 {
@@ -113,11 +117,45 @@ const state = () => resume.state as { v: number; screens: { author?: string; sel
   ok('Escape pops back', state()?.screens.length === 1)
   ok('resume line back to feed', resume.line === 'feed')
 
-  m.reset(); m.tty.input('w'); await sleep(200)
-  m.tty.input('draft words'); await sleep(200)
-  ok('composer draft parked', state()?.draft?.body === 'draft words', JSON.stringify(state()?.draft))
+  // A reply: the draft is kept as it is typed, ^D asks instead of quitting, ^S posts.
+  m.reset(); m.tty.input('r'); await sleep(300)
+  ok('R opens the reply box', m.screen().includes('REPLY') && state()?.screens[0]?.modal === 'reply', JSON.stringify(state()?.screens))
+  m.tty.input('a reply'); await sleep(600)
+  ok('reply draft stored', drafts()?.replies?.p2?.d?.text === 'a reply', slot ?? '')
+  m.reset(); m.tty.input('\x04'); await sleep(200)
+  ok('^D asks rather than quitting', m.screen().includes('Sure?'))
+  ok('^D stayed in the alt screen', !m.out().includes('\x1b[?1049l'))
+  m.tty.input('n'); await sleep(200)
+  ok('N returns to the text', m.screen().includes('a reply'))
+  m.tty.input('\x1b'); await sleep(300)
+  ok('Escape keeps the reply draft', drafts()?.replies?.p2?.d?.text === 'a reply')
+  m.reset(); m.tty.input('r'); await sleep(300)
+  ok('the box reopens with the draft', m.screen().includes('a reply'))
+  m.tty.input('!'); await sleep(600)
+  ok('the caret opens at the end', drafts()?.replies?.p2?.d?.text === 'a reply!', slot ?? '')
+  m.tty.input('\x13'); await sleep(200)
+  ok('^S asks', m.screen().includes('Sure?'))
+  m.tty.input('y'); await sleep(800)
+  ok('reply posted', calls.some(c => c.startsWith('POST /v1/replies') && c.includes('a reply!')),
+    calls.filter(c => c.startsWith('POST')).join(' | '))
+  ok('the posted draft is dropped', !drafts()?.replies?.p2, slot ?? '')
+
+  // The post opened itself to show the new reply; close it again.
+  m.tty.input('\x1b'); await sleep(300)
+
+  m.reset(); m.tty.input('w'); await sleep(300)
+  ok('W opens the composer', state()?.screens[0]?.modal === 'write', JSON.stringify(state()?.screens))
+  m.tty.input('draft words'); await sleep(600)
+  ok('composer draft stored', drafts()?.post?.d?.body === 'draft words', slot ?? '')
+  m.reset(); m.tty.input('\x13'); await sleep(200)
+  ok('^S asks before publishing', m.screen().includes('PUBLISH'))
+  m.tty.input('n'); await sleep(200)
+  m.reset(); m.tty.input('\x0e'); await sleep(200)
+  ok('^N asks before saving a note', m.screen().includes('SAVE NOTE'))
+  m.tty.input('n'); await sleep(200)
   m.tty.input('\x1b'); await sleep(200)
-  ok('draft kept after leaving composer', state()?.draft?.body === 'draft words')
+  ok('draft kept after leaving composer', drafts()?.post?.d?.body === 'draft words')
+  ok('composer modal cleared', state()?.screens[0]?.modal === undefined)
 
   m.reset(); m.tty.input('\x1b'); await sleep(200)
   ok('Escape asks', m.screen().includes('Quit the feed?'))
@@ -127,7 +165,7 @@ const state = () => resume.state as { v: number; screens: { author?: string; sel
   const code = await m.task.wait
   ok('y exits 0', code === 0, `exit=${code}`)
   ok('alt screen left', m.out().includes('\x1b[?1049l'))
-  ok('no POST sent', !calls.some(c => c.startsWith('POST')))
+  ok('nothing published', !calls.some(c => c.startsWith('POST /v1/posts') || c.startsWith('POST /v1/notes')))
 }
 
 // --- restore ----------------------------------------------------------------
@@ -135,9 +173,8 @@ const state = () => resume.state as { v: number; screens: { author?: string; sel
   calls.length = 0
   resume = new Resume()
   resume.restore('feed', {
-    v: 1,
+    v: 2,
     screens: [{ sel: 1, open: { id: 'p2', scroll: 0, sel: 0 } }, { author: 'bob', sel: 1 }],
-    draft: { title: 't', body: 'parked body', topics: '', blog: false, nsfw: false, vent: false },
   })
   const m = boot(['feed'])
   await sleep(2000)
@@ -146,13 +183,43 @@ const state = () => resume.state as { v: number; screens: { author?: string; sel
   ok('inner selection restored', s?.screens[1]?.sel === 1)
   ok('open post restored underneath', s?.screens[0]?.open?.id === 'p2')
   ok('resume line stays feed', resume.line === 'feed')
-  ok('draft restored', s?.draft?.body === 'parked body')
   ok('bob list printed', m.screen().includes('Post number 4'))
   ok('restored replies fetched once', calls.filter(c => c.includes('/v1/posts/p2/replies')).length === 1)
   m.tty.input('\x03'); await sleep(300)
   const code = await m.task.wait
   ok('^C leaves at once', code === 0 || code === 130, `exit=${code}`)
   ok('alt screen left', m.out().includes('\x1b[?1049l'))
+}
+
+// --- a parked reply box comes back with its text -----------------------------
+{
+  calls.length = 0
+  resume = new Resume()
+  slot = JSON.stringify({ v: 1, user: 'tester', replies: { p2: { at: Date.now(), d: { text: 'kept text' } } } })
+  resume.restore('feed', { v: 2, screens: [{ sel: 1, modal: 'reply' }] })
+  const m = boot(['feed'])
+  await sleep(2000)
+  ok('reply box restored', m.screen().includes('REPLY'), JSON.stringify(state()?.screens))
+  ok('the kept text is in it', m.screen().includes('kept text'))
+  // The first ^C cancels the box, as it always did; the second leaves the feed.
+  m.tty.input('\x03'); await sleep(200)
+  m.tty.input('\x03'); await sleep(300)
+  const code = await m.task.wait
+  ok('^C leaves at once', code === 0 || code === 130, `exit=${code}`)
+}
+
+// --- another member's drafts are not shown -----------------------------------
+{
+  resume = new Resume()
+  slot = JSON.stringify({ v: 1, user: 'someone-else', replies: { p2: { at: Date.now(), d: { text: 'not yours' } } } })
+  const m = boot(['feed'])
+  await sleep(1500)
+  m.tty.input('r'); await sleep(300)
+  ok('a stranger\'s draft is dropped', !m.screen().includes('not yours'))
+  m.tty.input('\x03'); await sleep(200)
+  m.tty.input('\x03'); await sleep(300)
+  await m.task.wait
+  slot = null
 }
 
 // --- a hand-started run inherits nothing; feed @user opens the list --------

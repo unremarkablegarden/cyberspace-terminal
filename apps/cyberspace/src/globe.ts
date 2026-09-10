@@ -25,7 +25,7 @@ import {
 } from '@cyberspace/tui'
 import { ApiError, type ApiClient } from './api.js'
 import { SILENT, type ChatSound } from './chat.js'
-import { bioLines, fetchProfile, portraitFits, PFP_COLS, PFP_ROWS, type Portrait } from './bio.js'
+import { bioLines, fetchProfile, loadPortrait } from './bio.js'
 import { when, type FeedProfile } from './feedutil.js'
 
 export interface GlobeDeps {
@@ -882,16 +882,8 @@ export function globeProgram(api: ApiClient, deps: GlobeDeps, snd: ChatSound = S
         return
       }
       const width = Math.max(24, Math.min(56, inner.w - 10))
-      let portrait: Portrait | undefined
-      if (profile.picture && portraitFits(width)) {
-        portrait = { cols: PFP_COLS, rows: pixels.slot(PFP_COLS, PFP_ROWS, 1) }
-        try {
-          portrait.lines = (await pixels.load(profile.picture, profile.picture, PFP_COLS, PFP_ROWS)).lines
-        } catch (err) {
-          console.error('globe: portrait failed', err)
-        }
-        if (!running || stack.active) return
-      }
+      const portrait = await loadPortrait(pixels, profile, width)
+      if (!running || stack.active) return
       const site = profile.website?.url
       const popup: TextPopup = new TextPopup({
         title: `@${profile.username}`,

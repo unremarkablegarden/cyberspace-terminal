@@ -7,7 +7,7 @@ import { coreutils } from '@cyberspace/coreutils'
 import { shellMain } from '@cyberspace/shell'
 import {
   type ApiClient, circProgram, cmailProgram, feedProgram, globeProgram, cyberspacePrograms, registryPrograms,
-  mountPages, umountPages, syncHome, syncedPaths, syncProgram, type CsHooks, type HomeKey,
+  mountPages, umountPages, syncHome, syncedPaths, syncProgram, type CsHooks, type DraftStore, type HomeKey,
 } from '@cyberspace/apps'
 import { jsFileHandler } from '@cyberspace/compat'
 import type { Sound } from '@cyberspace/crt/audio'
@@ -49,12 +49,14 @@ export interface MachineDeps {
   pickFile?: (accept: string) => Promise<File | null>
   /** The host's file save, for download(1). Absent on a host without one. */
   saveFile?: SaveFile
+  /** Where feed keeps unsent writing. Absent on a host with no store, and drafts then end with the page. */
+  drafts?: DraftStore
   /** Receives the bounded final home sync, for shutdown and reboot. */
   onHome?: (flush: () => Promise<void>) => void
 }
 
 /** Register every program. A later registration replaces an earlier one of the same name. */
-function registerPrograms(kernel: Kernel, { api, homeKey, snd, host, pictures, face, saveFile }: MachineDeps, hooks: CsHooks): void {
+function registerPrograms(kernel: Kernel, { api, homeKey, snd, host, pictures, face, saveFile, drafts }: MachineDeps, hooks: CsHooks): void {
   kernel.registerAll(coreutils)
   kernel.register('sh', shellMain)
   kernel.register('changelog', changelog)
@@ -74,7 +76,7 @@ function registerPrograms(kernel: Kernel, { api, homeKey, snd, host, pictures, f
   kernel.registerAll(cyberspacePrograms(api, hooks, chatSnd))
   kernel.register('circ', circProgram(api, RTDB_URL, chatSnd, pictures))
   kernel.register('cmail', cmailProgram(api, RTDB_URL, chatSnd, pictures))
-  kernel.register('feed', feedProgram(api, chatSnd, pictures))
+  kernel.register('feed', feedProgram(api, chatSnd, pictures, drafts))
   if (face && pictures) {
     const world = () => fetch('/world.bin').then(r => {
       if (!r.ok) throw new Error(String(r.status))

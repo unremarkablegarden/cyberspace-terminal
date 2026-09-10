@@ -228,3 +228,13 @@
 - Fixed subscribers being refused `sync`, `~/public_html`
 - Fixed the login error for an unverified e-mail address
 - Fixed C-Mail from Globe
+
+## v0.6.1
+
+- `circ`
+    - `^U` picks a member in the online pane
+    - `↵` opens their card, `C` C-Mail with them
+- `feed`
+    - `^S` posts a reply or an entry, `^N` saves a note; both ask first
+    - Unsent replies and entries are kept across a reload
+- Fixed `^D` quitting bug and feed post key commands

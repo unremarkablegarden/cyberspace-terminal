@@ -2,10 +2,9 @@
 // registered program.
 //
 // Everything the /write page can make except what a character grid cannot
-// hold: no attachments, no slug, no preview. The draft belongs to the feed
-// program, which keeps it across the composer being opened and closed and in
-// the parked session state, so leaving asks nothing. Only ^X (destroys) and
-// ^P / ^S (write to the world) ask.
+// hold: no attachments, no slug, no preview. Every keystroke goes to the feed's
+// draft store (feeddraft.ts), so leaving asks nothing. Only ^X (destroys) and
+// ^S / ^N (write to the world) ask.
 
 import type { Grid, KeyInput, Rect, Screen, Span } from '@cyberspace/tui'
 import {
@@ -70,9 +69,9 @@ const HINT: Span[] = [
   { text: ' Field ' },
   { text: ' ^X ', inverse: true, attr: DIM },
   { text: ' Clear ' },
-  { text: ' ^S ', inverse: true, attr: DIM },
+  { text: ' ^N ', inverse: true, attr: DIM },
   { text: ' Note ' },
-  { text: ' ^P ', inverse: true, attr: DIM },
+  { text: ' ^S ', inverse: true, attr: DIM },
   { text: ' Publish' },
 ]
 
@@ -80,9 +79,9 @@ const HINT: Span[] = [
 const HINT_NARROW: Span[] = [
   { text: ' TAB ', inverse: true, attr: DIM },
   { text: ' Field ' },
-  { text: ' ^S ', inverse: true, attr: DIM },
+  { text: ' ^N ', inverse: true, attr: DIM },
   { text: ' Note ' },
-  { text: ' ^P ', inverse: true, attr: DIM },
+  { text: ' ^S ', inverse: true, attr: DIM },
   { text: ' Post' },
 ]
 
@@ -168,7 +167,7 @@ export class WriteScreen implements Screen {
   onKey(e: KeyInput): boolean {
     if (this.closed) return false
 
-    // No key acts while a write is in flight: a second ^P would post twice.
+    // No key acts while a write is in flight: a second ^S would post twice.
     if (this.busy) {
       this.host.snd.beep(220, 0.04)
       return true
@@ -176,8 +175,10 @@ export class WriteScreen implements Screen {
 
     if (e.ctrlKey) {
       if (e.key === 'c') { this.quit(false); return true }
-      if (e.key === 'p') { this.askPublish(); return true }
-      if (e.key === 's') { this.askNote(); return true }
+      // ^P published before this, and ^D is the EOT a composer usually submits
+      // with. Both stay, unadvertised.
+      if (e.key === 's' || e.key === 'p' || e.key === 'd') { this.askPublish(); return true }
+      if (e.key === 'n') { this.askNote(); return true }
       if (e.key === 'x') { this.askClear(); return true }
       if (e.key === 'k' && this.field === 'body') {
         const used = this.body.killLine()

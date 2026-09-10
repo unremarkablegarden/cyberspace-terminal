@@ -96,6 +96,8 @@ export interface BufferOptions {
   onReject?: () => void
   /** Write the selected text to the clipboard, for copy and cut. */
   clipboard?: (text: string) => void
+  /** Where the caret opens in `initial`. Default 'start'. */
+  caret?: 'start' | 'end'
 }
 
 const DEFAULT_MAX = 65536
@@ -112,6 +114,7 @@ export class TextBuffer {
 
   constructor(private opts: BufferOptions = {}) {
     this.str = opts.initial ?? ''
+    if (opts.caret === 'end') this.at = this.str.length
   }
 
   /** The selection low/high, or null. Read by drawBuffer to highlight it. */
