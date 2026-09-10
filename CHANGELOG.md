@@ -237,4 +237,4 @@
 - `feed`
     - `^S` posts a reply or an entry, `^N` saves a note; both ask first
     - Unsent replies and entries are kept across a reload
-- Fixed `^D` quitting bug and feed post key commands
+    - Fixed `^D` quitting bug and feed post key commands
