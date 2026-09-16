@@ -59,8 +59,8 @@ THREE KINDS
          brought in with import.
 
 The default export decides which; nothing is declared. Programs
-published from the old cyberspace.online/terminal are the object kind
-and still run.
+published from the old cyberspace.online/terminal are JS programs and
+still run.
 
 
 PUBLISHING

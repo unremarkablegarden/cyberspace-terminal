@@ -77,7 +77,8 @@ function row(p: StoredProgram, width: number): string {
  * states that rather than asking for confirmation over a name.
  */
 function consequences(p: StoredProgram, verb: Verb, author: string): string[] {
-  // The kind is fixed at the first release; the box names it once.
+  // web is the default kind and goes unnamed; the other two are named, since
+  // the kind is fixed at the first release.
   const reach = p.runtime === 'web' ? [] : ['', `Kind: ${KIND[p.runtime]}.`]
 
   if (verb === 'publish') {

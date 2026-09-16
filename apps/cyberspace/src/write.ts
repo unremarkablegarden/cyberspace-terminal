@@ -179,7 +179,8 @@ export class WriteScreen implements Screen {
       // with. Both stay, unadvertised.
       if (e.key === 's' || e.key === 'p' || e.key === 'd') { this.askPublish(); return true }
       // Ctrl+N is a browser chord (new window) on Windows and Linux and never
-      // reaches the page; ^O is nano's write-out. ^N stays where it arrives.
+      // reaches the page; ^O is nano's write-out. ^N is kept as an alias where
+      // the browser delivers it.
       if (e.key === 'o' || e.key === 'n') { this.askNote(); return true }
       if (e.key === 'x') { this.askClear(); return true }
       if (e.key === 'k' && this.field === 'body') {
