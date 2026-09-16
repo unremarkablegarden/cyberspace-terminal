@@ -27,7 +27,7 @@ Cyberspace API.
   attachments inline
 - Registry: `browse`, `install`, `publish`, `recall` — write a program here,
   publish it from the machine, run what others published
-- Pages: `~/public_html` is a homepage at pages.cyberspace.online — `edit`
+- Pages: `~/public_html` is a homepage at [pages.cyberspace.online](https://pages.cyberspace.online) — `edit`
   it, `upload` to it, `pages` for the URL (supporters)
 - Offline: installable PWA; the machine boots with no network
 
