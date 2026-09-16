@@ -1,5 +1,4 @@
 // The program registry: publish, browse, install, recall, over /v1/programs.
-// The same registry the website terminal serves.
 //
 // browse and publish are full-screen and live in their own files. This file
 // holds the line-mode forms, which do not take the grid, so a program can be

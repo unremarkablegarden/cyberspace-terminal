@@ -1,6 +1,6 @@
 // The teapot demo and the Term-facing Braille canvas handed to published
 // programs. The bitmap and projection maths live in @cyberspace/tui/vector;
-// this file keeps the (term, cols, rows) constructor the original programs
+// this file keeps the (term, cols, rows) constructor published programs
 // call, building the face metrics from the Term they pass.
 
 import { DotCanvas as TuiDotCanvas } from '@cyberspace/tui'

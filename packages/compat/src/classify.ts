@@ -18,10 +18,11 @@ export function isWasm(data: Uint8Array): boolean {
 }
 
 /**
- * Which terminal a program is written for.
+ * The kind of user program, named by its default export.
  *
- * `web`  an original /terminal program: `export default { run(ctx, args) }`
- * `term` a program for this machine: `export default async (p) => number`
+ * `web`  a JS program: `export default { run(ctx, args) }`. The historical
+ *        name; it is the form the site's old /terminal published.
+ * `term` a pty program: `export default async (p) => number`
  * `wasm` a wasm32-wasi binary
  */
 export type Runtime = 'web' | 'term' | 'wasm'
@@ -47,7 +48,7 @@ function boundTo(body: Node[], name: string): Node | null {
  * Classify JS source by its default export. Null means it is not a program.
  *
  * A default export that is neither an object nor a function reads as `web`,
- * which is what every program written before this machine existed is. Source
+ * which is what every program the old /terminal published is. Source
  * that does not parse is classified on the text, since a file being edited is
  * broken most of the time and should not vanish from `publish` while it is.
  */
@@ -64,7 +65,7 @@ export function classify(source: string): Runtime | null {
 
   let node = decl.declaration
   // One hop only. `export default main` where main is another alias is rare
-  // enough to read as the web terminal's kind and be corrected by the author.
+  // enough to read as a JS program and be corrected by the author.
   if (node?.type === 'Identifier') node = boundTo(program.body, node.name)
 
   if (!node) return 'web'

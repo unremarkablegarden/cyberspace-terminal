@@ -1,11 +1,11 @@
-// A program for this machine is a function. It receives the process and
-// returns the exit code. Compare hello.js, which is written for the web
-// terminal: that one exports an object with a run() and draws on a grid.
+// A pty program is a function. It receives the process and returns the
+// exit code. Compare hello.js, a JS program: that one exports an object
+// with a run() and draws on a grid.
 //
 // Nothing is imported. Everything is on p.
 
-// The one line browse shows. A program for the web terminal keeps it in its
-// object literal; this kind has no object, so it exports it.
+// The one line browse shows. A JS program keeps it in its object literal;
+// this kind has no object, so it exports it.
 export const description = 'numbers lines, or counts to n'
 
 export default async function count(p) {

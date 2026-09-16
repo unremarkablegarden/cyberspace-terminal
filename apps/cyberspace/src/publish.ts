@@ -77,11 +77,8 @@ function row(p: StoredProgram, width: number): string {
  * states that rather than asking for confirmation over a name.
  */
 function consequences(p: StoredProgram, verb: Verb, author: string): string[] {
-  // Where a program is listed follows from its kind, and the web terminal runs
-  // grid programs only. Nothing else on screen states that.
-  const reach = p.runtime === 'web'
-    ? []
-    : ['', `Kind: ${KIND[p.runtime]}. It is listed on this machine`, 'only, not on the web terminal.']
+  // The kind is fixed at the first release; the box names it once.
+  const reach = p.runtime === 'web' ? [] : ['', `Kind: ${KIND[p.runtime]}.`]
 
   if (verb === 'publish') {
     const next = p.release + 1
@@ -361,8 +358,8 @@ export function publishProgram(api: ApiClient, snd: ChatSound = SILENT): Program
       p.out(`${program.name} has no description\n`)
       p.out(D('every program in browse is found by its one line — write one') + '\n')
       p.out(D(`  edit ~/${program.path}`) + '\n')
-      // Where the line goes depends on the kind: a grid program has an object
-      // literal to put it in and a program for this machine exports a function.
+      // Where the line goes depends on the kind: a JS program has an object
+      // literal to put it in and a pty program exports a function.
       p.out(D(program.runtime === 'term'
         ? "  export const description = 'what it does'"
         : "  description: 'what it does',") + '\n')

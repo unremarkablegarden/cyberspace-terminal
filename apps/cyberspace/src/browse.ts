@@ -47,7 +47,7 @@ const KIND: Record<Runtime, string> = { web: 'web', term: 'term', wasm: 'wasm' }
 
 /** Said in the About box, where there is room to say what the kind means. */
 const ABOUT_KIND: Record<Exclude<Runtime, 'web'>, string> = {
-  term: 'Written for this machine. Not for the web terminal.',
+  term: 'A function on the pty: argv, stdin, stdout, an exit code.',
   wasm: 'A wasm binary. Nothing to read; S shows nothing.',
 }
 

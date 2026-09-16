@@ -1,7 +1,6 @@
 # The program registry
 
-Where a published program lives, what the record says, and why two machines
-share one library.
+Where a published program lives and what the record says.
 
 ## Two stores, one record
 
@@ -20,39 +19,31 @@ The draft key carries a random segment because the bucket is public, so the key
 is what keeps an unpublished program unread.
 
 Writes go through `cyberspace-api`, `src/routes/v1/programs.ts`, which holds the
-R2 credentials and sets identity, version and moderation flags server-side. This
-machine never writes either store directly; see `apps/cyberspace/src/programs-store.ts`
+R2 credentials and sets identity, version and moderation flags server-side. Nothing
+here writes either store directly; see `apps/cyberspace/src/programs-store.ts`
 for every call it makes.
 
-## Two machines, one library
+## The `runtime` field
 
-The website's `/terminal` and this machine publish to the same collection. That
-is deliberate: one moderation path, one tier quota, one gallery, and every
-program written for the old machine is installable here through the compat host
+The record says which kind of user program it holds, named by the default
+export:
+
+| `runtime` | Kind | Shape | For |
+| --- | --- | --- | --- |
+| `web` | JS program | `export default { name, description, run(ctx, args) }` | interactive and network programs: cell grid, tui, sound, pictures, `ctx.api` as the member |
+| `term` | pty program | `export default async (p) => number` | pipeline tools and scripts: argv, stdio, exit code; no API; the only kind that resumes |
+| `wasm` | wasm program | a wasm32-wasi binary | compiled code (C, Rust): stdio, the files named on the command line, the tty; built elsewhere and brought in with `import` |
+
+`web` is the historical name: it is the form the site's old `/terminal`
+published, and those programs still run here through the compat host
 (`packages/compat/src/host.ts`).
 
-They do not run the same program format, so the record says which:
-
-| `runtime` | Shape | Runs on |
-| --- | --- | --- |
-| `web` | `export default { name, description, run(ctx, args) }` | both machines |
-| `term` | `export default async (p) => number` | this machine |
-| `wasm` | a wasm32-wasi binary, stdio only | this machine |
-
-The value names the terminal a program is written for, not the mechanism it
-uses: a `web` program draws on a cell grid through the compat host here, which
-is how one program serves both.
-
 **Absent means `web`.** Every document written before the field existed came
-from the website, which publishes nothing else — the same reading `dir` and
-`exec` already take on this collection, and it is why no backfill was needed.
+from the old terminal, which published nothing else — the same reading `dir`
+and `exec` already take on this collection, and it is why no backfill was
+needed. Only the API writes the field.
 
-Only the API writes the field. The website reads it and filters its own two
-listings (`useTerminalPrograms.browse` and `.list`), so absent-means-web holds
-by construction rather than by discipline.
-
-Each surface asks for what it can host: this machine sends
-`?runtime=web,term,wasm`, the website keeps `web`. A filtered page can come
+The client filters by it (`?runtime=web,term,wasm`). A filtered page can come
 back short or empty and still carry a cursor, so a client follows the cursor
 until it is null rather than stopping at the first short page.
 
@@ -109,7 +100,5 @@ own version — the API compares hashes over bytes.
 - **Takedown** is a moderator's. The record freezes: not publishable, not
   restorable, not deletable, until reinstated.
 - **Delete** (`DELETE /:id?purge=1`) removes the record, releases and all. It is
-  what frees the slot the program holds against the member's tier limit, which
-  matters because a program written for this machine still counts against a
-  quota the website will not show them. The R2 objects are left behind, as the
-  website's own `rm` leaves them.
+  what frees the slot the program holds against the member's tier limit. The
+  R2 objects are left behind.

@@ -1,4 +1,4 @@
-// A compat program halftones a luma plane and draws it as picture handles.
+// A JS program halftones a luma plane and draws it as picture handles.
 // Run: bun spikes/compat-image-check.ts
 import { Kernel } from '../packages/kernel/src/kernel.ts'
 import { Tty } from '../packages/kernel/src/tty.ts'

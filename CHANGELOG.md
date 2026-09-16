@@ -238,3 +238,9 @@
     - `^S` posts a reply or an entry, `^N` saves a note; both ask first
     - Unsent replies and entries are kept across a reload
     - Fixed `^D` quitting bug and feed post key commands
+
+## v0.6.2
+
+- Replaced `Ctrl+N` with `Ctrl+O` for saving notes (browser clash)
+- Shell: `Ctrl+Backspace` and `Alt+Backspace` delete the word before the cursor (`^W` closes the tab on Windows and Linux)
+- Docs, `browse` and `publish` name the three kinds of user program: JS program, pty program, wasm; nothing refers to the retired website terminal

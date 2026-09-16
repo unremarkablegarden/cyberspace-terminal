@@ -1,7 +1,7 @@
 {
   "name": "@cyberspace/compat",
-  "version": "0.6.1",
-  "description": "Runs grid-native programs from the original /terminal over the pty.",
+  "version": "0.6.2",
+  "description": "Runs JS user programs on a cell grid over the pty.",
   "type": "module",
   "exports": {
     ".": "./src/index.ts",

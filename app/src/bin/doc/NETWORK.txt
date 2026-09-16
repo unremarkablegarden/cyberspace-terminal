@@ -19,8 +19,8 @@ member running the program, and the server enforces their permissions
 and their rate limits. No token is handled by the program. A failed
 connection throws NO CARRIER.
 
-Web programs only. A program for this machine has fetch and no
-credential; its API calls are unauthenticated.
+JS programs only. A pty program has fetch and no credential; its API
+calls are unauthenticated.
 
 
 WHAT IS THERE

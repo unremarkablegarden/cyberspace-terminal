@@ -1,5 +1,9 @@
 # wasm programs
 
+The runtime. What a member sees, how to build one and how it gets into the
+gallery is in the machine's manual, `app/src/bin/doc/API.txt`, A WASM
+PROGRAM.
+
 wasm32-wasi (Preview 1) binaries run as processes. The kernel's exec path
 (`resolveExec`) recognises three file kinds: the `\0asm` magic (WASI run),
 `#!interpreter` shebangs (dispatched to the named program with the script path

@@ -108,6 +108,11 @@ export function encodeKey(e: KeyboardEvent): string | null {
   const moved = modifiedMove(e.key, e.shiftKey, e.ctrlKey || e.altKey)
   if (moved) return moved
 
+  // Kill-word aliases. Ctrl+W is a browser chord (close tab) on Windows and
+  // Linux; Ctrl+Backspace is the native word-delete there and Alt+Backspace is
+  // readline's M-DEL. Both reach the page everywhere.
+  if (e.key === 'Backspace' && (e.ctrlKey || e.altKey)) return '\x17'
+
   // Option is a layer key on Mac and iPad layouts (Swedish Opt+2 = @); a
   // printable result is typed as itself. Anything else under Option is dropped.
   if (e.altKey) return e.key.length === 1 && !e.ctrlKey ? e.key : null

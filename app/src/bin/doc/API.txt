@@ -12,17 +12,19 @@ against REFUSED NAMES below. It is then imported as an ES module.
 
 What the default export turns out to be decides how it is called:
 
-  a function          called with the process. See A PROGRAM FOR THIS
-                      MACHINE.
-  an object with run  called with ctx and a cell grid. See A WEB
-                      PROGRAM.
+  a function          called with the process. See A PTY PROGRAM.
+                      For pipeline tools: argv, stdin, stdout, exit
+                      code. No API.
+  an object with run  called with ctx and a cell grid. See A JS
+                      PROGRAM. For anything interactive or on the
+                      network: the grid, tui, sound, pictures, ctx.api.
 
 Anything else is refused with `not a program (missing export default)`.
 
 
 THE LOOP
 
-A web program is given an 80x25 grid of cells, 44x20 on a phone. A
+A JS program is given an 80x25 grid of cells, 44x20 on a phone. A
 ticker diffs that grid to the terminal every 33 milliseconds, and only
 when something has changed it. The first pushScreen takes the alternate
 screen; popScreen back to an empty stack returns to line mode, where
@@ -60,7 +62,7 @@ reported as `name: message at LINE:COL`, pointing into the source as
 written.
 
 
-A WEB PROGRAM
+A JS PROGRAM
 
   export default {
     name: 'mine',
@@ -73,7 +75,7 @@ A WEB PROGRAM
 args holds the words after the program name.
 
 
-A PROGRAM FOR THIS MACHINE
+A PTY PROGRAM
 
   export const description = 'says hello'
 
@@ -203,7 +205,7 @@ Present on ctx, and does nothing useful:
 Live: ctx.api, ctx.feed.page(limit, after) and ctx.chat.roll(notation).
 roll takes NdM, NdM+K, NdM-K and d%, at most 100 dice.
 
-A web program does not resume: setResume and setState do nothing here.
+A JS program does not resume: setResume and setState do nothing here.
 See COMING BACK.
 
 Not present at all: ctx.fs, ctx.mail, ctx.compose, ctx.upload,
@@ -212,7 +214,7 @@ ctx.world, ctx.programs.
 
 p — THE PROCESS
 
-A program for this machine receives the process instead of ctx.
+A pty program receives the process instead of ctx.
 
   p.argv                    the command word, then its arguments
   p.env                     a copy: USER HOME HOSTNAME PATH SHELL TERM
@@ -232,7 +234,7 @@ A program for this machine receives the process instead of ctx.
   p.tty.echo(s)             write without pacing it
   p.tty.paint(s)            write a whole frame without pacing it
 
-There is no p.api. A program for this machine has fetch and no token,
+There is no p.api. A pty program has fetch and no token,
 so its API calls are unauthenticated.
 
 
@@ -244,7 +246,7 @@ COMING BACK
                             undefined
 
 A reload within ten minutes restores the screen and runs that line
-again. Programs for this machine only.
+again. Pty programs only.
 
   p.onStop = () => ...       the job left the foreground (^Z, the switcher):
                             close streams, stop timers, keep state
@@ -258,19 +260,48 @@ output waits, and it comes back to a blank screen until it draws.
 A WASM PROGRAM
 
 wasm32-wasi, Preview 1, starting at _start. It is given argv, the
-environment, and file descriptors 0, 1 and 2.
-
-There are no preopens. There is no filesystem: opening a path fails.
+environment, and file descriptors 0, 1 and 2. It runs in its own
+worker, so it may block.
 
 Standard input depends on where it comes from. Under a pipe or from a
 file it is read in full before the program starts. At the keyboard it
-blocks, in a worker, until there is something to read. Where the page is
-not cross-origin isolated, the keyboard reads as empty.
+blocks until there is something to read. Where the page is not
+cross-origin isolated, the keyboard reads as empty.
 
   cowsay                    reads the keyboard until Ctrl-D
   echo moo | cowsay         reads the pipe
 
-import puts a .wasm from this computer into ~/bin.
+FILES. The program sees a copy, preopened as /, of: the working
+directory and $HOME as directories; every argument that names a file
+(up to 8 MB) or a directory; the parent of an argument that names
+nothing yet, so the program can create it; ~/.<name>rc for a program
+called name. A file opened for writing is written back when it is
+closed. Paths not on that list do not exist; a program that opens a file
+it was not given fails. $PWD is the working directory; wasi-libc starts
+at / and does not read it, so C programs chdir(getenv("PWD")).
+
+THE TTY. Two imports from the module "cyberspace", both optional:
+
+  tty_size(ptr) -> i32      writes cols, rows as two u16 at ptr; -1
+                            when stdio is not a terminal
+  tty_raw(on)               raw (on != 0) or cooked. Raw also turns
+                            output pacing off for the run.
+
+TERM=xterm, LINES and COLUMNS are set in the environment as the
+fallback. Ctrl-C kills the process in either mode.
+
+BUILDING ONE. Target wasm32-wasip1, one file, under the size limit in
+~/bin/docs/README.txt (128 KB; 1 MB for supporters).
+
+  C       clang --target=wasm32-wasip1 -Os -o prog.wasm prog.c
+          (wasi-sdk)
+  Rust    cargo build --release --target wasm32-wasip1
+  Go      GOOS=wasip1 GOARCH=wasm go build -ldflags='-s -w'
+          (the runtime alone is about 2 MB: over the limit)
+
+Then, on the machine: import picks the .wasm off this computer into
+~/bin; run it there; publish asks for the description, since a binary
+has nowhere to carry one.
 
 
 REFUSED NAMES
@@ -304,7 +335,7 @@ Do this instead:
   a canvas to draw on     ctx.gfx.canvas(w, h)
   a second file           none; a program is one file
   a network call          ctx.api, or fetch
-  a saved setting         p.setState, for a program of this machine.
+  a saved setting         p.setState, for a pty program.
                           There is nowhere else: both browser stores are
                           refused.
 

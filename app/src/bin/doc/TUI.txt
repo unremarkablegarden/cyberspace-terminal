@@ -1,10 +1,10 @@
 CYBER/OS — THE TUI                                     ~/bin/docs/TUI.txt
 
-How a web program draws. How a program runs is in ~/bin/docs/API.txt.
+How a JS program draws. How a program runs is in ~/bin/docs/API.txt.
 
-ctx.attr, ctx.term, pushScreen and ctx.tui exist for a WEB PROGRAM only.
-A PROGRAM FOR THIS MACHINE has none of them; it draws with ANSI. See the
-last section.
+ctx.attr, ctx.term, pushScreen and ctx.tui exist for a JS PROGRAM only.
+A PTY PROGRAM has none of them; it draws with ANSI. See the last
+section.
 
 
 ctx.attr — THE BEAM
@@ -180,9 +180,8 @@ inside() answers whether a cell is within a clip rect, for a drawing
 routine that takes one.
 
 There are no popups, no input line, no list or log widget and no
-halftones. The legacy web terminal has them; a program copied from it
-that calls them throws. A list is a loop over text(); a selection is
-inv 1 on one row.
+halftones. A program published from the old /terminal that calls them
+throws. A list is a loop over text(); a selection is inv 1 on one row.
 
 
 ctx.tui — DOTS
@@ -229,7 +228,7 @@ look at them.
   }
 
 
-A PROGRAM FOR THIS MACHINE
+A PTY PROGRAM
 
 It receives the process, not ctx: no attr, no grid, no screens, no tui.
 The terminal is a byte stream; a frame is text with ANSI escapes. p.tty.paint(s) sends a whole frame at once, unpaced; p.tty.setRaw()

@@ -1,5 +1,6 @@
-// Runs a program written for the original /terminal: a default export of
-// { name, description, run(ctx, args) } against a virtual cell grid.
+// Runs a JS user program: a default export of { name, description,
+// run(ctx, args) } against a virtual cell grid. This is the form the site's
+// old /terminal published, so those programs run unchanged.
 //
 // Two modes, selected by the screen stack. In line mode ctx.write and ctx.type
 // map to SGR text on the pty. The first pushScreen enters the alternate screen,
@@ -43,7 +44,7 @@ export async function importDefault(source: string): Promise<unknown> {
   }
 }
 
-/** A default export shaped like an original /terminal program, or null. */
+/** A default export shaped like a JS program, or null. */
 export function asGridProgram(value: unknown): UserProgram | null {
   if (!value || typeof value !== 'object') return null
   return typeof (value as UserProgram).run === 'function' ? value as UserProgram : null
@@ -182,7 +183,7 @@ const SILENT_SND = {
 }
 
 /**
- * Run an imported grid program against a virtual cell grid.
+ * Run an imported JS program against a virtual cell grid.
  *
  * Takes the module's default export rather than its source: the guard and the
  * import belong to the file handler below, which has to look at what came back
@@ -248,7 +249,7 @@ export function runGridProgram(deps: CompatDeps): (p: Proc, program: UserProgram
     }
 
     /**
-     * The only paced output a compat program has. Everything else it writes is
+     * The only paced output a JS program has. Everything else it writes is
      * instant, so this clock is the whole rate: characters owed since the start
      * are released every 8ms, and a batch the event loop delayed is paid back
      * on the next one rather than dropped.

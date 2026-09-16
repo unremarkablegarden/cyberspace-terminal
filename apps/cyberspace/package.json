@@ -1,6 +1,6 @@
 {
   "name": "@cyberspace/apps",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Cyberspace network programs: login, finger, feed, circ.",
   "type": "module",
   "exports": {

@@ -232,8 +232,8 @@ async function start(msg: RunMessage): Promise<void> {
     return
   }
 
-  // A function default export is a program for this machine; an object with run()
-  // is an original /terminal program on the grid.
+  // A function default export is a pty program; an object with run() is a JS
+  // program on the grid.
   if (typeof value === 'function') {
     try {
       const code = await (value as (p: Proc) => Promise<number | void> | number | void)(proc) ?? 0

@@ -48,14 +48,19 @@ The examples are rewritten at every boot. Work on a copy:
 
 THREE KINDS
 
-  web    an object with a run(). Draws on a cell grid. Runs here and on
-         the legacy web terminal at cyberspace.online/terminal.
-  term   a function. A process: argv, stdin, stdout, an exit code. Runs
-         on this machine only (terminal.cyberspace.online).
-  wasm   a wasm32-wasi binary. Standard input, output and error, and no
-         filesystem.
+  web    an object with a run(). A JS program: a cell grid, the tui
+         widgets, sound, pictures, and the API as the member. For
+         anything interactive or on the network. Most programs.
+  term   a function on the pty: argv, stdin, stdout, an exit code. For
+         tools that sit in a pipeline or a script. No API; the one kind
+         that resumes after a reload.
+  wasm   a wasm32-wasi binary: stdio, the files named on its command
+         line, the tty. For compiled code (C, Rust); built elsewhere,
+         brought in with import.
 
-The default export decides which; nothing is declared.
+The default export decides which; nothing is declared. Programs
+published from the old cyberspace.online/terminal are the object kind
+and still run.
 
 
 PUBLISHING
@@ -63,8 +68,7 @@ PUBLISHING
 ~/bin is private until something is published.
 
 publish puts a program in the gallery under the author's name, where any
-member can read its source, run it once, or install a copy. The gallery
-is one library, shared with the legacy web terminal.
+member can read its source, run it once, or install a copy.
 
 A description is required, 256 characters at most. It is read out of the
 source, and it is the one line the gallery shows:

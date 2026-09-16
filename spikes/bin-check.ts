@@ -44,6 +44,6 @@ ok('an edited manual page is restored', (await fs.promises.readFile(readme, 'utf
 ok("the operator's own program survives", await fs.promises.readFile(`${HOME}/bin/mine`, 'utf8') === 'export default () => 0')
 
 const api = await fs.promises.readFile(`${HOME}/bin/API.txt`, 'utf8')
-ok('the manual names both program shapes', api.includes('A WEB PROGRAM') && api.includes('A PROGRAM FOR THIS MACHINE'))
+ok('the manual names both program shapes', api.includes('A JS PROGRAM') && api.includes('A PTY PROGRAM'))
 ok('and the wasm contract', api.includes('wasm32-wasi'))
 process.exit(bad ? 1 : 0)

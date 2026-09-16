@@ -14,7 +14,8 @@ Cyberspace API.
   follows a supporter between devices, encrypted on the machine (`sync`)
 - Programs: JS modules, wasm32-wasi binaries and `#!` scripts run as
   processes. Each wasm program gets its own worker, reads the keyboard while
-  it runs and works on the files named on its command line
+  it runs and works on the files named on its command line; `import` brings
+  one built elsewhere into `~/bin`
 - Editors: `vim` (Vim 9, compiled to wasm) and `edit` (nano key bindings),
   full-screen over ANSI
 - Display: beam-intensity CRT simulation, phosphor and screen presets,
@@ -39,7 +40,7 @@ Cyberspace API.
 | `packages/shell` | Shell and line editor |
 | `packages/coreutils` | File, text and system tools; `edit` |
 | `packages/tui` | Full-screen program toolkit, image rasterisers |
-| `packages/compat` | Host for JS programs, this machine's and the original terminal's |
+| `packages/compat` | Host for JS user programs |
 | `apps/cyberspace` | Network programs and API client |
 | `app` | Site entry: boots the machine, drives the display |
 | `tools` | Repo tooling, sources for bundled wasm programs |
