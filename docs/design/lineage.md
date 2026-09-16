@@ -71,8 +71,8 @@ renames the running shell's `USER`, and `logout` puts it back to guest.
 
 ## Executing a file
 
-Before: the source was turned into a blob URL and imported it as an ES
-module into the page. A guard read it first and refused source that reached
+Before: the source was turned into a blob URL and imported as an ES module
+into the page. A guard read it first and refused source that reached
 the Firebase credential in IndexedDB — a filter, not a boundary.
 
 After: `kernel.resolveExec` tries builtins, then `$PATH`. A `\0asm` header runs as
@@ -109,8 +109,8 @@ did before there was a rasteriser.
 
 ## Filesystem
 
-Before: an in-memory tree whose home was Firestore plus R2. A file was a cloud document, an empty directory a
-localStorage key, and there was nothing to read without an account.
+Before: an in-memory tree whose home was Firestore plus R2. A file was a cloud
+document, an empty directory a localStorage key, and there was nothing to read without an account.
 
 After: ZenFS — OPFS for home, Fetch for the `/repo` and `/bin` seeds, InMemory for
 `/tmp` — under the kernel's own fd and pipe layer. A file is bytes in this

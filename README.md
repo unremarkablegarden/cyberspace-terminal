@@ -11,7 +11,7 @@ Cyberspace API.
 - Shell: pipelines, redirection, globs, `$?`, history, tab completion,
   job control (`^Z`, `fg`, `ps`, `kill`; `CMD-K`/`CTRL-K` switches programs)
 - Filesystem: ZenFS on OPFS; the home directory persists in the browser, and
-  follows a supporter between devices, encrypted on the machine (`sync`)
+  follows a supporter between devices, stored encrypted in R2 storage (`sync`)
 - Programs: JS modules, wasm32-wasi binaries and `#!` scripts run as
   processes. Each wasm program gets its own worker, reads the keyboard while
   it runs and works on the files named on its command line; `import` brings
