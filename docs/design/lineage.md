@@ -1,7 +1,7 @@
 # Lineage
 
 History. This machine replaced the terminal that shipped inside the Cyberspace
-site at `/terminal` (`app/lib/terminal` there), since retired. That one was a
+site at `/terminal`, since retired. That one was a
 Nuxt page over an engine of plain modules: commands wrote cells straight onto
 the grid, home was a tree of Firestore documents, and a member's program was
 imported into the page. The rewrite kept the tube, the fonts, the audio and the
@@ -29,7 +29,7 @@ in the gallery.
 
 ## Shape
 
-Before: `pages/terminal.vue` mounted the engine, held every preference, and
+Before: the page mounted the engine, held every preference, and
 supplied `username`, the version and `reboot` as getters. It deployed with the
 site.
 
@@ -59,8 +59,8 @@ the only clock a user program is under.
 
 ## Processes
 
-Before: `Command { run(ctx, args) }`, listed once in `commands/index.ts`, run
-one at a time by `Shell.dispatch`. A command that reached the site set
+Before: `Command { run(ctx, args) }`, listed once in a command table, run one
+at a time by the shell's dispatch. A command that reached the site set
 `requiresAuth` and dispatch enforced it.
 
 After: `Program = (p: Proc) => number` (`packages/kernel/src/proc.ts`). A `Proc`
@@ -71,8 +71,8 @@ renames the running shell's `USER`, and `logout` puts it back to guest.
 
 ## Executing a file
 
-Before: `exec.ts` turned the source into a blob URL and imported it as an ES
-module into the page. `guard.ts` read it first and refused source that reached
+Before: the source was turned into a blob URL and imported it as an ES
+module into the page. A guard read it first and refused source that reached
 the Firebase credential in IndexedDB — a filter, not a boundary.
 
 After: `kernel.resolveExec` tries builtins, then `$PATH`. A `\0asm` header runs as
@@ -90,7 +90,7 @@ framebuffer at the framebuffer's resolution — sixteen times what a braille gri
 holds — and the bloom, the scanlines and the curvature ripple over it because it
 went through the rasteriser that draws the text. `packages/tui/src/raster` is
 that rasteriser, ported whole: an 8x8 Bayer screen with value noise, the same one
-the site's `ImageRaster.vue` runs as a shader, so a photograph here and the same
+the site runs as a shader, so a photograph here and the same
 photograph on the web are screened identically.
 
 What differs is who holds the bitmap. Before, a command had the grid in front
@@ -109,8 +109,7 @@ did before there was a rasteriser.
 
 ## Filesystem
 
-Before: an in-memory tree (`fs.ts`) whose home was Firestore plus R2, read
-through `ProgramStore`. A file was a cloud document, an empty directory a
+Before: an in-memory tree whose home was Firestore plus R2. A file was a cloud document, an empty directory a
 localStorage key, and there was nothing to read without an account.
 
 After: ZenFS — OPFS for home, Fetch for the `/repo` and `/bin` seeds, InMemory for
