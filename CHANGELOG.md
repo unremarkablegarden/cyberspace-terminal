@@ -245,7 +245,7 @@
 - Shell: `Ctrl+Backspace` and `Alt+Backspace` delete the word before the cursor (`^W` closes the tab on Windows and Linux)
 - Docs, `browse` and `publish` name the three kinds of user program: JS program, pty program, wasm; nothing refers to the retired website terminal
 
-## v0.6.3
+## v0.7
 
 - Global Notifications banner
     - F1 `NOTIFICATIONS` turns the notifications row and its tone off
