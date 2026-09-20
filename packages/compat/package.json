@@ -1,6 +1,6 @@
 {
   "name": "@cyberspace/compat",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "description": "Runs JS user programs on a cell grid over the pty.",
   "type": "module",
   "exports": {

@@ -7,7 +7,8 @@ import { coreutils } from '@cyberspace/coreutils'
 import { shellMain } from '@cyberspace/shell'
 import {
   type ApiClient, circProgram, cmailProgram, feedProgram, globeProgram, cyberspacePrograms, registryPrograms,
-  mountPages, umountPages, syncHome, syncedPaths, syncProgram, type CsHooks, type DraftStore, type HomeKey,
+  mountPages, umountPages, syncHome, syncedPaths, syncProgram, InboxService, inboxProgram,
+  type CsHooks, type DraftStore, type HomeKey,
 } from '@cyberspace/apps'
 import { jsFileHandler } from '@cyberspace/compat'
 import type { Sound } from '@cyberspace/crt/audio'
@@ -17,7 +18,7 @@ import { downloadProgram, type SaveFile } from './download'
 import { OpfsHome } from './opfs'
 import { changelog, VERSION } from './changelog'
 import { ENV, HOME, IMAGE_HOSTS, RTDB_URL, homeOf } from './config'
-import { motdPictures, writeMotd } from './motd'
+import { motdNotes, motdPictures, writeMotd } from './motd'
 import { installSkel } from './skel'
 import { installBin } from './bin'
 
@@ -53,10 +54,12 @@ export interface MachineDeps {
   drafts?: DraftStore
   /** Receives the bounded final home sync, for shutdown and reboot. */
   onHome?: (flush: () => Promise<void>) => void
+  /** Receives the notification service, for the notice bar and the switcher's counts. */
+  onInbox?: (inbox: InboxService) => void
 }
 
 /** Register every program. A later registration replaces an earlier one of the same name. */
-function registerPrograms(kernel: Kernel, { api, homeKey, snd, host, pictures, face, saveFile, drafts }: MachineDeps, hooks: CsHooks): void {
+function registerPrograms(kernel: Kernel, { api, homeKey, snd, host, pictures, face, saveFile, drafts }: MachineDeps, hooks: CsHooks, inbox: InboxService): void {
   kernel.registerAll(coreutils)
   kernel.register('sh', shellMain)
   kernel.register('changelog', changelog)
@@ -77,6 +80,7 @@ function registerPrograms(kernel: Kernel, { api, homeKey, snd, host, pictures, f
   kernel.register('circ', circProgram(api, RTDB_URL, chatSnd, pictures))
   kernel.register('cmail', cmailProgram(api, RTDB_URL, chatSnd, pictures))
   kernel.register('feed', feedProgram(api, chatSnd, pictures, drafts))
+  kernel.register('inbox', inboxProgram(api, chatSnd, () => inbox))
   if (face && pictures) {
     const world = () => fetch('/world.bin').then(r => {
       if (!r.ok) throw new Error(String(r.status))
@@ -234,12 +238,50 @@ function wireHome(api: ApiClient, key: HomeKey): { onAuth: CsHooks['onAuth']; up
   }
 }
 
+/** How often the notification count is polled while the tab is visible. */
+const INBOX_EVERY_MS = 60_000
+/** How long login(1) waits for the counts before printing without them. */
+const INBOX_LOGIN_MS = 3000
+
+/**
+ * The notification service follows the session: started on login or a boot
+ * resume, stopped on logout. Its counts are written into the motd as they
+ * change; login(1) prints them itself, as it prints `You have mail.`
+ */
+function wireInbox(api: ApiClient): { inbox: InboxService; onAuth: CsHooks['onAuth'] } {
+  const inbox = new InboxService(api, RTDB_URL.replace(/\/$/, ''))
+  inbox.hooks.onCounts = () => { void motdNotes(api.username, inbox.lines()) }
+  const previous = api.onAuthChange
+  api.onAuthChange = user => {
+    previous?.(user)
+    if (user) inbox.start()
+    else inbox.stop()
+  }
+  // A resume can finish before this runs.
+  if (api.authed) inbox.start()
+  setInterval(() => { if (!document.hidden) void inbox.poll() }, INBOX_EVERY_MS)
+  return {
+    inbox,
+    onAuth: async user => {
+      if (!user) return undefined
+      await Promise.race([inbox.ready, new Promise<void>(res => setTimeout(res, INBOX_LOGIN_MS))])
+      return inbox.lines().join('\n') || undefined
+    },
+  }
+}
+
 /** Bring the kernel up: programs, mounts, seed files. Never touches the grid. */
 export async function bootMachine(deps: MachineDeps): Promise<Kernel> {
   const kernel = new Kernel()
   kernel.release = VERSION
   const home = wireHome(deps.api, deps.homeKey)
-  registerPrograms(kernel, deps, { onAuth: home.onAuth, onLeave: home.flush, homeKey: deps.homeKey, pickFile: deps.pickFile })
+  const mail = wireInbox(deps.api)
+  deps.onInbox?.(mail.inbox)
+  const onAuth: CsHooks['onAuth'] = async user => {
+    const notes = [await home.onAuth?.(user), await mail.onAuth?.(user)].filter(Boolean)
+    return notes.join('\n') || undefined
+  }
+  registerPrograms(kernel, deps, { onAuth, onLeave: home.flush, homeKey: deps.homeKey, pickFile: deps.pickFile }, mail.inbox)
   deps.onHome?.(home.flush)
 
   // OPFS exists only in a secure context: https, or http on localhost. A LAN

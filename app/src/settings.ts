@@ -176,6 +176,13 @@ function settings(screen: CrtScreen, snd: Sound, onFont?: () => void): Setting[]
       ],
     },
     {
+      // The notice bar and its tone. The inbox and the counts are not affected.
+      label: 'NOTIFICATIONS',
+      values: ['on', 'off'],
+      current: () => store.get('notices', 'on') === 'off' ? 'off' : 'on',
+      select: (v) => { store.set('notices', v); return v },
+    },
+    {
       label: 'SCREENSAVER',
       values: [],
       // Reports enabled state and timeout in one word; the saver itself is

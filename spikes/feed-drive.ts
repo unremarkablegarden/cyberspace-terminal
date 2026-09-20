@@ -38,6 +38,11 @@ const api = {
     if (path === '/v1/settings') return { filterNSFW: false, defaultPublicPost: false }
     if (path === '/v1/users/me') return { mutedUsers: [], blockedUsers: [] }
     if (path.startsWith('/v1/users/')) return { username: decodeURIComponent(path.split('/')[3]), bio: 'A &amp; bio', createdAt: '2024-01-01T00:00:00Z' }
+    if (path.startsWith('/v1/posts/')) {
+      const hit = posts.find(x => x.postId === path.split('/')[3])
+      if (hit) return hit
+      throw Object.assign(new Error('Post not found'), { status: 404 })
+    }
     throw new Error('unexpected ' + path)
   },
   async page(path: string) {
@@ -176,7 +181,7 @@ const state = () => resume.state as { v: number; screens: { author?: string; sel
   calls.length = 0
   resume = new Resume()
   resume.restore('feed', {
-    v: 2,
+    v: 3,
     screens: [{ sel: 1, open: { id: 'p2', scroll: 0, sel: 0 } }, { author: 'bob', sel: 1 }],
   })
   const m = boot(['feed'])
@@ -199,7 +204,7 @@ const state = () => resume.state as { v: number; screens: { author?: string; sel
   calls.length = 0
   resume = new Resume()
   slot = JSON.stringify({ v: 1, user: 'tester', replies: { p2: { at: Date.now(), d: { text: 'kept text' } } } })
-  resume.restore('feed', { v: 2, screens: [{ sel: 1, modal: 'reply' }] })
+  resume.restore('feed', { v: 3, screens: [{ sel: 1, modal: 'reply' }] })
   const m = boot(['feed'])
   await sleep(2000)
   ok('reply box restored', m.screen().includes('REPLY'), JSON.stringify(state()?.screens))
@@ -235,6 +240,58 @@ const state = () => resume.state as { v: number; screens: { author?: string; sel
   m.tty.input('\x1b'); await sleep(200); m.tty.input('y'); await sleep(300)
   const code = await m.task.wait
   ok('exit 0', code === 0, `exit=${code}`)
+}
+
+// --- feed -p id reply: one entry over the list, the reply selected -----------
+{
+  resume = new Resume()
+  const m = boot(['feed', '-p', 'p1', 'r1'])
+  await sleep(2500)
+  type Snap = { post?: { id: string; reply?: string }; open?: { id: string; sel: number } }
+  const screens = (): Snap[] => state()?.screens as Snap[]
+  ok('entry fetched by id', calls.includes('GET /v1/posts/p1'))
+  ok('entry screen over the list', screens().length === 2 && screens()[1]?.post?.id === 'p1', JSON.stringify(screens()))
+  ok('entry is open with its reply selected', screens()[1]?.open?.id === 'p1' && screens()[1]?.open?.sel === 1, JSON.stringify(screens()))
+  ok('reply printed', m.screen().includes('First reply here'))
+  ok('resume line stays feed', resume.line === 'feed')
+
+  m.tty.input('\x1b'); await sleep(300)
+  ok('Escape returns to the list', screens().length === 1 && m.screen().includes('Post number 5'), JSON.stringify(screens()))
+
+  m.task.proc.onArgs?.(['feed', '-p', 'p3'])
+  m.task.proc.onCont?.()
+  await sleep(1500)
+  ok('onArgs opens an entry in a run that exists', screens().length === 2 && screens()[1]?.post?.id === 'p3', JSON.stringify(screens()))
+
+  m.task.proc.onArgs?.(['feed', '@bob'])
+  m.task.proc.onCont?.()
+  await sleep(1500)
+  ok('onArgs opens a member over it', screens().length === 3 && state()?.screens[2]?.author === 'bob', JSON.stringify(screens()))
+  m.tty.input('\x03'); await sleep(300)
+  await m.task.wait
+}
+
+// --- the entry screen comes back from the parked state ------------------------
+{
+  // A quit clears the slot, so the parked state is written by hand.
+  resume = new Resume()
+  resume.restore('feed', { v: 3, screens: [{ sel: 0 }, { sel: 0, post: { id: 'p3' } }, { sel: 0, author: 'bob' }] })
+  const m = boot(['feed'])
+  await sleep(3000)
+  const screens = state()?.screens as { post?: { id: string }; author?: string }[]
+  ok('parked entry and member restored', screens.length === 3 && screens[1]?.post?.id === 'p3' && screens[2]?.author === 'bob', JSON.stringify(screens))
+  m.tty.input('\x03'); await sleep(300)
+  await m.task.wait
+}
+
+// --- an id that is not there ----------------------------------------------------
+{
+  resume = new Resume()
+  const m = boot(['feed', '-p', 'gone'])
+  await sleep(2000)
+  ok('missing entry says so', m.screen().includes('NO SUCH ENTRY'), m.screen())
+  m.tty.input('\x03'); await sleep(300)
+  await m.task.wait
 }
 
 console.log(fail ? `${fail} FAILED` : 'all ok')

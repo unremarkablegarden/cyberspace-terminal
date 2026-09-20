@@ -92,16 +92,24 @@ const COPIED_MS = 1500
 const POPUP_HINT = (...pairs: string[]): string => pairs.join('  ')
 
 /** Bump when FeedSnapshot or FeedState changes. A mismatch is dropped. */
-const STATE_VERSION = 2
+const STATE_VERSION = 3
 
 type FeedModal = 'links' | 'find' | 'bio' | 'reply' | 'write'
 
 /** Where one screen was: an index, an id and two numbers. Content is refetched. */
 interface FeedSnapshot {
   author?: string
+  /** A screen holding one entry, opened by id. */
+  post?: PostRef
   sel: number
   open?: { id: string; scroll: number; sel: number }
   modal?: FeedModal
+}
+
+/** One entry by id, and the reply in it to select. */
+interface PostRef {
+  id: string
+  reply?: string
 }
 
 interface FeedState {
@@ -262,6 +270,34 @@ function bodyLines(body: FeedBlock[], image: string | undefined, width: number):
   return out
 }
 
+/**
+ * A body as spans for a text box: the rows read mode draws, without a painter of
+ * its own. Quote bars and code keep their attributes; a link's words take the BG
+ * ground. Cut at `maxRows` with a closing `...` row.
+ */
+export function previewLines(body: FeedBlock[], width: number, maxRows: number): Span[][] {
+  const all = bodyLines(body, undefined, width)
+  const rows = all.slice(0, maxRows)
+  const out = rows.map((line): Span[] => {
+    if (line.code) {
+      const field = Math.min(line.field ?? width, width)
+      return [{ text: (' '.repeat(CODE_PAD) + line.text).slice(0, field).padEnd(field), attr: BRIGHT | BG }]
+    }
+    const spans: Span[] = []
+    for (let d = 0; d < (line.quote ?? 0); d++) spans.push({ text: QUOTE_BAR + ' ', attr: DIM })
+    let at = 0
+    for (const run of [...(line.links ?? [])].sort((x, y) => x.at - y.at)) {
+      if (run.at > at) spans.push({ text: line.text.slice(at, run.at), attr: line.attr })
+      spans.push({ text: line.text.slice(run.at, run.at + run.len), attr: line.attr | BG })
+      at = run.at + run.len
+    }
+    if (at < line.text.length) spans.push({ text: line.text.slice(at), attr: line.attr })
+    return spans
+  })
+  if (all.length > maxRows) out.push([{ text: MORE, attr: DIM }])
+  return out
+}
+
 /** The list excerpt: up to BODY_MAX rows, trailing blank dropped. */
 function excerpt(entry: FeedEntry, width: number): { lines: Line[]; more: boolean } {
   const all = bodyLines(entry.body, entry.image, width)
@@ -338,6 +374,8 @@ class FeedScreen implements Screen {
 
   /** The member this list is narrowed to. Absent on the main feed. */
   private author?: string
+  /** Set on a screen that holds one entry fetched by id and shows it open. */
+  private only?: PostRef
   private quit: () => void
   private profile?: FeedProfile
   private profileRows: TextLine[] = []
@@ -350,9 +388,10 @@ class FeedScreen implements Screen {
   constructor(
     private env: FeedEnv,
     private done: () => void,
-    opts: { author?: string; quit?: () => void; parent?: FeedScreen } = {},
+    opts: { author?: string; post?: PostRef; quit?: () => void; parent?: FeedScreen } = {},
   ) {
     this.author = opts.author
+    this.only = opts.post
     this.parent = opts.parent
     this.quit = opts.quit ?? (() => this.env.host.pop())
     this.print = new Reveal({
@@ -376,9 +415,15 @@ class FeedScreen implements Screen {
 
     const [mine, ...rest] = snaps
     if (mine) await this.restoreInto(mine)
+    if (this.only && !this.open && this.entries.length) {
+      this.pendingReply = this.only.reply
+      this.setOpen(true)
+    }
 
     const next = rest[0]
-    if (next?.author) {
+    if (next?.post) {
+      await this.showPost(next.post, { silent: true }).start(rest)
+    } else if (next?.author) {
       await this.showUser(next.author, { silent: true }).start(rest)
     } else if (mine?.modal) {
       this.restoreModal(mine.modal)
@@ -387,7 +432,7 @@ class FeedScreen implements Screen {
 
   /** Poll for new posts. Only the main feed; a member's list does not. */
   private listen(): void {
-    if (this.author || this.closed || this.poll) return
+    if (this.author || this.only || this.closed || this.poll) return
     this.poll = setInterval(() => { void this.checkNew() }, POLL_MS)
   }
 
@@ -444,6 +489,7 @@ class FeedScreen implements Screen {
     const entry = this.entries[this.sel]
     return {
       author: this.author,
+      post: this.only,
       sel: this.sel,
       open: this.open && entry ? { id: entry.id, scroll: this.readScroll, sel: this.readSel } : undefined,
       modal: this.modal,
@@ -654,6 +700,11 @@ class FeedScreen implements Screen {
    * this one below PAGE, up to MAX_ROUNDS, so a short page means the end.
    */
   private async fetchPage(): Promise<FeedEntry[]> {
+    if (this.only) {
+      this.cursor = null
+      const row = await this.host.api.get<ApiPost>(`/v1/posts/${encodeURIComponent(this.only.id)}`)
+      return [toEntry(row)]
+    }
     const out: FeedEntry[] = []
     const path = this.author
       ? `/v1/users/${encodeURIComponent(this.author)}/posts`
@@ -721,7 +772,8 @@ class FeedScreen implements Screen {
 
     if (e.key === 'Escape') {
       // The narrowest open thing closes: the entry, then this list, then the program.
-      if (this.open) {
+      // A one-entry screen has no list behind the entry worth returning to.
+      if (this.open && !(this.only && this.parent)) {
         this.setOpen(false)
       } else if (this.parent) {
         this.snd.blip(420, 0.09, 0)
@@ -1028,7 +1080,7 @@ class FeedScreen implements Screen {
     this.drawRules(term)
     this.drawChromeLabels(term)
 
-    if (this.failed) { this.centred(term, 'FEED UNAVAILABLE'); return }
+    if (this.failed) { this.centred(term, this.only ? 'NO SUCH ENTRY' : 'FEED UNAVAILABLE'); return }
     if (!this.entries.length) {
       this.centred(term, this.loaded ? 'NO ENTRIES' : 'LOADING')
       return
@@ -1514,6 +1566,30 @@ class FeedScreen implements Screen {
     this.save()
   }
 
+  /** One entry by id, open, pushed on top of this list. */
+  private showPost(post: PostRef, opts: { silent?: boolean } = {}): FeedScreen {
+    if (!opts.silent) this.snd.blip(520, 0.09, 0)
+    const screen = new FeedScreen(this.env, () => { this.child = undefined; this.save() }, {
+      post,
+      parent: this,
+      quit: () => {
+        this.host.pop()
+        this.quit()
+      },
+    })
+    this.child = screen
+    this.host.push(screen)
+    return screen
+  }
+
+  /** `feed -p id` or `feed @user` typed for a run that already exists: opened over whatever is on top. */
+  goTo(target: { post?: PostRef; author?: string }): void {
+    let leaf: FeedScreen = this
+    while (leaf.child) leaf = leaf.child
+    if (target.post) void leaf.showPost(target.post).start()
+    else if (target.author) void leaf.showUser(target.author).start()
+  }
+
   /** That member's posts, as another feed pushed on top of this one. */
   private showUser(who: string, opts: { silent?: boolean } = {}): FeedScreen {
     if (!opts.silent) this.snd.blip(520, 0.09, 0)
@@ -1609,8 +1685,12 @@ function readState(raw: unknown): FeedState {
     const s = item as Record<string, unknown>
     if (typeof s.sel !== 'number' || !Number.isFinite(s.sel)) break
     const open = s.open as Record<string, unknown> | undefined
+    const post = s.post as Record<string, unknown> | undefined
     out.push({
       author: typeof s.author === 'string' ? s.author : undefined,
+      post: post && typeof post.id === 'string'
+        ? { id: post.id, reply: typeof post.reply === 'string' ? post.reply : undefined }
+        : undefined,
       sel: Math.max(0, Math.floor(s.sel)),
       open: open && typeof open.id === 'string'
         ? { id: open.id, scroll: Math.max(0, Number(open.scroll) || 0), sel: Math.max(0, Number(open.sel) || 0) }
@@ -1619,7 +1699,7 @@ function readState(raw: unknown): FeedState {
     })
   }
   // Only the root may be authorless; the stack is cut at the first bad entry.
-  const bad = out.findIndex((s, i) => i > 0 && !s.author)
+  const bad = out.findIndex((s, i) => i > 0 && !s.author && !s.post)
   const screens = bad === -1 ? out : out.slice(0, bad)
 
   return { v: STATE_VERSION, screens }
@@ -1646,8 +1726,15 @@ async function loadFilter(api: ApiClient): Promise<{ filter: FeedFilter; blog: b
   }
 }
 
+/** What the arguments point at: a member's list, one entry, or neither. */
+function target(argv: string[]): { post?: PostRef; author?: string } {
+  if (argv[1] === '-p') return argv[2] ? { post: { id: argv[2], reply: argv[3] } } : {}
+  const author = argv[1]?.replace(/^@/, '')
+  return author ? { author } : {}
+}
+
 /**
- * feed [@user]. `store` holds unsent writing between runs; without one the
+ * feed [@user | -p postId [replyId]]. `store` holds unsent writing between runs; without one the
  * drafts last only as long as the page.
  */
 export function feedProgram(
@@ -1664,13 +1751,17 @@ export function feedProgram(
     const stack = new ScreenStack(s as never)
     const pics = pictures?.()
     let running = true
+    let pending: { post?: PostRef; author?: string } = {}
 
-    const author = p.argv[1]?.replace(/^@/, '') || undefined
+    const want = target(p.argv)
+    const author = want.author
     const drafts = new FeedDrafts(store, api.username ?? '')
     const parked = readState(p.takeState())
     let screens: FeedSnapshot[] = parked.screens
     // A restore only fits the list it was parked from.
     if (screens[0] && (screens[0].author ?? undefined) !== author) screens = []
+    // An entry asked for by id goes over the list alone, not over what was open.
+    if (want.post && screens[0]) screens = [{ ...screens[0], modal: undefined }]
 
     const park = (): void => {
       p.setState({ v: STATE_VERSION, screens } satisfies FeedState)
@@ -1713,9 +1804,16 @@ export function feedProgram(
       // push() draws the root, and the draw parks a fresh state over `screens`.
       const restoring = screens
       host.push(root)
-      void root.start(restoring)
+      void root.start(restoring).then(() => { if (want.post && running) root.goTo(want) })
+      p.onArgs = argv => { pending = target(argv) }
       p.onStop = () => root.pause()
-      p.onCont = () => { root.resume(); s.invalidate(); host.paint() }
+      p.onCont = () => {
+        root.resume()
+        s.invalidate()
+        if (pending.post || pending.author) root.goTo(pending)
+        pending = {}
+        host.paint()
+      }
 
       while (running) {
         const chunk = await p.stdin.read()

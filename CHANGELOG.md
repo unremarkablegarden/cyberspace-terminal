@@ -244,3 +244,16 @@
 - Replaced `Ctrl+N` with `Ctrl+O` for saving notes (browser clash)
 - Shell: `Ctrl+Backspace` and `Alt+Backspace` delete the word before the cursor (`^W` closes the tab on Windows and Linux)
 - Docs, `browse` and `publish` name the three kinds of user program: JS program, pty program, wasm; nothing refers to the retired website terminal
+
+## v0.6.3
+
+- Global Notifications banner
+    - F1 `NOTIFICATIONS` turns the notifications row and its tone off
+- `inbox`
+    - Rows show what was written in a mention or a C-Mail; `P` previews any row, a reply or an entry drawn as `feed` draws it
+    - Follows the member's notification settings, mutes and blocks
+    - `←→` or `1`-`8` change tab, `U` unread only, `A` marks all read
+    - A new notification or C-Mail shows on the top row for 6 s; `CMD-I` / `CTRL-I` opens it, or the inbox when the row is clear
+    - `CMD-K` rows show unread counts; `login` and the motd print `You have C-Mail`
+- `feed -p <post> [reply]` opens one entry; `feed @user` and `circ <room>` reach a program that is already running
+- Fixed paste on Windows and Linux (`Ctrl+V` was sent as `^V` and cancelled the browser's paste)

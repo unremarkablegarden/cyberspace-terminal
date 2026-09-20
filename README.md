@@ -23,6 +23,8 @@ Cyberspace API.
 - Network: `login`, `logout`, `whoami`, `finger`, `feed`
 - Chat: `circ` (rooms), `cmail` (1:1) — sends through the API, live
   reads streamed from the realtime database
+- Notifications: `inbox` lists them with unread C-Mail and opens each
+  in its program; new ones show on the top row
 - Images: `view` halftones a photograph onto the cell grid; chat draws
   attachments inline
 - Registry: `browse`, `install`, `publish`, `recall` — write a program here,

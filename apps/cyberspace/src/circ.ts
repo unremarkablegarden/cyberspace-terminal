@@ -21,7 +21,7 @@ import {
 } from '@cyberspace/tui'
 import { ApiClient, ApiError } from './api.js'
 import { bioLines, fetchProfile, loadPortrait } from './bio.js'
-import { artLines, bodyOf, followList, hasStyle, type MsgBody } from './chatui.js'
+import { artLines, bodyOf, followList, hasStyle, roomViews, type MsgBody } from './chatui.js'
 import {
   ARROWS, ASLEEP, BLIP_HZ, Blinker, HEAD_W, SILENT, Typewriter, entryLines, entryParts,
   mentions, narrowLines, nick, printing, stampedLines, systemLines, type ChatMessage,
@@ -967,17 +967,6 @@ export function circProgram(
       }))
     }
 
-    // Read markers come from RTDB directly; the API exposes no unread flag.
-    const roomViews = async (): Promise<Record<string, { lastViewedAt?: number }>> => {
-      if (!api.userId) return {}
-      const token = await api.token()
-      if (!token) return {}
-      const r = await fetch(
-        `${base}/chat_room_views/${encodeURIComponent(api.userId)}.json?auth=${encodeURIComponent(token)}`)
-      if (!r.ok) return {}
-      return (await r.json() as Record<string, { lastViewedAt?: number }> | null) ?? {}
-    }
-
     const openRooms = async (): Promise<void> => {
       if (switching) return
       switching = true
@@ -986,7 +975,7 @@ export function circProgram(
 
       const [list, views] = await Promise.all([
         loadRooms().catch(() => rooms),
-        roomViews().catch(() => ({} as Record<string, { lastViewedAt?: number }>)),
+        roomViews(api, base).catch(() => ({} as Record<string, { lastViewedAt?: number }>)),
       ])
 
       switching = false
@@ -1171,8 +1160,16 @@ export function circProgram(
       if (heartbeat) { clearInterval(heartbeat); heartbeat = null }
       if (room) void api.delete(`/v1/circ/${room.id}/presence`).catch(() => {})
     }
+    // `circ room` typed while this run exists: recorded here, joined in onCont.
+    let pendingRoom: string | undefined
+    p.onArgs = argv => { pendingRoom = argv[1] }
     p.onCont = () => {
-      if (room) {
+      const want = pendingRoom?.replace(/^#/, '').toLowerCase()
+      pendingRoom = undefined
+      if (want && want !== room?.slug.toLowerCase() && want !== room?.id) {
+        // joinRoom connects the stream and the heartbeat itself.
+        void joinRoom(want)
+      } else if (room) {
         void beat()
         connect(room.id)
         heartbeat = setInterval(() => { void beat(); void fetchUsers() }, heartbeatMs)

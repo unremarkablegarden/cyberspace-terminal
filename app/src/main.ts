@@ -11,12 +11,12 @@ import { standby, strike, implode, Aborted } from '@cyberspace/crt/effects'
 import { bootSequence } from '@cyberspace/crt/boot'
 import { loadFamily, loadFallback, familyOf } from '@cyberspace/crt/fonts'
 import { Tty, bytes, type Proc, type Kernel } from '@cyberspace/kernel'
-import { ApiClient, HomeKey } from '@cyberspace/apps'
+import { ApiClient, HomeKey, MAIL_ID, noticeText, openLine, type InboxService, type Notice } from '@cyberspace/apps'
 import { fs } from '@zenfs/core'
 import { syncTerm } from './vt'
 import { Baud } from './baud'
 import { VERSION } from './changelog'
-import { API_URL, COLD_AFTER, COLS, CPS, ENV, MOBILE, ROWS, SOUNDS, STORE_PREFIX, TABLET, homeOf, pathOf } from './config'
+import { API_URL, COLD_AFTER, COLS, CPS, ENV, MAC, MOBILE, ROWS, SOUNDS, STORE_PREFIX, TABLET, homeOf, pathOf } from './config'
 import { store } from './store'
 import { grid, withGrid } from './grid'
 import { pictureHost, standbyArt } from './image'
@@ -25,6 +25,7 @@ import { writeMotd } from './motd'
 import { ConfigBox, restoreSettings } from './settings'
 import { Screensaver } from './saver'
 import { JobPalette } from './palette'
+import { NoticeBar } from './bar'
 import { saverPrefs } from './prefs'
 import { Scrollback } from './scrollback'
 import { Keyboard } from './input'
@@ -59,6 +60,7 @@ const drafts = {
 let flushHome: () => Promise<void> = () => Promise.resolve()
 
 api.onAuthChange = user => {
+  if (!user) bar.clear()
   const home = homeOf(user)
   ENV.USER = user ?? 'guest'
   ENV.HOME = home
@@ -159,6 +161,38 @@ let screen: CrtScreen
 let config: ConfigBox | null = null
 let saver: Screensaver | null = null
 let palette: JobPalette | null = null
+/** The notification service, once the kernel has made it. */
+let inbox: InboxService | null = null
+const bar = new NoticeBar(
+  MAC ? 'CMD-I' : 'CTRL-I',
+  // circ's mention tone.
+  () => snd.blip(2500, 0.06),
+  () => store.get('notices', 'on') !== 'off',
+)
+
+/** A notice from the service goes on the bar with the line that opens it. */
+function announce(n: Notice): void {
+  void openLine(api, n).then(line => {
+    bar.show({
+      text: noticeText(n),
+      line: line ?? 'inbox',
+      // A C-Mail notice has no row on the server; cmail clears its own count.
+      onOpen: line && !n.id.startsWith(MAIL_ID) ? () => {
+        inbox?.seen()
+        void api.patch(`/v1/notifications/${encodeURIComponent(n.id)}`, {}).catch(() => {})
+      } : undefined,
+    })
+  })
+}
+
+/** The inbox chord: the bar's target while it is up, else the inbox itself. */
+function openInbox(): void {
+  if (!machine || !live || halted || !api.authed) return
+  const item = bar.take()
+  item?.onOpen?.()
+  snd.tick()
+  void machine.jobs.switchTo({ launch: item?.line ?? 'inbox' })
+}
 /** Time of the last key or pointer press, for the idle screensaver. */
 let lastActive = Date.now()
 
@@ -169,6 +203,7 @@ const keyboard = new Keyboard({
   scroll,
   config: () => config,
   palette: () => palette,
+  inbox: openInbox,
   overlay: () => (config?.open ? config : saver?.open ? saver : palette?.open ? palette : null),
   activity: () => { lastActive = Date.now() },
   skipBoot: () => {
@@ -347,7 +382,8 @@ const program = {
     restoreSettings(s, snd)
     config = new ConfigBox(s, snd, () => void writeMotd(api.username))
     saver = new Screensaver(s, snd, () => halted || !live)
-    palette = new JobPalette(s, snd, () => machine)
+    palette = new JobPalette(s, snd, () => machine, name =>
+      !inbox ? 0 : name === 'inbox' ? inbox.total : name === 'cmail' ? inbox.mail : 0)
     // The idle timer. Coarse on purpose: the timeout is in minutes.
     setInterval(() => {
       const prefs = saverPrefs()
@@ -378,6 +414,11 @@ const program = {
       saveFile,
       drafts,
       onHome: flush => { flushHome = flush },
+      onInbox: svc => {
+        inbox = svc
+        svc.hooks.onNotice = announce
+        svc.hooks.mailInFront = () => machine?.jobs.fg?.name === 'cmail'
+      },
     })
     // A kernel that fails while the animation plays would otherwise surface
     // only after standby ends on a keypress. Cut the animation; the await
@@ -474,6 +515,7 @@ const program = {
       if (tx.drain(dt) > 0) snd.blip(1400)
       scroll.clamp()
       syncTerm(xt, s.term, scroll.back)
+      if (live && scroll.back === 0) bar.paint(s.term, performance.now())
       // The render loop writes showCursor from RENDER.cursor every frame, so
       // this assignment is what lets a full-screen program hide the caret. It is
       // also hidden while scrolled back, where it would not mark the input point.
@@ -498,6 +540,7 @@ setInterval(() => {
   if (!document.hidden || grid.locked || halted || !screen) return
   tx.drain(1000)
   syncTerm(xt, screen.term, scroll.back)
+  if (live && scroll.back === 0) bar.paint(screen.term, performance.now())
 }, 1000)
 
 // Safari and mobile do not fire beforeunload, so pagehide is the reliable exit

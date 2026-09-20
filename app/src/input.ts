@@ -28,6 +28,8 @@ export interface KeyboardDeps {
   config: () => ConfigBox | null
   /** The job switcher. CMD-K (CTRL-K off a Mac) opens and steps it; letting the modifier go chooses. */
   palette: () => JobPalette | null
+  /** CMD-I (CTRL-I off a Mac): the notice on the bar, or the inbox when the bar is down. */
+  inbox?: () => void
   /** The overlay taking keys, if any. The config box when open, else the screensaver when up. */
   overlay: () => Overlay | null
   /** Any input path: a key or a pointer press. Feeds the idle timer. */
@@ -135,6 +137,13 @@ export class Keyboard {
       if (palette && this.d.live() && (!overlay?.open || overlay === palette)) {
         palette.step(e.shiftKey ? -1 : 1)
       }
+      return
+    }
+    // e.code for the same reason. Ctrl-I is not Tab here: the Tab key arrives as
+    // 'Tab', and no program is sent a control byte for the letter.
+    if (hostModifier(e) && !e.altKey && !e.shiftKey && e.code === 'KeyI') {
+      e.preventDefault()
+      if (!this.d.overlay()?.open) this.d.inbox?.()
       return
     }
     this.click(e)

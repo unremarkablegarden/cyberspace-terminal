@@ -16,7 +16,7 @@ import { grid } from './grid'
 import type { Overlay } from './input'
 
 /** Programs offered as launchers when no job of theirs is running. */
-const MAIN = ['feed', 'circ', 'cmail', 'globe']
+const MAIN = ['feed', 'circ', 'cmail', 'globe', 'inbox']
 const TITLE = 'PROGRAMS'
 const GAP = 2
 
@@ -34,6 +34,8 @@ export class JobPalette implements Overlay {
     private screen: CrtScreen,
     private snd: Sound,
     private kernel: () => Kernel | null,
+    /** Unread items behind a program, by command word; drawn after its name. */
+    private badge: (name: string) => number = () => 0,
   ) {}
 
   get open(): boolean {
@@ -166,7 +168,7 @@ export class JobPalette implements Overlay {
   }
 
   private nameW(): number {
-    return Math.max(...this.rows.map(r => label(r).length), 5)
+    return Math.max(...this.rows.map(r => this.label(r).length), 5)
   }
 
   /** `2  circ cyberspace   stopped`: key, line, state. */
@@ -175,12 +177,17 @@ export class JobPalette implements Overlay {
     const gap = ' '.repeat(GAP)
     const fg = this.kernel()?.jobs.fg
     const mark = r.kind !== 'job' ? '' : r.job === fg ? '·' : r.job.state
-    return `${key}${gap}${label(r).padEnd(this.nameW())}${gap}${mark}`.trimEnd()
+    return `${key}${gap}${this.label(r).padEnd(this.nameW())}${gap}${mark}`.trimEnd()
+  }
+
+  /** `cmail @bob (2)`: the line, and the unread count behind the program when there is one. */
+  private label(r: Row): string {
+    if (r.kind === 'shell') return 'shell'
+    const line = r.kind === 'job' ? r.job.line : r.name
+    const n = this.badge(r.kind === 'job' ? r.job.name : r.name)
+    return n > 0 ? `${line} (${n > 99 ? '99+' : n})` : line
   }
 }
-
-const label = (r: Row): string =>
-  r.kind === 'job' ? r.job.line : r.kind === 'launch' ? r.name : 'shell'
 
 const arrow = (dir: 1 | -1): KeyInput =>
   ({ key: dir === 1 ? 'ArrowDown' : 'ArrowUp', ctrlKey: false, shiftKey: false, altKey: false, metaKey: false })

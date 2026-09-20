@@ -126,7 +126,7 @@ export function wrapSpans(spans: Span[], width: number, indent: number): Span[][
 export function followList(
   api: ApiClient,
   url: (token: string) => string,
-  onEvent: (id: string | null, data: Record<string, unknown> | null, snapshot: boolean) => void,
+  onEvent: (id: string | null, data: Record<string, unknown> | null, snapshot: boolean, rest: string[]) => void,
 ): () => void {
   let es: EventSource | null = null
   let timer: ReturnType<typeof setTimeout> | null = null
@@ -148,11 +148,13 @@ export function followList(
     const onData = (snapshot: boolean) => (e: MessageEvent): void => {
       const { path, data } = JSON.parse(e.data as string) as
         { path: string; data: Record<string, unknown> | null }
-      const seg = path.replace(/^\//, '').split('/')[0]
+      const [seg, ...rest] = path.replace(/^\//, '').split('/')
       // id null with snapshot: the full value (object of id -> raw, or null).
       // id null without: a root patch, an object of id -> partial fields.
-      if (seg === '') onEvent(null, data, snapshot)
-      else onEvent(seg, data, false)
+      // `rest` is the path below the id; non-empty when one field was written,
+      // and `data` is then that field's value.
+      if (seg === '') onEvent(null, data, snapshot, [])
+      else onEvent(seg, data, false, rest)
     }
 
     stream.addEventListener('put', onData(true))
@@ -171,4 +173,20 @@ export function followList(
     es?.close()
     if (timer) clearTimeout(timer)
   }
+}
+
+export type RoomViews = Record<string, { lastViewedAt?: number }>
+
+/**
+ * When the member last looked at each chat room, by room id. Read from RTDB
+ * directly (chat_room_views/<uid>); the API exposes no unread flag.
+ */
+export async function roomViews(api: ApiClient, rtdbUrl: string): Promise<RoomViews> {
+  if (!api.userId) return {}
+  const token = await api.token()
+  if (!token) return {}
+  const r = await fetch(
+    `${rtdbUrl}/chat_room_views/${encodeURIComponent(api.userId)}.json?auth=${encodeURIComponent(token)}`)
+  if (!r.ok) return {}
+  return (await r.json() as RoomViews | null) ?? {}
 }

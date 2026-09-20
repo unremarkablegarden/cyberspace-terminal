@@ -103,6 +103,11 @@ export function encodeKey(e: KeyboardEvent): string | null {
     if (e.key === 'x' || e.key === 'X') return CUT
   }
 
+  // Ctrl+V and Ctrl+Shift+V are paste on Windows and Linux. Returning null
+  // leaves the keydown uncancelled, so the browser raises the paste event the
+  // window handler reads; encoding them would send ^V and cancel the paste.
+  if (e.ctrlKey && !e.altKey && (e.key === 'v' || e.key === 'V')) return null
+
   // Shift, Ctrl or Alt with a movement key: the modified CSI form, so the line
   // editors see the modifier and extend or word-jump the selection.
   const moved = modifiedMove(e.key, e.shiftKey, e.ctrlKey || e.altKey)

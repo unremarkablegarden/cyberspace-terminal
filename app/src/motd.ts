@@ -87,6 +87,16 @@ function withGlobe(lines: Span[][], art: string[]): Span[][] {
 const cmd = (text: string): Span => ({ text, attr: BOLD })
 const say = (text: string): Span => ({ text, attr: NORMAL })
 
+/** Lines under the welcome: `You have mail.`, `3 notifications.` Set by the machine as the counts change. */
+let notes: string[] = []
+
+/** Replace the mail lines and rewrite /etc/motd if they changed. */
+export async function motdNotes(user: string | null, lines: string[]): Promise<void> {
+  if (lines.join('\n') === notes.join('\n')) return
+  notes = lines
+  await writeMotd(user)
+}
+
 function welcome(user: string | null): Span[][] {
   const lines: Span[][] = [
     ...plate(),
@@ -95,6 +105,7 @@ function welcome(user: string | null): Span[][] {
       { text: `Welcome to Cyberspace ${user ? '@' + user + ' ' : ''}`, attr: BOLD },
       say(`[${CLIENT_IP}]`),
     ],
+    ...(user ? notes.map(n => [{ text: n, attr: BOLD }]) : []),
     [],
   ]
 
@@ -107,7 +118,7 @@ function welcome(user: string | null): Span[][] {
       ? [say('Type '), cmd('help'), say(' for commands.')]
       : [say('Type '), cmd('login'), say(' to connect, '), cmd('help'), say(' for commands.')],
     [say('e.g. '), cmd('feed'), say(', '), cmd('circ'), say(', '), cmd('cmail'), say(', '),
-     cmd('globe')],
+     cmd('globe'), say(', '), cmd('inbox')],
     [],
     [say('To write your own programs;')],
     [cmd('cd bin/docs'), say(' then '), cmd('less README.txt'), say(' and '), cmd('less API.txt')],

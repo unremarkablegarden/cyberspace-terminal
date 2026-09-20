@@ -13,7 +13,7 @@ import type { Proc } from './proc.js'
  * runOnTty() with any name; the list gates the brokered capability only, so a
  * published program cannot reach logout, shutdown or the shell this way.
  */
-export const HANDOFF_PROGRAMS = ['cmail', 'circ', 'feed', 'globe', 'finger', 'browse'] as const
+export const HANDOFF_PROGRAMS = ['cmail', 'circ', 'feed', 'globe', 'finger', 'browse', 'inbox'] as const
 
 export function allowedHandoff(name: string): boolean {
   return (HANDOFF_PROGRAMS as readonly string[]).includes(name)

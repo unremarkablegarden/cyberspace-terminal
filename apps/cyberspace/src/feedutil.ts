@@ -579,6 +579,11 @@ function attachmentLine(post: Attached): FeedBlock | null {
 /** `![alt](https://… "title")`, the form the editor writes. */
 const INLINE_IMAGE = /!\[[^\]]*\]\((https:\/\/[^)\s]+?)(?:\s+"[^"]*")?\)/
 
+/** Content with every inline image removed, for a view that draws none. */
+export function stripImages(content: string): string {
+  return content.replace(new RegExp(INLINE_IMAGE.source, 'g'), '')
+}
+
 /**
  * The picture on a post and the content with it taken out. Attachments are
  * read first; posts in practice carry the image inline in the content. Only
