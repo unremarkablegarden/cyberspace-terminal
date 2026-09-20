@@ -22,6 +22,10 @@ import { motdNotes, motdPictures, writeMotd } from './motd'
 import { installSkel } from './skel'
 import { installBin } from './bin'
 
+/** Where JS programs' localStorage files are kept. */
+const STORE_DIR = (user: string | null): string => `${homeOf(user)}/.local/share`
+const storePath = (user: string | null, name: string): string => `${STORE_DIR(user)}/${name}.json`
+
 /** Programs the faceplate must supply, because they end the session. */
 export interface HostPrograms {
   shutdown: Program
@@ -101,6 +105,18 @@ function registerPrograms(kernel: Kernel, { api, homeKey, snd, host, pictures, f
     username: () => api.username ?? ENV.USER,
     version: VERSION,
     pictures,
+    // A program's localStorage is a file in the home, so it syncs with it.
+    storage: {
+      load: async name => {
+        const text = await fs.promises.readFile(storePath(api.username, name), 'utf8').catch(() => '')
+        return text ? JSON.parse(text) as Record<string, string> : {}
+      },
+      save: async (name, data) => {
+        const path = storePath(api.username, name)
+        await fs.promises.mkdir(STORE_DIR(api.username), { recursive: true })
+        await fs.promises.writeFile(path, JSON.stringify(data))
+      },
+    },
     api: {
       get: path => api.get(path),
       post: (path, body) => api.post(path, body),
@@ -112,6 +128,8 @@ function registerPrograms(kernel: Kernel, { api, homeKey, snd, host, pictures, f
       tick: () => snd.tick(),
       seek: n => snd.seek(n),
       hiss: (dur, gain) => snd.hiss(dur, gain),
+      degauss: () => snd.degauss(),
+      postBeep: (freq, dur) => snd.postBeep(freq, dur),
     },
     feed: {
       page: async (limit = 10) => {

@@ -10,7 +10,7 @@
 // stays behind the host's whitelist, and the token is never on this channel.
 
 import { dec, runOnTty, allowedHandoff, type Proc, type Program } from '@cyberspace/kernel'
-import { PICT_RANGE, type CompatDeps, type CompatPictures } from './host.js'
+import { PICT_RANGE, STORE_MAX, type CompatDeps, type CompatPictures } from './host.js'
 import type { MainMessage, RunMessage, WorkerMessage } from './program.worker.js'
 
 /** A /v1/ path, or throws. Repeated here because a worker can forge the call. */
@@ -24,9 +24,10 @@ function v1(path: unknown): string {
 export function jsFileHandler(deps: CompatDeps): (path: string, data: Uint8Array) => Program | null {
   return (_path, data) => {
     if (data.length < 2 || data[0] === 0) return null
-    const head = dec.decode(data.subarray(0, Math.min(data.length, 4096)))
-    if (!/export\s+default/.test(head)) return null
+    // The whole file is searched: a game defines its tables and helpers first
+    // and exports on the last line, past any fixed-size head.
     const source = dec.decode(data)
+    if (!/export\s+default/.test(source)) return null
 
     return async (p) => {
       // A lint, not the boundary: the worker realm is. It still parses the
@@ -80,7 +81,24 @@ function bitmaps(v: unknown): Uint16Array[] {
   return v.filter((b): b is Uint16Array => b instanceof Uint16Array)
 }
 
-function runInWorker(p: Proc, source: string, deps: CompatDeps): Promise<number> {
+/** A store from a message: string values only, within the cap, or null. */
+function storeOf(v: unknown): Record<string, string> | null {
+  if (!v || typeof v !== 'object') return null
+  let size = 0
+  for (const [k, val] of Object.entries(v)) {
+    if (typeof val !== 'string') return null
+    size += k.length + val.length
+  }
+  return size <= STORE_MAX ? v as Record<string, string> : null
+}
+
+async function runInWorker(p: Proc, source: string, deps: CompatDeps): Promise<number> {
+  // Keyed by command name, so a program keeps its store across versions.
+  const name = (p.argv[0] ?? '').split('/').pop() ?? ''
+  const store = name && deps.storage ? await deps.storage.load(name).catch(() => ({})) : undefined
+  // Saves are chained so an older store cannot land after a newer one.
+  let saved: Promise<void> = Promise.resolve()
+
   const worker = new Worker(new URL('./program.worker.ts', import.meta.url), { type: 'module' })
   const pictures = deps.pictures?.()
 
@@ -120,6 +138,14 @@ function runInWorker(p: Proc, source: string, deps: CompatDeps): Promise<number>
         }
         case 'copy': p.tty?.copy(m.text); return
         case 'pict': pictures?.set(m.codes, bitmaps(m.bits)); return
+        case 'store': {
+          const data = storeOf(m.data)
+          if (data && name && deps.storage) {
+            const storage = deps.storage
+            saved = saved.then(() => storage.save(name, data)).catch(() => {})
+          }
+          return
+        }
         case 'cap':
           serve(p, deps, pictures, m.kind, m.args).then(
             value => worker.postMessage({ t: 'cap-result', id: m.id, ok: true, value } satisfies MainMessage),
@@ -160,6 +186,7 @@ function runInWorker(p: Proc, source: string, deps: CompatDeps): Promise<number>
       caps: { api: !!deps.api, feed: !!deps.feed, image: !!deps.image, run: true },
       metrics: pictures?.metrics(),
       pict: pictures?.range(PICT_RANGE),
+      store,
     }
     worker.postMessage(msg)
   })

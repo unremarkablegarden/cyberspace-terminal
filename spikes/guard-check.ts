@@ -19,7 +19,8 @@ check('three-part concat', 'var e = [].sort["con"+"stru"+"ctor"]("return eval")(
 check('direct .constructor', 'var e = [].sort.constructor("return eval")();', 'refuse', 'constructor')
 check('template key', 'var e = [].sort[`constructor`]("return eval")();', 'refuse', 'constructor')
 check('free window', 'console.log(window.cs.api.idToken);', 'refuse', 'window')
-check('free localStorage', 'return localStorage.getItem("csterm.auth");', 'refuse', 'localStorage')
+// Allowed: in the worker the name is the program's own store, not the page's.
+check('free localStorage', 'return localStorage.getItem("csterm.auth");', 'pass')
 check('free indexedDB', 'await indexedDB.databases();', 'refuse', 'indexedDB')
 
 // Allowed: ordinary programs must not trip the lint.

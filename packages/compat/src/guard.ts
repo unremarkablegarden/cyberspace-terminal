@@ -37,10 +37,9 @@ export interface GuardHit {
  * names in programs already running here.
  */
 const BLOCKED_GLOBALS: Record<string, string> = {
-  // The credential store and its neighbours. The refresh token is in
-  // localStorage here; the original machine kept its own in IndexedDB and could
-  // therefore allow localStorage.
-  localStorage: 'the store the session token is kept in',
+  // The credential store's neighbours. localStorage is allowed: in the worker
+  // the name is the program's own store (program.worker.ts installStorage),
+  // not the page's, where the refresh token is kept.
   sessionStorage: 'a store the session token could be copied into',
   indexedDB: 'the browser database a session token is kept in',
   caches: 'a store the page keeps responses in',

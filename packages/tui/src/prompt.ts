@@ -182,7 +182,7 @@ export class PromptPopup implements Screen {
     }
 
     const mine = ++this.seq
-    this.timer = window.setTimeout(() => {
+    this.timer = self.setTimeout(() => {
       this.timer = null
       this.busy = true
       this.empty = false

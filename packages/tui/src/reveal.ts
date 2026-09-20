@@ -60,7 +60,7 @@ export class Reveal {
     this.target = target
     this.count = 0
     this.t0 = performance.now()
-    this.timer = window.setInterval(() => this.tick(), TICK_MS)
+    this.timer = self.setInterval(() => this.tick(), TICK_MS)
   }
 
   /**

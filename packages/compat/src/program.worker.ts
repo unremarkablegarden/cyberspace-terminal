@@ -12,7 +12,7 @@ import type { Proc } from '@cyberspace/kernel'
 import type { Source, Sink } from '@cyberspace/kernel'
 import type { CellMetrics } from '@cyberspace/tui'
 import {
-  runGridProgram, importDefault, asGridProgram, whereInSource, type CompatDeps,
+  runGridProgram, importDefault, asGridProgram, whereInSource, STORE_MAX, type CompatDeps,
 } from './host.js'
 
 /** Main -> worker: start one program. */
@@ -32,6 +32,8 @@ export interface RunMessage {
   metrics?: CellMetrics
   /** Handles this run may assign bitmaps to. */
   pict?: { base: number; count: number }
+  /** The program's saved localStorage; present when the host keeps one. */
+  store?: Record<string, string>
 }
 
 /** Main -> worker, after the run has started. */
@@ -52,9 +54,12 @@ export type WorkerMessage =
   | { t: 'snd'; method: string; args: unknown[] }
   | { t: 'copy'; text: string }
   | { t: 'pict'; codes: number[]; bits: Uint16Array[] }
+  | { t: 'store'; data: Record<string, string> }
   | { t: 'cap'; id: number; kind: 'api.get' | 'api.post' | 'api.del' | 'feed.page' | 'feed.profile' | 'image' | 'run'; args: unknown[] }
   | { t: 'exit'; code: number }
   | { t: 'fault'; message: string }
+
+const SND_METHODS = ['blip', 'beep', 'tick', 'seek', 'hiss', 'degauss', 'postBeep', 'arc', 'klaxon', 'burst', 'trip']
 
 const post = (m: WorkerMessage): void => { (self as unknown as Worker).postMessage(m) }
 
@@ -106,6 +111,37 @@ function sink(kind: 'out' | 'err'): Sink {
   }
 }
 
+/**
+ * localStorage for the program: a worker has none, and the original terminal's
+ * programs keep scores and saves in it. The store belongs to the program alone.
+ * Reads are served from the copy sent at spawn; every write posts the whole
+ * store to the host, which keeps it.
+ */
+function installStorage(initial: Record<string, string> | undefined): void {
+  const data = new Map(Object.entries(initial ?? {}))
+  const size = (): number => {
+    let n = 0
+    for (const [k, v] of data) n += k.length + v.length
+    return n
+  }
+  const save = (): void => post({ t: 'store', data: Object.fromEntries(data) })
+  const storage = {
+    get length() { return data.size },
+    key: (i: number) => [...data.keys()][i] ?? null,
+    getItem: (k: string) => data.get(String(k)) ?? null,
+    setItem(k: string, v: string) {
+      const key = String(k), value = String(v)
+      const grown = size() - (data.has(key) ? key.length + data.get(key)!.length : 0) + key.length + value.length
+      if (grown > STORE_MAX) throw new DOMException('store full', 'QuotaExceededError')
+      data.set(key, value)
+      save()
+    },
+    removeItem(k: string) { if (data.delete(String(k))) save() },
+    clear() { if (data.size) { data.clear(); save() } },
+  }
+  Object.defineProperty(self, 'localStorage', { value: storage, configurable: true })
+}
+
 let stdin: MessageStdin | null = null
 const ac = new AbortController()
 
@@ -141,13 +177,10 @@ function brokerDeps(msg: RunMessage): CompatDeps {
   const deps: CompatDeps = {
     username: () => msg.username ?? msg.env.USER ?? 'guest',
     version: msg.version,
-    snd: {
-      blip: (hz, dur, jitter) => post({ t: 'snd', method: 'blip', args: [hz, dur, jitter] }),
-      beep: (freq, dur) => post({ t: 'snd', method: 'beep', args: [freq, dur] }),
-      tick: () => post({ t: 'snd', method: 'tick', args: [] }),
-      seek: n => post({ t: 'snd', method: 'seek', args: [n] }),
-      hiss: (dur, gain) => post({ t: 'snd', method: 'hiss', args: [dur, gain] }),
-    },
+    // Every name the original Sound had. The page plays the ones it has and
+    // drops the rest, so a program calling klaxon() runs silent, not dead.
+    snd: Object.fromEntries(SND_METHODS.map(method =>
+      [method, (...args: unknown[]) => post({ t: 'snd', method, args })])) as CompatDeps['snd'],
     copy: text => post({ t: 'copy', text }),
   }
   if (msg.caps.api) {
@@ -221,6 +254,7 @@ async function start(msg: RunMessage): Promise<void> {
   stdin = new MessageStdin()
   const proc = makeProc(msg, stdin)
   const deps = brokerDeps(msg)
+  installStorage(msg.store)
 
   let value: unknown
   try {

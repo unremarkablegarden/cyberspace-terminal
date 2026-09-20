@@ -257,6 +257,12 @@ Without them a stopped job is frozen by the terminal alone: reads block,
 output waits, and it comes back to a blank screen until it draws.
 
 
+KEEPING DATA
+
+  localStorage              the program's own store, 256 KB, kept in
+                            ~/.local/share/<name>.json
+
+
 A WASM PROGRAM
 
 wasm32-wasi, Preview 1, starting at _start. It is given argv, the
@@ -308,8 +314,7 @@ REFUSED NAMES
 
 Naming one of these stops the program before it starts:
 
-  localStorage    the store the session token is kept in
-  sessionStorage  a store the session token could be copied into
+  sessionStorage a store the session token could be copied into
   indexedDB       the browser database a session token is kept in
   caches          a store the page keeps responses in
   cookieStore     the cookie jar

@@ -257,3 +257,12 @@
     - `CMD-K` rows show unread counts; `login` and the motd print `You have C-Mail`
 - `feed -p <post> [reply]` opens one entry; `feed @user` and `circ <room>` reach a program that is already running
 - Fixed paste on Windows and Linux
+
+
+## 0.7.1
+
+- User programs (legacy JS)
+    - Fixed `not a program` for long programs (`export default` was only looked for in the first 4 KB)
+    - `localStorage` works: a store per program, kept in `~/.local/share/<name>.json`
+    - `ctx.tui` carries the whole widget kit (`drawLog`, `hangingWrap`, `drawList`, `Reveal`, the popups, `fold`, `drawBuffer`, `RASTERS`)
+    - `ctx.snd.degauss` and `postBeep`; other sound names are accepted and silent

@@ -17,11 +17,18 @@ import {
 } from '@cyberspace/crt/term'
 import {
   frame, label, hline, vline, clear, shadow, ground, inside, cells,
+  drawLog, hangingWrap, drawList, Reveal, REVEAL_RATE, SelectPopup, ConfirmPopup, YES_NO,
+  PromptPopup, EditorPopup, TextPopup, RULE, TunePopup, drawBuffer, fold, RASTERS, DEFAULT_RASTER,
 } from '@cyberspace/tui'
 
-// The box helpers on ctx.tui; the input widgets are added per run below, so
-// their clipboard can be bound to this program's ctx.copy.
-const box = { frame, label, hline, vline, clear, shadow, ground, inside, cells }
+// The widget kit on ctx.tui, the names the original terminal's tui module
+// exported. The input widgets are added per run below, so their clipboard can
+// be bound to this program's ctx.copy.
+const kit = {
+  frame, label, hline, vline, clear, shadow, ground, inside, cells,
+  drawLog, hangingWrap, drawList, Reveal, REVEAL_RATE, SelectPopup, ConfirmPopup, YES_NO,
+  PromptPopup, EditorPopup, TextPopup, RULE, TunePopup, drawBuffer, fold, RASTERS, DEFAULT_RASTER,
+}
 import { DotCanvas, drawEdges, teapot } from './vector.js'
 import { roll } from './roll.js'
 
@@ -84,6 +91,8 @@ export interface CompatDeps {
     tick(): void
     seek(count?: number): void
     hiss(dur?: number, gain?: number): void
+    degauss?(): void
+    postBeep?(freq?: number, dur?: number): void
   }
   feed?: {
     page(limit?: number, after?: string): Promise<Record<string, unknown>[]>
@@ -111,6 +120,14 @@ export interface CompatDeps {
    * program's pixels reach the screen. Absent when the host has no decoder.
    */
   pictures?: () => CompatPictures
+  /**
+   * Keeps a program's localStorage between runs, one store per program name.
+   * Absent on a host with nowhere to keep it; the store then lasts one run.
+   */
+  storage?: {
+    load(name: string): Promise<Record<string, string>>
+    save(name: string, data: Record<string, string>): Promise<void>
+  }
   version?: string
 }
 
@@ -126,6 +143,9 @@ export interface CompatPictures {
   set(codes: number[], bits: Uint16Array[]): void
   release(): void
 }
+
+/** Cap on one program's localStorage: keys plus values, in UTF-16 code units. */
+export const STORE_MAX = 256 * 1024
 
 /** Handles asked of the host per run: a 74x19 frame beside 26 fully distinct 17x6 thumbnails. */
 export const PICT_RANGE = 4096
@@ -339,7 +359,7 @@ export function runGridProgram(deps: CompatDeps): (p: Proc, program: UserProgram
 
     const ctx = {
       tui: {
-        ...box, DotCanvas, drawEdges, teapot, fitImage, halftone,
+        ...kit, DotCanvas, drawEdges, teapot, fitImage, halftone,
         InputLine: CtxInputLine, TextBuffer: CtxTextBuffer,
       },
       copy: clip,
