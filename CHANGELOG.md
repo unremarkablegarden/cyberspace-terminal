@@ -256,4 +256,4 @@
     - A new notification or C-Mail shows on the top row for 6 s; `CMD-I` / `CTRL-I` opens it, or the inbox when the row is clear
     - `CMD-K` rows show unread counts; `login` and the motd print `You have C-Mail`
 - `feed -p <post> [reply]` opens one entry; `feed @user` and `circ <room>` reach a program that is already running
-- Fixed paste on Windows and Linux (`Ctrl+V` was sent as `^V` and cancelled the browser's paste)
+- Fixed paste on Windows and Linux
