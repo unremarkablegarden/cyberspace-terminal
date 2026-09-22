@@ -58,8 +58,11 @@ export class DotCanvas {
   }
 
   plot(x, y) {
-    x |= 0
-    y |= 0
+    // Floor rather than `|= 0`, which truncates toward zero and put a dot at
+    // x or y in (-1, 0) on column or row 0. Floored to -1, it is clipped like
+    // an overrun at the right and bottom edges.
+    x = Math.floor(x)
+    y = Math.floor(y)
     if (x < 0 || y < 0 || x >= this.w || y >= this.h) return
     const bit = DOT_BIT[y & 3][x & 1]
     this.cells[(y >> 2) * this.cols + (x >> 1)] |= 1 << bit
