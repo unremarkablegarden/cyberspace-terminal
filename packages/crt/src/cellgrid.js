@@ -88,7 +88,11 @@ export class CellGrid {
     if (x < 0 || y < 0 || x >= this.cols || y >= this.rows) return
     this.snapToLive()
     const i = y * this.cols + x
-    this.chars[i] = typeof ch === 'string' ? (ch.codePointAt(0) ?? 32) : ch
+    // chars is a Uint16Array: a codepoint above U+FFFF would be stored modulo
+    // 0x10000 as an unrelated glyph. It is stored as '?', the raster's own
+    // missing-glyph fallback.
+    const code = typeof ch === 'string' ? (ch.codePointAt(0) ?? 32) : ch
+    this.chars[i] = code > 0xFFFF ? 63 : code
     this.attrs[i] = attr
     this.inverse[i] = inv
     // A character clears the cell's bitmap.
