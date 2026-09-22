@@ -16,6 +16,31 @@
 import { SCREEN, PHOSPHORS, PHOSPHOR } from '../config.js'
 import { VERT, SPOT_H, BEAM, BLUR, COMPOSITE } from './shaders.js'
 
+/**
+ * Period of the shader clock, in seconds. Wrapped on the CPU in double
+ * precision: a float32 uniform above ~10^4 s cannot resolve a 1/60 s step, so
+ * a mod() in the shader would wrap a value that has already lost it. 1024 s is
+ * 61440 whole frames at 60 Hz, so the noise frame counter wraps without a seam.
+ */
+export const CLOCK_WRAP_S = 1024
+
+/** The shader's clock: seconds since start, wrapped to [0, CLOCK_WRAP_S). */
+export function wrapClock(time) {
+  return ((time % CLOCK_WRAP_S) + CLOCK_WRAP_S) % CLOCK_WRAP_S
+}
+
+/**
+ * Roll-bar phase in [0, 1), integrated per frame from `speed` (crossings per
+ * second). Integration keeps the bar continuous across the clock wrap and
+ * across a rollSpeed change, where time * speed jumps. dt outside (0, 1) s is
+ * ignored.
+ */
+export function advanceRollPhase(phase, dt, speed) {
+  if (!(dt > 0) || !(dt < 1) || !Number.isFinite(speed)) return phase
+  const next = (phase + dt * speed) % 1
+  return next < 0 ? next + 1 : next
+}
+
 export class CRT {
   /**
    * @param {HTMLCanvasElement} canvas
@@ -298,7 +323,12 @@ export class CRT {
     this.unit(this.progComp, 'uBloom', this.bloom[1].tex, 1)
     const u = this.progComp.u
     gl.uniform2f(u.uRes, this.canvas.width, this.canvas.height)
-    gl.uniform1f(u.uTime, time)
+    // Unwrapped, float32 rounding shifts the roll bar's per-frame step ~7% at
+    // 24 h uptime and skips noise frames by ~77 h (measured with Math.fround).
+    const dt = this._lastTime == null ? 0 : time - this._lastTime
+    this._lastTime = time
+    this._rollPhase = advanceRollPhase(this._rollPhase || 0, dt, P.rollSpeed)
+    gl.uniform1f(u.uTime, wrapClock(time))
     gl.uniform3fv(u.uPhosphor, this.phosphor)
     gl.uniform1f(u.uFill, P.fill)
     gl.uniform1f(u.uCurve, P.curve)
@@ -313,7 +343,7 @@ export class CRT {
     gl.uniform1f(u.uSnow, P.snow)
     gl.uniform1f(u.uFlicker, P.flicker)
     gl.uniform1f(u.uRoll, P.roll)
-    gl.uniform1f(u.uRollSpeed, P.rollSpeed)
+    gl.uniform1f(u.uRollPhase, this._rollPhase)
     gl.uniform1f(u.uChroma, P.chroma)
     gl.uniform1f(u.uBrightness, P.brightness)
     gl.uniform1f(u.uAmbient, P.ambient)

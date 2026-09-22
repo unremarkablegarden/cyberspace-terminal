@@ -114,7 +114,7 @@ uniform vec2 uRes;
 uniform float uTime;
 uniform vec3 uPhosphor;
 uniform float uFill, uCurve, uBloomAmt, uMaskAmt, uMaskPitch, uVignette;
-uniform float uNoise, uFlicker, uRoll, uRollSpeed, uChroma, uBrightness, uAmbient, uBg, uGlass;
+uniform float uNoise, uFlicker, uRoll, uRollPhase, uChroma, uBrightness, uAmbient, uBg, uGlass;
 uniform float uNoiseStreak, uSnow;
 out vec4 fragColor;
 
@@ -170,11 +170,10 @@ void main() {
                           roundedBox(uv - 0.5, vec2(0.5 + uGlass), 0.035));
 
   if (edge > 0.0) {
-    // Frame counter for anything that changes once per frame and holds within
-    // it. Wrapped at 1024: uTime is seconds since load, and in the thousands a
-    // float32 cannot resolve a per-frame step. Quantising at 60 keeps the noise
-    // at video rate on a 120Hz panel.
-    float nt = mod(floor(uTime * 60.0), 1024.0);
+    // Frame counter for anything that changes once per frame. uTime arrives
+    // wrapped to [0, 1024) s by render(); see CLOCK_WRAP_S. Quantising at 60
+    // keeps the noise at video rate on a 120 Hz panel.
+    float nt = floor(uTime * 60.0);
 
     // Outside the swept raster, dark.
     vec2 g = step(vec2(0.0), uv) * step(uv, vec2(1.0));
@@ -197,10 +196,9 @@ void main() {
     // Aperture grille, evaluated in device pixels.
     glass *= 1.0 - uMaskAmt * (0.5 + 0.5 * cos(gl_FragCoord.x * 6.2831853 / uMaskPitch));
 
-    // Rolling shutter bar. A camera artefact, not a CRT one. Speed is how many
-    // times a second the bar crosses the screen, controlled separately from
-    // depth.
-    float band = fract(uv.y - uTime * uRollSpeed);
+    // Rolling shutter bar, a camera artefact. Phase is integrated on the CPU
+    // from rollSpeed (crossings per second); see advanceRollPhase.
+    float band = fract(uv.y - uRollPhase);
     glass *= 1.0 + uRoll * exp(-pow((band - 0.5) / 0.09, 2.0));
 
     glass *= 1.0 - uVignette * dot(q, q);
