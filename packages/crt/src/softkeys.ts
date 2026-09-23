@@ -7,9 +7,8 @@
 //
 // The problem
 //
-// A `<canvas>` cannot raise a soft keyboard — only a focused editable element
-// can — and once one is focused, `keydown` stops being a reliable account of
-// what was typed:
+// A `<canvas>` cannot raise a soft keyboard; only a focused editable element can.
+// Once one is focused, `keydown` stops being a reliable account of what was typed:
 //
 //   - iOS Safari fires both `keydown`, with the real `key`, and `beforeinput`
 //     (`insertText`) for one tap, so handling both types every character twice.

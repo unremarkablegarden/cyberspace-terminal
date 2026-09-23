@@ -4,8 +4,7 @@
 // dot matrix, so an 80x25 grid of it is a 160x100 monochrome framebuffer, drawn
 // through the same rasteriser as text.
 //
-// The face need not carry any Braille: bdf.js synthesises all 256 patterns for
-// whatever cell size is loaded. Terminus has none.
+// The face need not carry any Braille (Terminus has none): bdf.js synthesises all 256 patterns for whatever cell size is loaded.
 
 /**
  * Dot width against dot height for the loaded face.

@@ -671,10 +671,9 @@ export function circProgram(
     /**
      * Arrivals and departures since the last roster, as IRC prints them.
      *
-     * The roster is polled on the heartbeat, so a name can be up to
-     * `heartbeatMs` late and a reconnect inside that window is never seen at
-     * all — which is the reason there is no separate flap delay here. Own name
-     * skipped: IRC does not announce you to yourself.
+     * The roster is polled on the heartbeat, so a name can be up to `heartbeatMs` late and a reconnect inside that window is never seen at all.
+     * That is why there is no separate flap delay here.
+     * The own name is skipped: IRC does not echo a user's own join or part.
      */
     const announce = (): void => {
       const next = new Map(users.map(u => [u.username.toLowerCase(), u.username]))

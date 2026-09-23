@@ -260,16 +260,14 @@ export function cmailProgram(
       // Anchor the selection to the conversation id, not the row index: the sort moves.
       const wasOn = convs[cursor]?.conversationId
       try {
-        // Folded on arrival: a name or preview with wide characters would cost
-        // every row after it a column. See plain.ts.
-        // A conversation exists from the moment a thread is opened, before
-        // anything is sent. The site's inbox hides those (blank lastMessage);
-        // the same rule here, or the mailbox lists empty threads.
-        // A deleted account is a tombstone: the API flags it, and older ones
-        // hold a blank or '[deleted]' username. Nothing can be sent to one, so
-        // the thread is hidden rather than listed under a dead name.
         convs = (await api.get<Conversation[]>('/v1/cmail'))
+          // A conversation exists from the moment a thread is opened, before anything is sent.
+          // The site's inbox hides those (blank lastMessage), and so does this, or the mailbox lists empty threads.
+          // A deleted account is a tombstone: the API flags it, and older ones hold a blank or '[deleted]' username.
+          // Nothing can be sent to one, so the thread is hidden rather than listed under a dead name.
           .filter(c => (c.lastMessage ?? '') !== '' && !gone(c.otherUser))
+          // Folded on arrival: a name or preview with wide characters would cost every row after it a column.
+          // See plain.ts.
           .map(c => ({
             ...c,
             otherUser: { ...c.otherUser, username: plain(c.otherUser.username) },

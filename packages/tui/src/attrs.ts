@@ -26,13 +26,11 @@ export const BG = 128
 export const LEVEL_MASK = BRIGHT | DIM | MUTED | FAINT
 
 // --- transport ---------------------------------------------------------------
-//
-// A program emits ANSI, so the attribute byte must cross a pty and be decoded
-// back exactly. The beam level is carried as a 256-colour foreground index and
-// the background as a background index; weight, slant and inverse use ordinary
-// SGR. Every code is standard, so another terminal renders something sensible.
-// The specific indices are what mark the attribute as exact, distinguishing a
-// Surface's output from a program that happens to print \x1b[1m.
+
+// A program emits ANSI, so the attribute byte must cross a pty and be decoded back exactly.
+// The beam level is carried as a 256-colour foreground index and the background as a background index; weight, slant and inverse use ordinary SGR.
+// Every code is standard, so another terminal renders something sensible.
+// The specific indices mark the attribute as exact, distinguishing a Surface's output from a program that happens to print \x1b[1m.
 
 /** Beam level -> foreground palette index. */
 export const LEVEL_INDEX: Record<number, number> = {

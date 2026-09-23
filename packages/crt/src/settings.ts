@@ -147,10 +147,8 @@ const MAX_ROWS = 12
  * ‹› (U+2039/203A) is used because no face and no synthesised glyph provides a
  * leftwards arrow, and <> reads as markup. It is present in every face offered.
  *
- * Correctness matters most on this screen, since it is where the face is
- * switched, so a hint using a code point the new face lacks would break in
- * front of the person switching to it. A missing glyph renders as ? with no
- * warning.
+ * Correctness matters most on this screen, since it is where the face is switched.
+ * A hint using a code point the new face lacks would render as ? in front of the person switching to it.
  */
 const HINT = keyHint([
   ['‹›', 'Pane'], ['⬆⬇', 'Move'], ['↵', 'Set'], ['ESC', 'Close'],
@@ -183,7 +181,7 @@ interface Geometry {
 }
 
 export class SettingsScreen implements Screen {
-  /** Left pane: which setting. */
+  /** Index of the selected setting in the left pane. */
   private row = 0
   /** Right pane: which of that setting's values. */
   private value = 0

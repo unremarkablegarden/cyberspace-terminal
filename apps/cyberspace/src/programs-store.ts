@@ -144,11 +144,9 @@ export class ProgramStore {
   /**
    * Every published program, by every member.
    *
-   * Paged because the route caps a page at 50, and followed by its cursor to
-   * the end. The route filters rows its query could not — a taken-down
-   * program, a kind this machine did not ask for — so a page can come back
-   * short, or empty, with pages still behind it. A null cursor is the only
-   * end marker.
+   * Paged because the route caps a page at 50, and followed by its cursor to the end.
+   * The route drops rows its query could not filter (a taken-down program, a kind this machine did not ask for), so a page can come back short, or empty, with pages still behind it.
+   * A null cursor is the only end marker.
    */
   async gallery(): Promise<PublishedProgram[]> {
     const rows: PublishedProgram[] = []

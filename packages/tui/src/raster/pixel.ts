@@ -171,7 +171,6 @@ export const pixel: Raster = (m, src, cols, rows, opts) => {
           const bayer = BAYER[(py & 7) * 8 + (px & 7)]! / 64
           const noise = hash(px * 0.01, py * 0.01) * NOISE_SIZE - NOISE_BIAS
           const screen = bayer + noise * NOISE_MIX
-          // dither 0 is a hard threshold at mid grey; 1 is the full screen.
           const threshold = 0.5 * (1 - amount) + screen * amount
 
           if (g >= threshold) row |= 1 << (cellW - 1 - x)
@@ -184,6 +183,5 @@ export const pixel: Raster = (m, src, cols, rows, opts) => {
     }
   }
 
-  // Exposure is chosen by the rasteriser rather than the caller.
   return { cols, rows, cells, attr: BEAM }
 }

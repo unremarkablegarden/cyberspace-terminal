@@ -56,7 +56,7 @@ export interface MachineDeps {
   pictures?: () => ChatPictures
   /** The face, for programs that draw dots and need its cell shape. See image.ts metricsOf. */
   face?: TermMetrics
-  /** The host's file chooser, for upload(1). Absent on a host without one. */
+  /** The host's file chooser, for upload(1) and import(1). Without it both exit 1 with `no file chooser`. */
   pickFile?: (accept: string) => Promise<File | null>
   /** The host's file save, for download(1). Absent on a host without one. */
   saveFile?: SaveFile
