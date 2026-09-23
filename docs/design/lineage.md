@@ -156,7 +156,7 @@ programs the old terminal published, as they were written.
 
 ## What is not here
 
-doom, tron, the three.js grid and `gl3d`, `sudo` and its `rm -rf /`, TripSynth,
+tron, the three.js grid and `gl3d`, TripSynth,
 `fullscreen`. Pictures are drawn but cannot be sent: `/img` needs an upload route the API does not have, so a GIF
 is still named rather than played.
 

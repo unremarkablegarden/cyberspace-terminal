@@ -31,7 +31,8 @@ export interface StandbyArt {
 /** Thrown when an effect is skipped. The caller handles the end state. */
 export class Aborted extends Error {}
 
-const sleep = (ms: number, signal?: AbortSignal): Promise<void> => {
+/** Resolves after `ms`. Rejects with Aborted when `signal` fires. */
+export const sleep = (ms: number, signal?: AbortSignal): Promise<void> => {
   if (signal?.aborted) return Promise.reject(new Aborted())
   return new Promise<void>((res, rej) => {
     const timer = setTimeout(() => { cleanup(); res() }, ms)

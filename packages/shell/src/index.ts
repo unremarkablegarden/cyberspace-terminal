@@ -3,13 +3,15 @@
 import { fs, paths, type Proc, type Program, readText } from '@cyberspace/kernel'
 import { Readline, type Completion } from './readline.js'
 import {
-  runLine, foregroundJob, refuseExit, ShellExit, JobStopped, STOPPED_STATUS,
+  runLine, runText, foregroundJob, refuseExit, ShellExit, JobStopped, STOPPED_STATUS,
   setHistoryBuiltin, builtinNames, type ShellState,
 } from './run.js'
 
 export { builtinNames } from './run.js'
 
 const HISTFILE = '.sh_history'
+// Read by interactive shells at start, as bash reads ~/.bashrc.
+const RCFILE = '.shrc'
 const HISTMAX = 500
 // Lines tolerated on disk before the file is compacted. Compaction truncates,
 // so it happens rarely and through a temp file; ordinary commands append.
@@ -23,6 +25,7 @@ export const shellMain: Program = async (p: Proc) => {
     // lists it and a reassignment keeps reaching children.
     exported: new Set(Object.keys(p.env)),
     status: 0,
+    aliases: new Map(),
   }
 
   // Non-interactive: `sh script` (also where #!/bin/sh shebangs land).
@@ -73,6 +76,8 @@ export const shellMain: Program = async (p: Proc) => {
     void s
     return 0
   })
+
+  await sourceRc(sh, p)
 
   const jobs = p.kernel.jobs
   // The first interactive shell owns the job table; one started inside a job
@@ -173,17 +178,35 @@ async function runScript(sh: ShellState, p: Proc, path: string): Promise<number>
     p.err(`sh: ${path}: No such file or directory\n`)
     return 127
   }
-  for (const line of text.split('\n')) {
-    const trimmed = line.trim()
-    if (!trimmed || trimmed.startsWith('#')) continue
-    try {
-      await runLine(sh, trimmed)
-    } catch (e) {
-      if (e instanceof ShellExit) return e.code
-      throw e
-    }
+  try {
+    await runText(sh, text)
+  } catch (e) {
+    if (e instanceof ShellExit) return e.code
+    throw e
   }
   return sh.status
+}
+
+/**
+ * Run ~/.shrc before the job table is claimed, so its lines run as plain
+ * pipelines. A missing file is silent. `exit` in it ends the file, not the
+ * shell, so a broken ~/.shrc cannot close the terminal at every start.
+ */
+async function sourceRc(sh: ShellState, p: Proc): Promise<void> {
+  let text: string
+  try {
+    text = await readText(paths.join(p.env.HOME ?? '/', RCFILE))
+  } catch {
+    return
+  }
+  // As promptLoop does before each line: line input with echo, ^C -> SIGINT.
+  p.tty?.setCooked()
+  try {
+    await runText(sh, text)
+  } catch (e) {
+    if (!(e instanceof ShellExit)) p.err(`sh: ${RCFILE}: ${(e as Error)?.message ?? e}\n`)
+  }
+  sh.status = 0
 }
 
 function prompt(sh: ShellState): string {
@@ -206,7 +229,7 @@ async function complete(sh: ShellState, line: string, cursor: number): Promise<C
 
   if (isFirst && !word.includes('/')) {
     if (!word) return {} // no prefix: don't dump the whole command table
-    candidates = [...sh.proc.kernel.names(), ...builtinNames()]
+    candidates = [...new Set([...sh.proc.kernel.names(), ...builtinNames(), ...sh.aliases.keys()])]
       .sort()
       .filter(n => n.startsWith(word))
       .map(n => n + ' ')

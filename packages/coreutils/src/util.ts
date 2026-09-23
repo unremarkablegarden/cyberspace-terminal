@@ -8,12 +8,11 @@ export function resolve(p: Proc, arg: string): string {
   return paths.resolve(p.cwd, arg.replace(/^~(?=\/|$)/, p.env.HOME ?? '/'))
 }
 
-/** Split argv into flags (single-dash letters) and positional args. */
-export function flags(p: Proc, spec: string): { f: Set<string>; args: string[]; n?: number } {
+/** Split argv into flags (single-dash letters) and positional args. `av` defaults to argv without the program name. */
+export function flags(p: Proc, spec: string, av = p.argv.slice(1)): { f: Set<string>; args: string[]; n?: number } {
   const f = new Set<string>()
   const args: string[] = []
   let n: number | undefined
-  const av = p.argv.slice(1)
   for (let i = 0; i < av.length; i++) {
     const a = av[i]
     if (a === '--') { args.push(...av.slice(i + 1)); break }

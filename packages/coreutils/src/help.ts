@@ -33,7 +33,8 @@ export const help: Program = async p => {
   const cols = p.tty?.cols ?? 80
   const names = p.kernel.names().filter(n => !HIDDEN.has(n))
   // builtinNames() rather than a list here, so the two cannot drift.
-  const shell = [...names.filter(n => SHELL.has(n)), ...builtinNames()].sort()
+  // `.` is `source` under its POSIX name.
+  const shell = [...names.filter(n => SHELL.has(n)), ...builtinNames().filter(n => n !== '.')].sort()
   let text = ''
   const out = (s: string) => { text += s }
 
@@ -42,6 +43,7 @@ export const help: Program = async p => {
   out('Shell:\n')
   columns(out, shell, cols)
   out('Own programs:\n  cd bin/docs then less README.txt\n')
+  out("Aliases:\n  alias ll='ls -l', kept in ~/.shrc\n")
   out('Keys:\n  [UP/DOWN] recall\n  [TAB] complete\n  [CTRL-SHIFT-UP/DOWN] and [SHIFT-PGUP/PGDN] scroll\n')
   out('Select, copy and paste (command line, edit, chat):\n')
   // The chords app/src/keys.ts encodes. Off a Mac, ^C stays SIGINT, so copy and cut take Shift.

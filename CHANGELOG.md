@@ -288,3 +288,8 @@
     - Installed programs and `~/bin`, in a `CMD-K` style list
 - `help`: select, copy, cut and paste keys for the host OS, printed a line at a time
 - `$OSTYPE`
+
+## v0.8.1
+
+- `sudo rm -rf / --no-preserve-root` (easter egg, ported from the old /terminal)
+- `alias`, `unalias`, `source`, `~/.shrc` read at shell start

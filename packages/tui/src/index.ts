@@ -51,5 +51,6 @@ export { TextBuffer, fold, drawBuffer, textWidth, expandTabs } from './buffer.js
 export type { Fold, BufferOptions } from './buffer.js'
 export { DotCanvas, drawEdges, rotate, project } from './vector.js'
 export type { DotTarget, P3, Edge, View } from './vector.js'
+export { teapot } from './teapot.js'
 export { PixelCanvas } from './pixels.js'
 export type { PixelFont } from './pixels.js'

@@ -1,6 +1,6 @@
 // Tokenizer and AST for the POSIX subset:
 //   pipelines |, lists ; && ||, redirects > >> < 2> 2>>, quoting ' " \,
-//   assignments NAME=value, comments #.
+//   assignments NAME=value, comments #, aliases.
 // Expansion ($VAR, ~, globs) happens later, on Word segments, so quoting
 // survives to that stage.
 
@@ -132,8 +132,55 @@ function plainPrefix(w: Word): string {
   return w.segments[0]?.quote === 'none' ? w.segments[0].text : ''
 }
 
-export function parse(src: string): List {
-  const tokens = tokenize(src)
+const isSeparator = (op: string): boolean => op === '|' || op === ';' || op === '&&' || op === '||'
+
+/** A word with no quoting or escapes: the only kind an alias name matches. */
+function plainWord(tok: Token): string | null {
+  if (tok.kind !== 'word' || tok.word.segments.length !== 1) return null
+  const seg = tok.word.segments[0]
+  return seg.quote === 'none' ? seg.text : null
+}
+
+/**
+ * Alias expansion, as bash does it: on tokens, before the AST, so a value may
+ * hold operators (`alias ll='ls -l | more'`). Only the first word of a simple
+ * command is looked up, plus the word after a value ending in a blank.
+ * `seen` holds the aliases being expanded, so `alias ls='ls -F'` stops after
+ * one step.
+ */
+function expandAliases(
+  tokens: Token[], aliases: ReadonlyMap<string, string>, seen: ReadonlySet<string> = new Set(),
+): Token[] {
+  const out: Token[] = []
+  let command = true
+  for (let t = 0; t < tokens.length; t++) {
+    const tok = tokens[t]
+    if (tok.kind === 'op') {
+      out.push(tok)
+      if (isSeparator(tok.op)) command = true
+      // A redirect target is never a command word; the position is unchanged.
+      else if (tokens[t + 1]?.kind === 'word') out.push(tokens[++t])
+      continue
+    }
+    const name: string | null = command ? plainWord(tok) : null
+    const value: string | undefined = name === null || seen.has(name) ? undefined : aliases.get(name)
+    if (name === null || value === undefined) {
+      out.push(tok)
+      // Assignments before the command word keep the position open.
+      command = command && ASSIGN.test(plainPrefix(tok.word))
+      continue
+    }
+    const expanded = expandAliases(tokenize(value), aliases, new Set(seen).add(name))
+    out.push(...expanded)
+    const last = expanded.at(-1)
+    command = /[ \t]$/.test(value) || (last?.kind === 'op' && isSeparator(last.op))
+  }
+  return out
+}
+
+export function parse(src: string, aliases?: ReadonlyMap<string, string>): List {
+  let tokens = tokenize(src)
+  if (aliases?.size) tokens = expandAliases(tokens, aliases)
   const items: List['items'] = []
   let op: ';' | '&&' | '||' = ';'
   let t = 0

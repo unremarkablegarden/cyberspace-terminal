@@ -3,6 +3,8 @@
 // sudo runs nothing. It prompts for a password, accepts any, then answers
 // `make me a sandwich` with `Okay.` and every other command with the sudoers
 // refusal. There is no privilege on this machine for it to grant.
+// The exception is `rm -rf /`, with or without --no-preserve-root before or after the /:
+// the host's doomsday program runs instead (app/src/doomsday.ts). It removes nothing.
 
 import { readLine, type Proc, type Program } from '@cyberspace/kernel'
 
@@ -40,7 +42,11 @@ function winkAt(password: string, username: string): string | null {
   return null
 }
 
-export const sudo: Program = async p => {
+/** The command lines that run doomsday. Matched exactly. */
+const DOOMSDAY = new Set(['rm -rf /', 'rm -rf --no-preserve-root /', 'rm -rf / --no-preserve-root'])
+
+/** `doomsday` is the host's; a host without a CRT omits it and the command gets the refusal. */
+export const sudoProgram = (doomsday?: Program): Program => async p => {
   const [verb, ...rest] = p.argv.slice(1)
   if (!verb) { p.err('usage: sudo command [args]\n'); return 1 }
   const user = p.env.USER ?? 'guest'
@@ -60,7 +66,9 @@ export const sudo: Program = async p => {
     if (wink) p.out(wink + '\n\n')
   }
 
-  if ([verb, ...rest].join(' ') === 'make me a sandwich') {
+  const line = [verb, ...rest].join(' ')
+  if (doomsday && p.tty && DOOMSDAY.has(line)) return doomsday(p)
+  if (line === 'make me a sandwich') {
     await pause(p, 300)
     p.out('Okay.\n')
     return 0
@@ -68,6 +76,8 @@ export const sudo: Program = async p => {
   p.err(`${user} is not in the sudoers file.  This incident will be reported.\n`)
   return 1
 }
+
+export const sudo = sudoProgram()
 
 export const make: Program = async p => {
   const target = p.argv.slice(1).join(' ')

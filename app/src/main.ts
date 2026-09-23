@@ -25,6 +25,7 @@ import { writeMotd } from './motd'
 import { ConfigBox, restoreSettings } from './settings'
 import { Screensaver } from './saver'
 import { Doom } from './doom'
+import { doomsdayProgram } from './doomsday'
 import { JobPalette } from './palette'
 import { Launcher, launchables } from './launcher'
 import { NoticeBar } from './bar'
@@ -337,11 +338,18 @@ async function rebootProgram(p: Proc): Promise<number> {
   halted = true
   live = false
   await withGrid(() => implode(screen.term, snd))
+  coldReboot()
+  return 0
+}
+
+/** Reload into a cold boot, without the parked session. */
+function coldReboot(): void {
+  halted = true
+  live = false
   machine?.jobs.killAll()
   // Drop the mark that would make the reload a warm boot.
   store.remove('lastSeen')
   rebootOnto()
-  return 0
 }
 
 // --- the parked session -------------------------------------------------------
@@ -437,7 +445,11 @@ const program = {
       api,
       homeKey,
       snd,
-      host: { shutdown: shutdownProgram, reboot: rebootProgram, reset: resetProgram, screensaver: screensaverProgram, doom: p => doom!.run(p), config: configProgram, launch: launchProgram },
+      host: {
+        shutdown: shutdownProgram, reboot: rebootProgram, reset: resetProgram, screensaver: screensaverProgram,
+        doom: p => doom!.run(p), config: configProgram, launch: launchProgram,
+        doomsday: doomsdayProgram({ screen: s, snd, tx, drained: waitForDrain, reboot: coldReboot }),
+      },
       // Image decoding is faceplate-only, and the metrics depend on the font
       // loaded right now, which F1 can change under a running program.
       pictures: () => pictureHost(s.term),

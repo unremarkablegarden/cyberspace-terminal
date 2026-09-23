@@ -388,6 +388,69 @@ export class Sound {
     beat.start(t); beat.stop(t + 1.2)
   }
 
+  /** A spark: bandpassed noise swept from 4-7.2 kHz down to 600 Hz in 60 ms. A fixed bandpass gives a click instead. */
+  arc(): void {
+    const ctx = this.live
+    if (!ctx) return
+    const t = ctx.currentTime
+    const src = ctx.createBufferSource()
+    src.buffer = this.noise
+    const bp = ctx.createBiquadFilter()
+    bp.type = 'bandpass'
+    bp.frequency.setValueAtTime(4000 + Math.random() * 3200, t)
+    bp.frequency.exponentialRampToValueAtTime(600, t + 0.06)
+    bp.Q.value = 2.5
+    const g = ctx.createGain()
+    g.gain.setValueAtTime(0.20, t)
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.09)
+    src.connect(bp).connect(g).connect(this.bus.beeps)
+    src.start(t, Math.random() * NOISE_SEC)
+    src.stop(t + 0.11)
+  }
+
+  /** An alarm: `times` pairs of 440 and 330 Hz square tones, 240 ms apart, lowpassed at 1.6 kHz. */
+  klaxon(times = 2): void {
+    const ctx = this.live
+    if (!ctx) return
+    const t = ctx.currentTime
+    for (let i = 0; i < times * 2; i++) {
+      const at = t + i * 0.24
+      const o = ctx.createOscillator()
+      o.type = 'square'
+      o.frequency.value = i % 2 ? 330 : 440
+      const lp = ctx.createBiquadFilter()
+      lp.type = 'lowpass'
+      lp.frequency.value = 1600
+      const g = ctx.createGain()
+      g.gain.setValueAtTime(0.0001, at)
+      g.gain.exponentialRampToValueAtTime(0.09, at + 0.02)
+      g.gain.exponentialRampToValueAtTime(0.0001, at + 0.21)
+      o.connect(lp).connect(g).connect(this.bus.beeps)
+      o.start(at)
+      o.stop(at + 0.24)
+    }
+  }
+
+  /** Bandpassed noise at `freq` Hz, decaying from `gain` over `dur` seconds. */
+  burst(freq: number, q: number, gain: number, dur: number): void {
+    const ctx = this.live
+    if (!ctx) return
+    const t = ctx.currentTime
+    const src = ctx.createBufferSource()
+    src.buffer = this.noise
+    src.playbackRate.value = 0.8 + Math.random() * 0.4
+    const bp = ctx.createBiquadFilter()
+    bp.type = 'bandpass'
+    bp.frequency.value = freq
+    bp.Q.value = q
+    const g = ctx.createGain()
+    g.gain.setValueAtTime(gain, t)
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur)
+    src.connect(bp).connect(g).connect(this.bus.beeps)
+    src.start(t, Math.random() * NOISE_SEC)
+    src.stop(t + dur)
+  }
+
   /** The POST beep: a square wave through a small-speaker filter. */
   postBeep(freq = 330, dur = 0.62): void {
     const ctx = this.live

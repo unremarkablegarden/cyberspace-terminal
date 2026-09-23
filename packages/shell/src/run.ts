@@ -1,7 +1,7 @@
 // Execute a parsed List: expansion, redirects, pipelines, builtins.
 
 import {
-  Pipe, fileSource, fileSink, fs, paths,
+  Pipe, fileSource, fileSink, fs, paths, readText,
   type Proc, type Task, type Source, type Sink, type Program, type Job,
 } from '@cyberspace/kernel'
 import { parse, ParseError, type Cmd } from './parse.js'
@@ -28,6 +28,8 @@ export interface ShellState {
    */
   exported: Set<string>
   status: number
+  /** Per shell, like bash: not exported, so a nested shell reads ~/.shrc again. */
+  aliases: Map<string, string>
   /**
    * Set by the exit builtin, read by runLine after the pipeline. The builtin
    * runs as a process, so a throw from it would be caught by the kernel and
@@ -36,6 +38,12 @@ export interface ShellState {
   exiting?: number
   /** Whether the last `exit` was refused for stopped jobs; a second in a row goes through. */
   warnedJobs?: boolean
+  /**
+   * Set by the source builtin: the file's text, run by runLine once the
+   * builtin's own pipeline has exited, so its lines do not run as jobs inside
+   * that pipeline's job.
+   */
+  sourceNext?: string
   /** Set by the fg builtin: the job to foreground once the fg pipeline itself has exited. */
   foregroundNext?: Job
 }
@@ -62,7 +70,7 @@ const ctxOf = (sh: ShellState): ExpandCtx => ({
 export async function runLine(sh: ShellState, src: string): Promise<number> {
   let list
   try {
-    list = parse(src)
+    list = parse(src, sh.aliases)
   } catch (e) {
     if (e instanceof ParseError) {
       sh.proc.err(`sh: ${e.message}\n`)
@@ -88,6 +96,11 @@ export async function runLine(sh: ShellState, src: string): Promise<number> {
       sawExit = true
       if (refuseExit(sh)) break
       throw new ShellExit(code)
+    }
+    if (sh.sourceNext !== undefined) {
+      const text = sh.sourceNext
+      sh.sourceNext = undefined
+      await runText(sh, text)
     }
     if (sh.foregroundNext) {
       const job = sh.foregroundNext
@@ -127,6 +140,7 @@ export function refuseExit(sh: ShellState): boolean {
  * job; the shell stored the line the program declared, which is one command.
  */
 export async function runParked(sh: ShellState, job: Job): Promise<void> {
+  // No aliases: the line holds expanded words, so `ls -F` would become `ls -F -F`.
   const list = parse(job.line)
   const cmds = list.items[0]?.pipeline.cmds ?? []
   await runPipeline(sh, cmds, job)
@@ -425,11 +439,73 @@ const BUILTINS: Record<string, Builtin> = {
     return 0
   },
 
+  alias(sh, p) {
+    const args = p.argv.slice(1).filter(a => a !== '-p')
+    const print = (name: string) => p.out(`alias ${name}='${sh.aliases.get(name)!.replace(/'/g, `'\\''`)}'\n`)
+    if (!args.length) {
+      for (const name of [...sh.aliases.keys()].sort()) print(name)
+      return 0
+    }
+    let status = 0
+    for (const arg of args) {
+      const eq = arg.indexOf('=')
+      if (eq < 0) {
+        if (sh.aliases.has(arg)) print(arg)
+        else { p.err(`alias: ${arg}: not found\n`); status = 1 }
+        continue
+      }
+      const name = arg.slice(0, eq)
+      if (!ALIAS_NAME.test(name)) { p.err(`alias: '${name}': invalid alias name\n`); status = 1; continue }
+      sh.aliases.set(name, arg.slice(eq + 1))
+    }
+    return status
+  },
+
+  unalias(sh, p) {
+    const args = p.argv.slice(1)
+    if (args[0] === '-a') { sh.aliases.clear(); return 0 }
+    if (!args.length) { p.err('unalias: usage: unalias [-a] name ...\n'); return 2 }
+    let status = 0
+    for (const name of args) {
+      if (!sh.aliases.delete(name)) { p.err(`unalias: ${name}: not found\n`); status = 1 }
+    }
+    return status
+  },
+
+  async source(sh, p) {
+    const path = p.argv[1]
+    if (!path) { p.err(`${p.argv[0]}: filename argument required\n`); return 2 }
+    try {
+      sh.sourceNext = await readText(paths.resolve(sh.proc.cwd, path.replace(/^~(?=\/|$)/, p.env.HOME ?? '/')))
+    } catch {
+      p.err(`${p.argv[0]}: ${path}: No such file or directory\n`)
+      return 1
+    }
+    return 0
+  },
+
   history(sh, p) {
     void sh
     return 0 // replaced by the shell, which owns the history
   },
 }
+
+BUILTINS['.'] = BUILTINS.source
+
+/**
+ * Run a script's lines in this shell, in order. A syntax error ends only its
+ * own line, as in bash.
+ */
+export async function runText(sh: ShellState, text: string): Promise<void> {
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) continue
+    await runLine(sh, trimmed)
+  }
+}
+
+/** Characters bash refuses in an alias name: blanks, quoting, operators, `/ $ = \``. */
+const ALIAS_NAME = /^[^\s/$`='"\\|;&<>()]+$/
 
 /** A job by `%n`, by pid, or by program name. */
 function jobByWord(sh: ShellState, word: string): Job | undefined {
@@ -445,6 +521,7 @@ function jobByWord(sh: ShellState, word: string): Job | undefined {
 export function setHistoryBuiltin(fn: Builtin): void {
   BUILTINS['history'] = fn
 }
+
 
 export function builtinNames(): string[] {
   return Object.keys(BUILTINS)

@@ -3,7 +3,7 @@
 
 import { InMemory, fs } from '@zenfs/core'
 import { Kernel, mountAll, type Program } from '@cyberspace/kernel'
-import { coreutils } from '@cyberspace/coreutils'
+import { coreutils, sudoProgram } from '@cyberspace/coreutils'
 import { shellMain } from '@cyberspace/shell'
 import {
   type ApiClient, circProgram, cmailProgram, feedProgram, globeProgram, cyberspacePrograms, registryPrograms,
@@ -40,6 +40,8 @@ export interface HostPrograms {
   config: Program
   /** The program list, drawn on the CRT grid like the CMD-K switcher. */
   launch: Program
+  /** `sudo rm -rf /`. Run only by sudo(1), not registered as a command. */
+  doomsday: Program
 }
 
 export interface MachineDeps {
@@ -71,6 +73,7 @@ export interface MachineDeps {
 /** Register every program. A later registration replaces an earlier one of the same name. */
 function registerPrograms(kernel: Kernel, { api, homeKey, snd, host, pictures, face, saveFile, drafts }: MachineDeps, hooks: CsHooks, inbox: InboxService): void {
   kernel.registerAll(coreutils)
+  kernel.register('sudo', sudoProgram(host.doomsday))
   kernel.register('sh', shellMain)
   kernel.register('changelog', changelog)
   kernel.register('shutdown', host.shutdown)

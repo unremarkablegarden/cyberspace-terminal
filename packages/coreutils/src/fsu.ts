@@ -146,12 +146,31 @@ async function removeTree(target: string): Promise<void> {
   }
 }
 
+/** GNU rm's root options. Removed before flags(), which would split them into single letters. */
+const ROOT_OPTS = new Set(['--preserve-root', '--no-preserve-root'])
+
 export const rm: Program = async p => {
-  const { f, args } = flags(p, '')
+  const av = p.argv.slice(1)
+  const end = av.indexOf('--')
+  const isOpt = (a: string, i: number) => (end < 0 || i < end) && ROOT_OPTS.has(a)
+  const override = av.some((a, i) => isOpt(a, i) && a === '--no-preserve-root')
+  const { f, args } = flags(p, '', av.filter((a, i) => !isOpt(a, i)))
   if (!args.length) { p.err('usage: rm [-rf] file...\n'); return 1 }
   let code = 0
   for (const arg of args) {
     const target = resolve(p, arg)
+    // No flag removes /: it holds the OPFS home. The override text is from the old /terminal, which pointed at sudo(1).
+    if (target === '/' && f.has('r')) {
+      if (!override) {
+        p.err(`rm: it is dangerous to operate recursively on '${arg}'\n`)
+        p.err('rm: use --no-preserve-root to override this failsafe\n')
+      } else {
+        for (const dir of ['/bin', '/usr', '/etc']) p.err(`rm: cannot remove '${dir}': Permission denied\n`)
+        p.err('rm: you are not root. sudo exists, if you insist.\n')
+      }
+      code = 1
+      continue
+    }
     const st = await fsp.stat(target).catch(() => null)
     if (!st) {
       if (!f.has('f')) { p.err(`rm: ${arg}: No such file or directory\n`); code = 1 }

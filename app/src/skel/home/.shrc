@@ -1,0 +1,4 @@
+# Read by sh at start. Reload with: . ~/.shrc
+#
+# alias ll='ls -l'
+# alias la='ls -a'
