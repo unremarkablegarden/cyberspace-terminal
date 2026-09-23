@@ -5,7 +5,7 @@ persistent local filesystem, wasm programs. Part of
 [Cyberspace](https://cyberspace.online). Runs at
 [terminal.cyberspace.online](https://terminal.cyberspace.online).
 
-No account required. Guest machines are fully local; `login` connects to the
+No account required. Guest machines are fully local. `login` connects to the
 Cyberspace API.
 
 - Shell: pipelines, redirection, globs, `$?`, history, tab completion,
@@ -21,11 +21,10 @@ Cyberspace API.
 - Display: beam-intensity CRT simulation, phosphor and screen presets,
   BDF bitmap fonts, machine audio
 - Network: `login`, `logout`, `whoami`, `finger`, `feed`
-- Chat: `circ` (rooms), `cmail` (1:1) — sends through the API, live
-  reads streamed from the realtime database
-- Notifications: `inbox` lists them with unread C-Mail and opens each
-  in its program; new ones show on the top row
-- Images: `view` halftones a photograph onto the cell grid; chat draws
+- Chat: `circ`, `cmail` — sends through the API, live
+  reads streamed from the Firebase RTDB
+- Notifications: `inbox`; global notifications bar
+- Images: `view` halftones a photograph onto the cell grid; chat and feed draw
   attachments inline
 - Registry: `browse`, `install`, `publish`, `recall` — write a program here,
   publish it from the machine, run what others published
