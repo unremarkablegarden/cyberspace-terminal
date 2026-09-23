@@ -1,0 +1,58 @@
+doom-v0.1.0-sfx.wasm
+====================
+
+A build of doom.wasm with sound effects added:
+
+    https://github.com/jacobenget/doom.wasm
+    tag: v0.1.0
+
+The changes to that source and the script that builds this file are in tools/doom of this repository:
+
+    https://github.com/unremarkablegarden/cyberspace-terminal
+
+    tools/doom/i_wasm_sound.c   sound effects module (new file)
+    tools/doom/sound.patch      registers the module in doomgeneric/src/i_sound.c
+    tools/doom/build.sh         fetches the tag, applies both, compiles and links
+
+Upstream's source at the tag plus those three files is the complete corresponding source of this binary.
+
+
+THE ENGINE — GNU General Public License, version 2
+--------------------------------------------------
+
+doom.wasm is a WebAssembly build of doomgeneric, which descends from fbDOOM, which descends from Chocolate Doom, which descends from the DOOM source code released by id Software in 1997 under the GPL.
+
+    Copyright (C) 1993-1996 Id Software, Inc.
+    Copyright (C) 2005-2014 Simon Howard
+    Copyright (C) 2021 Wolfgang Zeller
+    Copyright (C) 2026 the Cyberspace Terminal contributors (the sound effects module)
+    and the contributors to each project in that chain.
+
+    This program is free software; you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation; either version 2 of the License, or (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+Full licence text: https://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+
+WRITTEN OFFER (GPL-2.0 section 3). The complete corresponding source code for this binary is publicly available at the two URLs given at the top of this file. If either ever becomes unavailable, the operators of this site will supply a complete machine-readable copy of the source on request, for no more than the cost of physically performing the distribution.
+
+The GPL applies to this module and to the files in tools/doom. It does not extend to the rest of this site: the module is a separate work, fetched at runtime and communicating with the page across a fixed import and export interface (see packages/crt/src/doom.ts). No code of ours outside tools/doom is linked into it and none of it is linked into ours. GPL-2.0 also has no network-use clause; serving the page is not, by itself, conveying anything but this file.
+
+
+THE GAME DATA — id Software shareware
+--------------------------------------
+
+The module has the shareware DOOM1.WAD (version 1.9, sha1 5b2e249b9c5133ec987b3ea77596381dc0d6bc1d) compiled into it, which is why it is 4.5MB rather than 400KB. That WAD is:
+
+    DOOM (shareware episode), Copyright (C) 1993 Id Software, Inc.
+    All rights reserved.
+
+It is distributed here under id's shareware terms, unmodified and at no charge. It is not sold, is not behind any payment, and no part of this site's paid supporter tier includes or depends on it. Episodes 2-4 and DOOM II are not included and are not obtainable through this site.
+
+If id Software (or its present rights holders) would prefer this not be served here, remove app/public/doom/ and the `doom` command (app/src/doom.ts, packages/crt/src/doom.ts), and the site loses a joke and nothing else.
+
+
+WHAT WE WROTE
+-------------
+
+Everything that puts this on screen and through the speaker (the framebuffer blit, the luma curve, the key routing, the sound effect player) is ours and is in packages/crt/src/doom.ts and app/src/doom.ts under this project's own terms. It contains no DOOM code. The sound effects module compiled into the binary is in tools/doom under GPL-2.0.

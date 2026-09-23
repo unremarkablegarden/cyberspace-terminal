@@ -1,4 +1,4 @@
-// File tools: ls cat cp mv rm mkdir rmdir touch.
+// File tools: ls cat cp mv rm mkdir rmdir touch tree chmod.
 
 import { paths, type Proc, type Program } from '@cyberspace/kernel'
 import { fsp, resolve, flags, inputText, strerror } from './util.js'
@@ -216,4 +216,110 @@ export const touch: Program = async p => {
     if (!exists) await fsp.writeFile(target, new Uint8Array())
   }
   return 0
+}
+
+export const tree: Program = async p => {
+  const { f, args } = flags(p, '')
+  const all = f.has('a')
+  let dirs = 0
+  let files = 0
+  let code = 0
+
+  const walk = async (dir: string, indent: string): Promise<void> => {
+    let names = (await fsp.readdir(dir)).sort()
+    if (!all) names = names.filter(n => !n.startsWith('.'))
+    const entries: { name: string; dir: boolean }[] = []
+    for (const name of names) {
+      const s = await fsp.stat(paths.join(dir, name)).catch(() => null)
+      entries.push({ name, dir: !!s?.isDirectory() })
+    }
+    // Directories first, matching the legacy tree.
+    entries.sort((a, b) => Number(b.dir) - Number(a.dir))
+    for (let i = 0; i < entries.length; i++) {
+      if (p.signal.aborted) return
+      const { name, dir: isDir } = entries[i]
+      const last = i === entries.length - 1
+      p.out(`${indent}${last ? '└── ' : '├── '}${name}${isDir ? '/' : ''}\n`)
+      if (isDir) {
+        dirs++
+        await walk(paths.join(dir, name), indent + (last ? '    ' : '│   '))
+      } else {
+        files++
+      }
+    }
+  }
+
+  for (const arg of args.length ? args : ['.']) {
+    const target = resolve(p, arg)
+    const st = await fsp.stat(target).catch(() => null)
+    if (!st) { p.err(`tree: ${arg}: No such file or directory\n`); code = 1; continue }
+    if (!st.isDirectory()) { p.err(`tree: ${arg}: Not a directory\n`); code = 1; continue }
+    p.out(arg + '\n')
+    await walk(target, '')
+    if (p.signal.aborted) return 130
+  }
+  p.out(`\n${dirs} director${dirs === 1 ? 'y' : 'ies'}, ${files} file${files === 1 ? '' : 's'}\n`)
+  return code
+}
+
+const WHO: Record<string, number> = { u: 0o700, g: 0o070, o: 0o007, a: 0o777 }
+
+/**
+ * The new permission bits for `spec` applied to `mode`, or null when `spec` is
+ * not a mode. Takes octal (1 to 4 digits) or comma-separated symbolic clauses,
+ * [ugoa]*([-+=][rwxX]*)+. An empty who means `a`: there is no umask here.
+ * X adds execute only to directories and to files that already have it.
+ */
+export function applyMode(spec: string, mode: number, dir: boolean): number | null {
+  if (/^[0-7]{1,4}$/.test(spec)) return parseInt(spec, 8)
+  let perm = mode & 0o7777
+  for (const clause of spec.split(',')) {
+    const m = clause.match(/^([ugoa]*)((?:[-+=][rwxX]*)+)$/)
+    if (!m) return null
+    let mask = 0
+    for (const c of m[1] || 'a') mask |= WHO[c]
+    for (const [, op, letters] of m[2].matchAll(/([-+=])([rwxX]*)/g)) {
+      let bits = 0
+      for (const c of letters) {
+        if (c === 'r') bits |= 4
+        else if (c === 'w') bits |= 2
+        else if (c === 'x' || dir || perm & 0o111) bits |= 1 // x, or X when it applies
+      }
+      const val = (bits * 0o111) & mask
+      if (op === '+') perm |= val
+      else if (op === '-') perm &= ~val
+      else perm = (perm & ~mask) | val
+    }
+  }
+  return perm
+}
+
+// argv is read directly: flags() would take a mode such as -x for a flag.
+export const chmod: Program = async p => {
+  const av = p.argv.slice(1)
+  const recursive = av[0] === '-R'
+  if (recursive) av.shift()
+  const [spec, ...targets] = av
+  if (!spec || !targets.length) { p.err('usage: chmod [-R] mode file...\n'); return 1 }
+  if (applyMode(spec, 0, false) === null) { p.err(`chmod: invalid mode: '${spec}'\n`); return 1 }
+
+  const change = async (path: string): Promise<void> => {
+    const st = await fsp.stat(path)
+    const dir = st.isDirectory()
+    await fsp.chmod(path, applyMode(spec, st.mode, dir)!)
+    if (recursive && dir) {
+      for (const name of await fsp.readdir(path)) await change(paths.join(path, name))
+    }
+  }
+
+  let code = 0
+  for (const arg of targets) {
+    try {
+      await change(resolve(p, arg))
+    } catch (e) {
+      p.err(`chmod: ${arg}: ${strerror(e)}\n`)
+      code = 1
+    }
+  }
+  return code
 }

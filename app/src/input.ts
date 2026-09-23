@@ -17,6 +17,8 @@ import type { JobPalette } from './palette'
 export interface Overlay {
   readonly open: boolean
   key(k: KeyInput): void
+  /** A key released. Only DOOM asks for these; the soft keyboard sends one SOFT_HOLD_MS after each press. */
+  keyUp?(k: KeyInput): void
   silentKey(k: KeyInput): boolean
 }
 
@@ -47,6 +49,12 @@ export interface KeyboardDeps {
    */
   markRepeat?: (repeat: boolean) => void
 }
+
+/**
+ * How long a soft key counts as held, in ms.
+ * DOOM samples held keys once per 35 Hz tic, so a press and release inside one tic moves nothing; 100 ms spans three.
+ */
+const SOFT_HOLD_MS = 100
 
 /** Keys that are only a modifier, which do not count as a keypress in standby. */
 const MODIFIERS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'CapsLock'])
@@ -132,11 +140,7 @@ export class Keyboard {
     // with Option or AltGr held the character is the layout's, not the letter.
     if (hostModifier(e) && !e.altKey && e.code === 'KeyK') {
       e.preventDefault()
-      const palette = this.d.palette()
-      const overlay = this.d.overlay()
-      if (palette && this.d.live() && (!overlay?.open || overlay === palette)) {
-        palette.step(e.shiftKey ? -1 : 1)
-      }
+      this.stepSwitcher(e.shiftKey ? -1 : 1)
       return
     }
     // e.code for the same reason. Ctrl-I is not Tab here: the Tab key arrives as
@@ -179,9 +183,50 @@ export class Keyboard {
     this.d.tty.input(bytes(str))
   }
 
-  /** A key released. Only the switcher's modifier matters: letting go takes its row. */
+  /** A key from the phone key bar. */
+  tap(name: string, ctrl = false): void {
+    this.wake()
+    this.click({ key: name, ctrlKey: ctrl })
+    this.press(name, ctrl)
+    this.softRelease(name, ctrl)
+  }
+
+  /** The job switcher from the phone key bar: opens it, or moves down one row. */
+  switcher(): void {
+    this.wake()
+    if (this.d.powerOn()) return
+    this.stepSwitcher(1)
+  }
+
+  /** F1 from the phone key bar. Over the screensaver it wakes the machine, as F1 does. */
+  settings(): void {
+    this.wake()
+    if (this.d.powerOn()) return
+    this.click({ key: 'F1' })
+    const config = this.d.config()
+    const overlay = this.d.overlay()
+    if (!overlay?.open || overlay === config) config?.toggle()
+    else this.press('F1')
+  }
+
+  private stepSwitcher(dir: 1 | -1): void {
+    const palette = this.d.palette()
+    const overlay = this.d.overlay()
+    if (palette && this.d.live() && (!overlay?.open || overlay === palette)) palette.step(dir)
+  }
+
+  /** A key released: the switcher's modifier takes its row, and an overlay that tracks releases gets the key. */
   keyUp(e: KeyboardEvent): void {
     if (e.key === (MAC ? 'Meta' : 'Control')) this.d.palette()?.release()
+    const overlay = this.d.overlay()
+    if (overlay?.open) overlay.keyUp?.(keyInput(aliasKey(e).key, e.ctrlKey, e.shiftKey))
+  }
+
+  /** The soft keyboard has no key-up events, so a key is released SOFT_HOLD_MS after it is pressed. */
+  private softRelease(name: string, ctrl = false, shift = false): void {
+    const overlay = this.d.overlay()
+    if (!overlay?.open || !overlay.keyUp) return
+    setTimeout(() => { if (overlay.open) overlay.keyUp?.(keyInput(name, ctrl, shift)) }, SOFT_HOLD_MS)
   }
 
   /** Pasted text goes in as if typed. */
@@ -192,49 +237,71 @@ export class Keyboard {
   }
 
   /**
-   * The phone keyboard: a transparent textarea covering the canvas.
+   * The phone keyboard: a transparent textarea covering the canvas slot.
    *
    * iOS fires no keydown for ordinary characters, so beforeinput carries most
    * of them. The field is reset to a one-character sentinel after every event
    * so backspace always has something to delete and reports as a keypress.
+   *
+   * The field is the tap target itself: iOS raises the keyboard only for a
+   * focus inside a user gesture on the element, and ignores a programmatic
+   * focus on a transparent one. Focus is requested at wire time and after
+   * every blur anyway, which keeps the keyboard up on Android; on iOS it comes
+   * back on the next tap.
+   *
+   * `takeCtrl` answers whether the key bar's ^ is armed, and disarms it.
    */
-  wireSoftKeyboard(canvas: HTMLCanvasElement): void {
+  wireSoftKeyboard(slot: HTMLElement, takeCtrl: () => boolean = () => false): void {
     const field = document.createElement('textarea')
     field.setAttribute('autocapitalize', 'off')
     field.setAttribute('autocomplete', 'off')
     field.setAttribute('autocorrect', 'off')
     field.setAttribute('spellcheck', 'false')
+    field.setAttribute('aria-label', 'Terminal input')
+    // 16px: below that iOS zooms the page when the field takes focus.
     field.style.cssText =
-      'position:fixed;top:0;left:0;width:100%;height:100%;opacity:0;border:0;padding:0;' +
-      'background:transparent;color:transparent;caret-color:transparent;z-index:10;resize:none'
+      'position:absolute;inset:0;width:100%;height:100%;opacity:0;border:0;padding:0;margin:0;' +
+      'background:transparent;color:transparent;caret-color:transparent;resize:none;' +
+      'font-size:16px;touch-action:manipulation'
     field.value = SENTINEL
-    document.body.appendChild(field)
+    slot.appendChild(field)
 
     const reset = () => {
       field.value = SENTINEL
       field.setSelectionRange(1, 1)
     }
+    // preventScroll: a browser that scrolls the focused field into view would
+    // shift the whole fixed layout up by the keyboard height.
+    const focus = () => {
+      reset()
+      field.focus({ preventScroll: true })
+    }
 
-    canvas.addEventListener('pointerdown', () => {
-      this.pointer()
-      field.focus()
-    })
     field.addEventListener('pointerdown', () => this.pointer())
+    field.addEventListener('blur', () => setTimeout(focus, 0))
+    focus()
 
     field.addEventListener('keydown', e => {
+      // The CRT screen also listens for keydown on window. Without this a
+      // claimed key (Enter, Backspace, arrows) is handled twice, and a printable
+      // key is taken there and its beforeinput suppressed.
+      e.stopPropagation()
       const a = aliasKey(e)
       if (a === e && !softKeydownWanted(e)) return
       e.preventDefault()
       this.click(a)
       this.press(a.key, a.ctrlKey, a.shiftKey)
+      this.softRelease(a.key, a.ctrlKey, a.shiftKey)
     })
     field.addEventListener('beforeinput', e => {
       e.preventDefault()
       const r = softInputKeys(e.inputType, (e as InputEvent).data)
       if (r.kind === 'keys') {
         for (const k of r.keys) {
-          this.click({ key: k })
-          this.press(k)
+          const ctrl = k.length === 1 && takeCtrl()
+          this.click({ key: k, ctrlKey: ctrl })
+          this.press(k, ctrl)
+          this.softRelease(k, ctrl)
         }
       }
       reset()

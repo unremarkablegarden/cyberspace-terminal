@@ -261,6 +261,15 @@ export class Jobs {
     for (const fn of this.requestFns) fn()
   }
 
+  /**
+   * Queue a command line without stopping the foreground job. For a program
+   * that chooses what runs next and then exits: the shell takes the request
+   * when that job ends, instead of parking it as switchTo would.
+   */
+  launchAfter(line: string): void {
+    this.request = { launch: line }
+  }
+
   /** The queued request, cleared by reading. */
   take(): JobRequest | null {
     const r = this.request

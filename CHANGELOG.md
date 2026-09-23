@@ -67,7 +67,8 @@
 - Scrollback: line and screen paging, snap to bottom
 - `help` keys list
 - `$PWD`
-- Source split into modules; home seeded from `skel/home`
+- Source split into modules
+- Home seeded from `skel/home`
 - Pictures
     - Photographs in `circ`/`cmail`, halftoned
     - `/art` blocks
@@ -79,7 +80,8 @@
     - Dry-run (`T`), owned-copy marker
     - `publish` states its consequence up front
     - Program source scan before run
-- New build picked up on next visit, no force refresh; `reboot` takes a waiting build
+- New build picked up on next visit, no force refresh
+- `reboot` takes a waiting build
 
 ## v0.2.1
 
@@ -102,7 +104,8 @@
 - Cold boot waits for a keypress
 - Fixed per-character bleep/slowdown in user programs
 - Fixed lingering draw after program exit
-- `ctx.setBlipHz`; type bleeps on non-space only
+- `ctx.setBlipHz`
+- Type bleeps on non-space only
 
 ## v0.3
 
@@ -127,142 +130,161 @@
 ## v0.4
 
 - Editing
-    - Select text with Shift+arrows (Ctrl+Shift for words) on the command line, in `circ`/`cmail` compose, and in `edit`
-    - Copy, cut, paste the selection: Cmd+C/X/V on macOS, Ctrl+Shift+C/X and Ctrl/Cmd+V elsewhere
-    - User programs get the same in any field built on `ctx.tui.InputLine`
+    - Shift+arrows select, Ctrl+Shift by word: shell, `circ`/`cmail` compose, `edit`
+    - Copy, cut, paste: Cmd+C/X/V (macOS), Ctrl+Shift+C/X and Ctrl/Cmd+V (others)
+    - Available to user programs using `ctx.tui.InputLine`
 - Shell
-    - Tab completion is case-insensitive
-    - `edit` with no file opens an empty buffer; `^O` asks for the name
-    - `edit` inserts a tab on Tab, and is framed like `circ` and `cmail`
-    - `vim` (and `vi`): Vim 9 on wasm; `:w` writes to the machine, `~/.vimrc` honoured
-    - wasm programs get file access, keyboard wait with timeout, and non-spinning sleep
-    - `reset` (guest only, unlisted) wipes the machine on this browser after a y/N prompt
-    - `login` lands in `/home/<user>` with its own dotfiles and `~/bin`; `logout` returns to guest
-    - Fixed `^C` in a line-mode program sending the prompt to the top of the screen
+    - Case-insensitive tab completion
+    - `edit`: `^O` to save, Tab inserts a tab, framed like `circ`/`cmail`
+    - `vim`, `vi`: Vim 9 on wasm, `~/.vimrc`
+    - wasm programs: file access, keyboard wait with timeout, sleep
+    - `reset`: wipe the machine (guest only)
+    - `login` home at `/home/<user>`, own dotfiles and `~/bin`
+    - `logout` to guest
+    - Fixed `^C` in line-mode programs moving the prompt to the top
 - Boot
-    - The motd arrives a line at a time; program output still arrives by the character
-    - Keys typed during the boot are discarded
-    - Fixed a silent hang at boot with no OPFS
-    - A warm boot no longer plays the power-on flash
+    - motd paced by line
+    - Keys discarded during boot
+    - Fixed hang at boot without OPFS
+    - No power-on flash on warm boot
 - Login
-    - `login` opens a LOGIN box
-    - Dials in once the password is accepted (RINGING, CONNECT, node banner); `logout` hangs up (NO CARRIER)
-    - `~/public_html` appears only while a supporter is logged in
-- Display: the cursor stops blinking while keys are pressed
+    - LOGIN box
+    - Dial-in on login (RINGING, CONNECT), NO CARRIER on `logout`
+    - `~/public_html` only while a supporter is logged in
+- Cursor blink held while typing
 - Screensaver
-    - `screensaver`: eight savers, Space/Enter/Escape to preview, pick, quit
-    - The idle saver comes up after the `F1` timeout
+    - `screensaver`: eight savers
+    - Idle timeout in `F1`
 - iPad
-    - Runs the 80x25 layout
-    - § and Cmd+. act as Escape, Ctrl+Opt+1..9 as F1..F9
-    - Fixed `cat`, `less` and every write to `~` failing on Safari and iPad
-    - Fixed paste and Option-layer characters from an external keyboard
+    - 80x25 layout
+    - § and Cmd+. as Escape, Ctrl+Opt+1..9 as F1..F9
+    - Fixed writes to `~` on Safari and iPad
+    - Fixed paste and Option characters from external keyboards
 
 ## v0.5
 
-- Sync 
-    - Home directory syncs to Cloudflare R2
-    - End-to-end encrypted
-    - Automatic after login, every minute, and on `logout`, `shutdown`, `reboot`
-    - `sync`: run now, list what moved
-    - `sync reset`: discard the server copy
-    - Conflicts keep both files, the remote one as `name.1`
+- Sync
+    - Home directory synced to Cloudflare R2, end-to-end encrypted
+    - On login, every minute, on `logout`, `shutdown`, `reboot`
+    - `sync`, `sync reset`
+    - Conflicts kept as `name.1`
     - Edits win over deletes
-    - `~/.sync`: last agreed state, plain text
-    - Key wrapped under the login password; `Previous password:` prompt after a password change
-    - _Limited to Cyberspace supporters_
-        - Total 5 Mb
-        - Max 256 files
-        - Max 1 Mb file size
-- `download <file>` saves a file from the machine to this computer
-- Fixed `export` (bare `export` lists the environment; `export NAME` before the assignment now reaches programs)
+    - `~/.sync` state file
+    - Key wrapped under the login password
+    - Supporters only: 5 MB total, 256 files, 1 MB per file
+- `download <file>`
+- Fixed `export` (bare `export`, `export NAME` before assignment)
 - Deleted skel files stay deleted
-- Fixed a visit after a deploy booting the previous build until a hard refresh
-- New standby screen
-- New BIOS screen
-- A globe beside the nameplate on the motd
-- Fixed pictures rendering about a third too narrow (the face stretches the raster; chat, `view` and braille drawings all corrected)
+- Fixed stale build after deploy
+- Standby screen
+- BIOS screen
+- Globe on the motd
+- Fixed pictures a third too narrow
 
 ## v0.5.1
 
-- `globe`: Wireframe Earth with member pins
+- `globe`: wireframe Earth, user pins
 - Feed
-    - `feed`: full-screen feed reader
-    - Records listed in boxes; arrow keys select, Enter opens a post with its replies
-    - `R`: reply
-    - `W`: compose a post (title, topics, blog/NSFW/vent flags); `^S` saves it as a note
-    - `L`: copy a link from the post
-    - `B`: author profile
-    - `U`: author's posts; `feed @user` opens them directly
-    - `F`: find a member
-    - State management
-    - Profile pictures in the user card and bio
-- Config: PHOSPHOR `custom`, own hue/saturation/lightness
-- `edit`: opening screen revealed a line at a time
-- Added missing user program API image functions
-- Login box update
-- `circ`, `cmail`: bold usernames in the log and mailbox
-- `cmail`: conversations with deleted accounts are hidden
+    - `feed`: full-screen reader
+    - Arrows select, Enter opens post and replies
+    - `R` Reply
+    - `W` Compose (title, topics, blog/NSFW/vent)
+    - `^S` save as note
+    - `L` Copy link
+    - `B` Author profile
+    - `U` Author's posts
+    - `feed @user`
+    - `F` Find user
+    - Session resume
+    - Profile pictures
+- Config: PHOSPHOR `custom` (hue, saturation, lightness)
+- `edit`: opening screen paced by line
+- User program API: image functions
+- LOGIN box update
+- `circ`, `cmail`: bold usernames
+- `cmail`: deleted accounts hidden
 
 ## v0.5.2
 
 - `globe`
-    - User card actions
-        - `C` opens C-Mail with the user
-        - `F` follow or unfollow
-        - `P` poke
-- `globe`: zoom eases between steps
-- `cmail @user`, `globe @user` opens that user
-- User programs
-    - `ctx.run(name, argv)` hands the terminal to `cmail`, `circ`, `feed`, `globe`, `finger` or `browse`
+    - Zoom easing
+    - User card: `C` C-Mail, `F` Follow/Unfollow, `P` Poke
+- `cmail @user`, `globe @user`
+- User programs: `ctx.run(name, argv)` for `cmail`, `circ`, `feed`, `globe`, `finger`, `browse`
 
 ## v0.6
 
 - Jobs
-    - `^Z` backgrounds program and returns to the prompt
-    - `fg` brings it back
-    - `CMD-K` / `CTRL-K` switches between running programs
+    - `^Z` to background
+    - `fg`
+    - `CMD-K` / `CTRL-K` switch programs
     - `ps`, `kill`
-    - `exit` with stopped jobs asks twice
-- `~/public_html` takes .woff, .woff2, .r, .py and .csv
-- Fixed subscribers being refused `sync`, `~/public_html`
-- Fixed the login error for an unverified e-mail address
-- Fixed C-Mail from Globe
+    - `exit` confirms with stopped jobs
+- `~/public_html`: .woff, .woff2, .r, .py, .csv
+- Fixed `sync`, `~/public_html` refused for subscribers
+- Fixed login error for unverified e-mail
+- Fixed C-Mail from `globe`
 
 ## v0.6.1
 
 - `circ`
-    - `^U` picks a member in the online pane
-    - `↵` opens their card, `C` C-Mail with them
+    - `^U` select user in online pane
+    - `↵` Card, `C` C-Mail
 - `feed`
-    - `^S` posts a reply or an entry, `^N` saves a note; both ask first
-    - Unsent replies and entries are kept across a reload
-    - Fixed `^D` quitting bug and feed post key commands
+    - `^S` post reply or entry, `^N` save note, both with confirm
+    - Drafts kept across reload
+    - Fixed `^D` quit and post keys
 
 ## v0.6.2
 
-- Replaced `Ctrl+N` with `Ctrl+O` for saving notes (browser clash)
-- Shell: `Ctrl+Backspace` and `Alt+Backspace` delete the word before the cursor (`^W` closes the tab on Windows and Linux)
-- Docs, `browse` and `publish` name the three kinds of user program: JS program, pty program, wasm; nothing refers to the retired website terminal
+- `feed`: `^O` save note (was `^N`, browser clash)
+- Shell: `Ctrl+Backspace`, `Alt+Backspace` delete word (`^W` closes the tab on Windows and Linux)
+- Docs, `browse`, `publish`: three program kinds (JS, pty, wasm)
+- Website terminal references removed
 
 ## v0.7
 
-- Global Notifications banner
-    - F1 `NOTIFICATIONS` turns the notifications row and its tone off
+- Notifications
+    - Top-row banner for 6 s on a new notification or C-Mail
+    - `CMD-I` / `CTRL-I` to open, or `inbox` when clear
+    - F1 `NOTIFICATIONS` on/off
 - `inbox`
-    - Rows show what was written in a mention or a C-Mail; `P` previews any row, a reply or an entry drawn as `feed` draws it
-    - Follows the member's notification settings, mutes and blocks
-    - `←→` or `1`-`8` change tab, `U` unread only, `A` marks all read
-    - A new notification or C-Mail shows on the top row for 6 s; `CMD-I` / `CTRL-I` opens it, or the inbox when the row is clear
-    - `CMD-K` rows show unread counts; `login` and the motd print `You have C-Mail`
-- `feed -p <post> [reply]` opens one entry; `feed @user` and `circ <room>` reach a program that is already running
+    - `←→` or `1`-`8` tab, `P` Preview, `U` Unread, `A` Mark all read
+    - Honours notification settings, mutes, blocks
+- `CMD-K` unread counts
+- `You have C-Mail` in motd and on login
+- `feed -p <post> [reply]`
+- `feed @user`, `circ <room>` passed to a running instance
 - Fixed paste on Windows and Linux
 
+## v0.8
 
-## 0.7.1
-
+- Ported from the old /terminal
+    - `wardial`
+    - `sudo`
+    - `tree`
+    - `config` (the `F1` box)
+    - `doom` (with sound!)
+    - `fortune` (in the shell)
+- `circ` and `cmail`
+    - `/art` composer
+- Truncate long tags in `feed`
+- Updated docs
 - User programs (legacy JS)
-    - Fixed `not a program` for long programs (`export default` was only looked for in the first 4 KB)
-    - `localStorage` works: a store per program, kept in `~/.local/share/<name>.json`
-    - `ctx.tui` carries the whole widget kit (`drawLog`, `hangingWrap`, `drawList`, `Reveal`, the popups, `fold`, `drawBuffer`, `RASTERS`)
-    - `ctx.snd.degauss` and `postBeep`; other sound names are accepted and silent
+    - Most legacy user programs work again
+    - Fixed `not a program` for long programs
+    - Full `ctx.tui` widget kit
+    - `localStorage` per program, in `~/.local/share/<name>.json`
+    - `ctx.snd.degauss`, `postBeep`
+- Mobile
+    - Fixed layout
+    - Extra keys: `ESC`, `TAB`, arrows, `^` control keys, `F1`, `COPY`, `PASTE`, process switcher
+- `CMD-K` Process switcher
+    - `login` when logged out, login-only programs dimmed
+- `chmod`
+    - Octal, symbolic, `-R`
+    - Modes in `~` kept across reloads
+- `launch`
+    - Installed programs and `~/bin`, in a `CMD-K` style list
+- `help`: select, copy, cut and paste keys for the host OS, printed a line at a time
+- `$OSTYPE`

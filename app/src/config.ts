@@ -72,6 +72,8 @@ export const ENV = {
   PATH: pathOf(HOME),
   SHELL: '/bin/sh',
   TERM: 'xterm',
+  // bash's values. help(1) reads it to name the copy and paste chords.
+  OSTYPE: MAC ? 'darwin' : /Win/.test(navigator.platform) ? 'msys' : 'linux-gnu',
   COLUMNS: String(COLS),
   LINES: String(ROWS),
 }

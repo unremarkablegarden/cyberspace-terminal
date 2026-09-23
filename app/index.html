@@ -9,18 +9,56 @@
   <title>Cyberspace Terminal</title>
   <style>
     html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
-    /* No pointer over the tube. The fault report below keeps one. dvh, not vh:
-       on iOS Safari 100vh includes the strip under the toolbar, which cut the
-       bottom bezel off. */
-    #tube { width: 100vw; height: 100dvh; display: block; cursor: none; }
+    /* A column: the canvas slot, then the phone key bar. Fixed to the layout
+       viewport, not 100vh: on iOS Safari 100vh includes the strip under the
+       toolbar, which cut the bottom bezel off. */
+    #screen { position: fixed; inset: 0; display: flex; flex-direction: column; }
+    /* min-height: 0 lets the slot shrink below the canvas, so the key bar is
+       never pushed off the bottom of the screen. */
+    #slot { position: relative; flex: 1 1 auto; min-height: 0; }
+    /* No pointer over the tube. The fault report below keeps one. */
+    #tube { width: 100%; height: 100%; display: block; cursor: none; }
+    #keys { display: none; }
     #fault {
       display: none; color: #9f9; background: #000; font: 14px/1.5 monospace;
       padding: 2em; white-space: pre-wrap;
     }
+
+    /* Phone: the canvas is 4:3 at the top of the slot, so it stays in place when
+       the soft keyboard opens. When the slot is shorter than that, max-height
+       wins and the shader letterboxes the raster left and right. */
+    .phone #tube { height: auto; aspect-ratio: 4 / 3; max-height: 100%; }
+    /* --kbd is the soft keyboard height in px, set from visualViewport. */
+    .phone #keys {
+      display: flex; flex-direction: column; flex: 0 0 auto; gap: 4px; padding: 6px;
+      margin-bottom: max(var(--kbd, 0px), env(safe-area-inset-bottom, 0px));
+      touch-action: manipulation;
+    }
+    #keys .row { display: flex; gap: 4px; }
+    /* Big layout: two rows, arrows as an inverted T on the right. */
+    .phone #keys.big {
+      display: grid; grid-template-columns: 1fr 1fr 12px 1fr 1fr 1fr;
+      grid-template-areas: "esc tab . . up ." "mod jobs . left down right";
+    }
+    .cap {
+      flex: 1; min-width: 0; min-height: 44px; padding: 0;
+      border: 1px solid var(--cap-edge, #72470f); border-radius: 4px;
+      background: #000; color: var(--cap-fg, #c67b1b);
+      font: 12px/1 ui-monospace, monospace;
+      user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent;
+    }
+    /* Arrows and ^ sit small in their em box; 20px matches the ink of 12px ESC. */
+    .cap.glyph { font-size: 20px; }
+    /* U+005E sits at accent height; the padding moves it to the optical centre. */
+    .cap.mod { padding-top: 8px; }
+    .cap:active, .cap.mod.armed { background: var(--cap-fg, #c67b1b); color: #000; }
   </style>
 </head>
 <body>
-  <canvas id="tube"></canvas>
+  <div id="screen">
+    <div id="slot"><canvas id="tube"></canvas></div>
+    <div id="keys"></div>
+  </div>
   <pre id="fault"></pre>
   <script type="module" src="/src/main.ts"></script>
 </body>

@@ -157,6 +157,14 @@ const HINT = keyHint([
 ])
 const HINT_W = HINT.reduce((n, s) => n + cells(s.text), 0)
 
+/**
+ * Hints for the single-pane layout, used when both panes do not fit the grid
+ * (44 columns on a phone). One pane shows at a time, so Enter opens a setting
+ * and ‹ or ESC goes back to the list.
+ */
+const NARROW_HINT_LIST = keyHint([['⬆⬇', 'Move'], ['↵', 'Open'], ['ESC', 'Close']])
+const NARROW_HINT_VALUES = keyHint([['‹', 'Back'], ['⬆⬇', 'Move'], ['↵', 'Set']])
+
 /** Which pane the arrows are moving in. */
 const LEFT = 0, RIGHT = 1
 
@@ -170,6 +178,8 @@ interface Geometry {
   splitX: number
   /** Rows available inside the frame. */
   rows: number
+  /** One pane at a time, full width, because both do not fit. */
+  narrow: boolean
 }
 
 export class SettingsScreen implements Screen {
@@ -191,6 +201,8 @@ export class SettingsScreen implements Screen {
    * face.
    */
   private term: Grid | null = null
+  /** From the last draw. Escape in the value pane goes back rather than closing. */
+  private narrow = false
 
   constructor(private opts: SettingsOptions) {
     this.syncValue()
@@ -233,6 +245,12 @@ export class SettingsScreen implements Screen {
 
   onKey(e: KeyInput): boolean {
     if (e.metaKey || e.altKey) return false
+
+    if (e.key === 'Escape' && this.narrow && this.pane === RIGHT) {
+      this.pane = LEFT
+      this.opts.onFeedback?.('pane', e)
+      return true
+    }
 
     if (e.key === 'Escape' || (e.ctrlKey && (e.key === 'c' || e.key === 'C'))) {
       this.opts.onFeedback?.('cancel', e)
@@ -413,6 +431,21 @@ export class SettingsScreen implements Screen {
     const grow = need - (leftW + rightW + 3)
     if (grow > 0) rightW += grow
 
+    const tallest = settings.reduce(
+      (n, s) => Math.max(n, s.children?.length ?? s.values.length), 0
+    )
+    const h = Math.min(
+      Math.max(3, b.h),
+      Math.min(MAX_ROWS, Math.max(settings.length, tallest)) + 2
+    )
+
+    // Both panes plus three rules do not fit: show one pane at the full width.
+    if (leftW + rightW + 3 > b.w) {
+      const box: Rect = { x: b.x, y: b.y + Math.floor((b.h - h) / 2), w: b.w, h }
+      const inner = b.w - 2
+      return { box, leftW: inner, rightW: inner, splitX: box.x + 1 + inner, rows: h - 2, narrow: true }
+    }
+
     const w = Math.min(b.w, leftW + rightW + 3)
     // Reclaim any excess width from the value column first, since the left pane
     // carries two items per row.
@@ -423,21 +456,13 @@ export class SettingsScreen implements Screen {
       leftW -= over - off
     }
 
-    const tallest = settings.reduce(
-      (n, s) => Math.max(n, s.children?.length ?? s.values.length), 0
-    )
-    const h = Math.min(
-      Math.max(3, b.h),
-      Math.min(MAX_ROWS, Math.max(settings.length, tallest)) + 2
-    )
-
     const box: Rect = {
       x: b.x + Math.floor((b.w - w) / 2),
       y: b.y + Math.floor((b.h - h) / 2),
       w,
       h,
     }
-    return { box, leftW, rightW, splitX: box.x + 1 + leftW, rows: box.h - 2 }
+    return { box, leftW, rightW, splitX: box.x + 1 + leftW, rows: box.h - 2, narrow: false }
   }
 
   /** Keep the cursor visible when a column is taller than the box. */
@@ -471,8 +496,9 @@ export class SettingsScreen implements Screen {
 
   draw(term: Grid) {
     this.term = term
-    const { box, leftW, rightW, splitX, rows } = this.geometry(term)
+    const { box, leftW, rightW, splitX, rows, narrow } = this.geometry(term)
     const settings = this.opts.settings
+    this.narrow = narrow
 
     // Clear the whole box, borders included, before framing it: box drawing
     // merges line bits with the existing cell, so a border over a rule of the
@@ -483,19 +509,22 @@ export class SettingsScreen implements Screen {
     frame(term, box)
     // Merges into the top and bottom rules as junctions automatically, which is
     // why box.ts stores lines as direction bits.
-    vline(term, splitX, box.y, box.y + box.h - 1)
+    if (!narrow) vline(term, splitX, box.y, box.y + box.h - 1)
 
     // BRIGHT | BOLD, matching every other title: the five popups in tui/ and
-    // circ's room name.
-    label(term, box, TITLE, { attr: BRIGHT | BOLD })
-    label(term, box, HINT, { edge: 'bottom', align: 'right' })
+    // circ's room name. In the single-pane layout the value pane is titled
+    // with its setting, since the list naming it is not on screen.
+    const values = narrow && this.pane === RIGHT
+    label(term, box, values ? settings[this.row]?.label ?? TITLE : TITLE, { attr: BRIGHT | BOLD })
+    const hint = !narrow ? HINT : values ? NARROW_HINT_VALUES : NARROW_HINT_LIST
+    label(term, box, hint, { edge: 'bottom', align: 'right' })
 
     const top = box.y + 1
     const labelW = settings.reduce((n, s) => Math.max(n, cells(s.label)), 0)
 
     // Left pane: every setting, and what it is on.
     const firstRow = this.window(this.row, settings.length, rows)
-    for (let i = 0; i < rows; i++) {
+    for (let i = 0; i < (values ? 0 : rows); i++) {
       const setting = settings[firstRow + i]
       if (!setting) break
       const on = firstRow + i === this.row
@@ -524,7 +553,8 @@ export class SettingsScreen implements Screen {
       : setting?.values ?? []
 
     const firstValue = this.window(this.value, rightRows.length, rows)
-    for (let i = 0; i < rows; i++) {
+    const valueX = narrow ? box.x + 1 : splitX + 1
+    for (let i = 0; i < (narrow && !values ? 0 : rows); i++) {
       const value = rightRows[firstValue + i]
       if (value === undefined) break
       const on = firstValue + i === this.value
@@ -535,7 +565,7 @@ export class SettingsScreen implements Screen {
       // opens further.
       const opens = !children && setting?.tune?.(setting.values[firstValue + i] ?? '')
       term.text(
-        splitX + 1, top + i,
+        valueX, top + i,
         (opens ? text.padEnd(rightW - 1) + '›' : text).padEnd(rightW).slice(0, rightW),
         on ? this.barAttr(RIGHT) : NORMAL,
         on ? 1 : 0

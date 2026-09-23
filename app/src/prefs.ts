@@ -5,6 +5,7 @@ import { PRESETS } from '@cyberspace/crt/config'
 import { DEFAULT_KEY_PACK } from '@cyberspace/crt/keypacks'
 import { SAVER_NAMES, type ScreensaverPrefs } from '@cyberspace/crt/saverdefs'
 import { store } from './store'
+import { MOBILE } from './config'
 
 /** Per-channel volumes, 0 to 1, and the name of the key-sound pack. */
 export interface Audio { background: number; keys: number; beeps: number; pack: string }
@@ -57,8 +58,16 @@ export function writeUserParams(params: Record<string, number>): void {
 export function screenParams(): Record<string, number> {
   const preset = store.get('screen', 'sharp')
   if (preset === USER_PRESET) return userParams()
-  return (PRESETS[preset as keyof typeof PRESETS] ?? PRESETS.sharp) as Record<string, number>
+  const params = (PRESETS[preset as keyof typeof PRESETS] ?? PRESETS.sharp) as Record<string, number>
+  return MOBILE ? { ...params, fill: MOBILE_FILL } : params
 }
+
+/**
+ * Raster size within the canvas on a phone, for the built-in presets. The
+ * presets' 0.84-0.89 leaves a black margin a phone cannot spare. The user
+ * preset keeps its own fill.
+ */
+const MOBILE_FILL = 0.95
 
 /** Phosphor name for the member's own tint, as opposed to a built-in one. */
 export const CUSTOM_PHOSPHOR = 'custom'

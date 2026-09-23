@@ -3,10 +3,11 @@
 // workers only. The main thread posts a path (relative to the OPFS root; Safari
 // cannot structured-clone a handle) and gets the resulting size back.
 
-export type OpfsWrite = { id: number; path: string; buffer: Uint8Array; offset: number }
+/** `truncate` cuts the file at the end of this write, for callers that replace the whole file. */
+export type OpfsWrite = { id: number; path: string; buffer: Uint8Array; offset: number; truncate?: boolean }
 export type OpfsWrote = { id: number; size?: number; error?: string }
 
-type SyncHandle = { write(b: Uint8Array, o: { at: number }): number; flush(): void; getSize(): number; close(): void }
+type SyncHandle = { write(b: Uint8Array, o: { at: number }): number; truncate(size: number): void; flush(): void; getSize(): number; close(): void }
 type SyncFileHandle = FileSystemFileHandle & { createSyncAccessHandle(): Promise<SyncHandle> }
 
 async function resolve(path: string): Promise<SyncFileHandle> {
@@ -18,11 +19,12 @@ async function resolve(path: string): Promise<SyncFileHandle> {
 }
 
 self.onmessage = async (e: MessageEvent<OpfsWrite>) => {
-  const { id, path, buffer, offset } = e.data
+  const { id, path, buffer, offset, truncate } = e.data
   try {
     const access = await (await resolve(path)).createSyncAccessHandle()
     try {
       access.write(buffer, { at: offset })
+      if (truncate) access.truncate(offset + buffer.byteLength)
       access.flush()
       const size = access.getSize()
       postMessage({ id, size } satisfies OpfsWrote)

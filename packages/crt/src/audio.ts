@@ -258,6 +258,12 @@ export class Sound {
     return this.levels[name]
   }
 
+  /** A running context and the bus for `name`, for a program that plays its own samples (doom). Null while sound is off or locked. */
+  output(name: SoundChannel): { ctx: AudioContext; node: AudioNode } | null {
+    const ctx = this.live
+    return ctx && this.bus ? { ctx, node: this.bus[name] } : null
+  }
+
   setChannel(name: SoundChannel, level: number | boolean): number {
     const value = typeof level === 'boolean' ? (level ? 1 : 0)
       : Number.isFinite(level) ? Math.min(1, Math.max(0, level)) : 0

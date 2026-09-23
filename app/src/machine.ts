@@ -7,7 +7,7 @@ import { coreutils } from '@cyberspace/coreutils'
 import { shellMain } from '@cyberspace/shell'
 import {
   type ApiClient, circProgram, cmailProgram, feedProgram, globeProgram, cyberspacePrograms, registryPrograms,
-  mountPages, umountPages, syncHome, syncedPaths, syncProgram, InboxService, inboxProgram,
+  mountPages, umountPages, syncHome, syncedPaths, syncProgram, InboxService, inboxProgram, wardialProgram,
   type CsHooks, type DraftStore, type HomeKey,
 } from '@cyberspace/apps'
 import { jsFileHandler } from '@cyberspace/compat'
@@ -34,6 +34,12 @@ export interface HostPrograms {
   reset: Program
   /** The saver picker. Lives on the faceplate: it draws on the CRT grid, not the pty. */
   screensaver: Program
+  /** Writes the CRT framebuffer directly and needs key releases, so it lives on the faceplate. */
+  doom: Program
+  /** Opens the F1 config box, which draws on the CRT grid. */
+  config: Program
+  /** The program list, drawn on the CRT grid like the CMD-K switcher. */
+  launch: Program
 }
 
 export interface MachineDeps {
@@ -71,6 +77,9 @@ function registerPrograms(kernel: Kernel, { api, homeKey, snd, host, pictures, f
   kernel.register('reboot', host.reboot)
   kernel.register('reset', host.reset)
   kernel.register('screensaver', host.screensaver)
+  kernel.register('doom', host.doom)
+  kernel.register('config', host.config)
+  kernel.register('launch', host.launch)
   // Registered after coreutils so the network whoami, which reports the logged-in
   // user, replaces the local one.
   // The chat screens request sounds through this; they hold no audio bus themselves.
@@ -85,6 +94,7 @@ function registerPrograms(kernel: Kernel, { api, homeKey, snd, host, pictures, f
   kernel.register('cmail', cmailProgram(api, RTDB_URL, chatSnd, pictures))
   kernel.register('feed', feedProgram(api, chatSnd, pictures, drafts))
   kernel.register('inbox', inboxProgram(api, chatSnd, () => inbox))
+  kernel.register('wardial', wardialProgram(chatSnd))
   if (face && pictures) {
     const world = () => fetch('/world.bin').then(r => {
       if (!r.ok) throw new Error(String(r.status))

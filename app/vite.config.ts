@@ -48,6 +48,8 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,bdf,wasm,wav,mp3,png,bin}'],
+        // 4.5 MB, fetched only when `doom` runs. Over the size cap anyway; listed so the build does not warn.
+        globIgnores: ['doom/**'],
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
         navigateFallback: null,
         runtimeCaching: [{

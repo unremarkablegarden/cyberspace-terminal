@@ -224,6 +224,8 @@ export class ConfigBox {
   private overlay: SettingsOverlay
   /** RENDER.cursor as it was before the box opened, restored on close. */
   private cursorWas = true
+  /** Resolvers for closed(), run on release. */
+  private waiting: (() => void)[] = []
 
   /** `onFont` runs after a font change lands: pictures rasterised for the old cell size need redoing. */
   constructor(screen: CrtScreen, snd: Sound, onFont?: () => void) {
@@ -258,6 +260,12 @@ export class ConfigBox {
     if (!this.overlay.open) this.release()
   }
 
+  /** Resolves when the box next closes, or at once when it is not open. */
+  closed(): Promise<void> {
+    if (!this.overlay.open) return Promise.resolve()
+    return new Promise(res => this.waiting.push(res))
+  }
+
   /** Whether the box plays its own sound for this key, so the host skips the key click. */
   silentKey(k: KeyInput): boolean {
     return this.overlay.silentKey(k)
@@ -266,6 +274,7 @@ export class ConfigBox {
   private release(): void {
     grid.unlock()
     RENDER.cursor = this.cursorWas
+    for (const res of this.waiting.splice(0)) res()
   }
 }
 

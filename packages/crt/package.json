@@ -1,6 +1,6 @@
 {
   "name": "@cyberspace/crt",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "WebGL2 CRT with a text grid behind it.",
   "type": "module",
   "exports": {
@@ -20,7 +20,8 @@
     "./keypacks": "./src/keypacks.ts",
     "./controls": "./src/controls.ts",
     "./saver": "./src/saver.ts",
-    "./saverdefs": "./src/saverdefs.ts"
+    "./saverdefs": "./src/saverdefs.ts",
+    "./doom": "./src/doom.ts"
   },
   "dependencies": {
     "@cyberspace/tui": "workspace:*"

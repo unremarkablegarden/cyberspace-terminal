@@ -19,6 +19,9 @@ TODO.md
 tools/vim/vim/
 tools/wasi-sdk/
 tools/vim/build/
+tools/doom/doom.wasm/
+tools/doom/build/
+tools/binaryen/
 
 VERBOSE_CHANGELOG.md
 

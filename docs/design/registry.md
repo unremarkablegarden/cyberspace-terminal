@@ -1,7 +1,5 @@
 # The program registry
 
-Where a published program lives and what the record says.
-
 ## Two stores, one record
 
 | | Holds | Why there |

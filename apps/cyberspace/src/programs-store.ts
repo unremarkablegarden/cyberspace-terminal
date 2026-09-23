@@ -226,11 +226,9 @@ export class ProgramStore {
       const wasm = isWasm(bytes)
       // A binary has no description to read, so the registry's is all there is.
       const source = wasm ? '' : dec.decode(bytes)
-      // What the file IS decides whether it can be published, not its mode.
-      // OPFS keeps no permissions: @zenfs/dom rebuilds the index at 0o644 on
-      // every reload, so an execute bit here survives one session at most. The
-      // test that holds is the one the kernel applies before running a file: a
-      // wasm module, or a module with a default export.
+      // What the file is decides whether it can be published, not its mode.
+      // The kernel runs a file by content and never checks the execute bit, so
+      // the test here is the kernel's: a wasm module, or a module with a default export.
       const runtime = wasm ? 'wasm' : classify(source)
       if (!runtime) continue
       const r = byName.get(name)

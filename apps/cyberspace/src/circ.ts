@@ -15,7 +15,7 @@ import { dec, type Proc, type Program } from '@cyberspace/kernel'
 import {
   Surface, ScreenStack, InputLine, Reveal, drawLog, drawList, parseKeys,
   frame, hline, vline, label, cells, clear, ground, plain,
-  ConfirmPopup, SelectPopup, TextPopup, YES_NO,
+  ConfirmPopup, EditorPopup, SelectPopup, TextPopup, YES_NO,
   NORMAL, BRIGHT, BOLD, DIM,
   type LogLine, type Span, type Rect, type KeyInput, type Screen,
 } from '@cyberspace/tui'
@@ -78,12 +78,13 @@ const GAP = 2
 
 /** Commands this program handles itself; the server resolves the rest. */
 const LOCAL: LocalCommand[] = [
+  { name: 'art', usage: '/art', summary: 'post a block of ASCII art' },
   { name: 'rooms', usage: '/rooms', summary: 'list them' },
   { name: 'who', usage: '/who', summary: 'who is here' },
   { name: 'quit', usage: '/quit', summary: 'leave cIRC' },
 ]
 /** Every dispatched name, aliases included. Tab and the help box show only LOCAL. */
-const LOCAL_NAMES = ['rooms', 'who', 'quit', 'exit']
+const LOCAL_NAMES = ['art', 'rooms', 'who', 'quit', 'exit']
 const SLASH = slashNames('chat', LOCAL)
 
 /**
@@ -123,6 +124,15 @@ function legend(groups: Span[][], budget: number): Span[] {
 }
 
 const HELP = helpLines('chat', LOCAL)
+
+/** The server's /art limits, in columns and lines. */
+const ART_COLS = 80
+const ART_ROWS = 25
+/**
+ * The server takes 16384 base64 characters, which is 12288 bytes of UTF-8.
+ * maxLength counts characters, so art with multi-byte glyphs can still be refused.
+ */
+const ART_MAX = 12_288
 
 /** Bump when ChatState changes. A mismatch discards the draft and nothing else. */
 const STATE_VERSION = 1
@@ -805,6 +815,33 @@ export function circProgram(
       open(new TextPopup({ title: 'COMMANDS', lines: HELP, onDone: () => close(), shadow: true }))
     }
 
+    /** The /art composer. The server checks the size again and rejects with a 400, shown by send(). */
+    const openArt = (): void => {
+      if (!room) return
+      open(new EditorPopup({
+        title: 'ART',
+        note: `#${room.slug.toUpperCase()}`,
+        hint: '^D Post  ESC Cancel',
+        confirm: 'Sure? Y/N',
+        wrap: false,
+        keepIndent: true,
+        width: Math.min(ART_COLS, cols - 6),
+        rows: Math.min(ART_ROWS, splitY - 2),
+        maxLength: ART_MAX,
+        bounds: { x: 0, y: 0, w: cols, h: splitY },
+        shadow: true,
+        onFeedback: (kind) => {
+          if (kind === 'reject' || kind === 'edge') snd.beep(220, 0.04)
+          else if (kind === 'submit') snd.blip(660, 0.06, 0)
+          else if (kind === 'cancel') snd.blip(420, 0.09, 0)
+        },
+        onDone: (text) => {
+          close()
+          if (text) void send('/art\n' + text)
+        },
+      }))
+    }
+
     // --- the pane's selection -------------------------------------------------
 
     const pickIndex = (): number => users.findIndex(u => u.username === picking)
@@ -1061,6 +1098,7 @@ export function circProgram(
       if (route && 'local' in route) {
         switch (route.local) {
           case 'quit': case 'exit': running = false; return
+          case 'art': openArt(); return
           case 'rooms': void openRooms(); return
           case 'who':
             if (narrow) openWho()

@@ -41,6 +41,16 @@ affects entries loaded at mount — i.e. after a reload.
 Unfixed upstream as of `@zenfs/dom` 1.2.11. Drop `app/src/opfs.ts` and mount
 `WebAccess` directly once `_loadMetadata` assigns inodes.
 
+## Modes on the OPFS mount
+
+OPFS stores no permissions. `WebAccessFS._loadMetadata` gives every file 0644 and every directory 0777 at mount, so a `chmod` or a `writeFile(..., { mode: 0o755 })` would otherwise last one session.
+
+`app/src/opfs.ts` keeps the modes that differ from those defaults in `/.modes` at the OPFS root (`/home/.modes` in the VFS). It is a JSON object of index path to permission bits. The file is removed from the ZenFS index at mount, so it is not listed and home sync does not see it.
+
+At mount the stored modes are applied to the index. After `touch`, `createFile`, `mkdir`, `rename`, `unlink` or `rmdir`, the whole index is rescanned and the file rewritten, debounced 500 ms and skipped when unchanged. A rescan needs no rename or delete bookkeeping; entries for missing paths drop out on the next write. On WebKit the rewrite goes through `opfs.worker.ts` with `truncate` set.
+
+Nothing gates execution on the mode: the kernel runs a file by content. The mode shows in `ls -l` and decides the extension `download` gives a file with none.
+
 ## Sync semantics over OPFS (measured, ZenFS core 2.6.3 / dom 1.2.10)
 
 WebAccess is an async backend behind ZenFS's async mixin, which keeps an

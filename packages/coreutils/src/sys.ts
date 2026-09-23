@@ -1,7 +1,6 @@
-// System tools: date uname whoami hostname env which clear sleep true false help.
+// System tools: date uname whoami hostname env which clear sleep true false motd.
 
 import { readText, writeLines, type Program } from '@cyberspace/kernel'
-import { builtinNames } from '@cyberspace/shell'
 import { fsp } from './util.js'
 
 export const date: Program = p => {
@@ -64,44 +63,6 @@ export const sleep: Program = async p => {
 
 export const trueCmd: Program = () => 0
 export const falseCmd: Program = () => 1
-
-/**
- * The plumbing, listed under Shell rather than among the programs somebody came
- * here to run. Membership is by name, so a program registered later is listed
- * as a program without being named anywhere.
- */
-const SHELL = new Set([
-  'cat', 'clear', 'cp', 'date', 'echo', 'env', 'false', 'fg', 'grep', 'head', 'hostname',
-  'kill', 'less', 'ls', 'mkdir', 'motd', 'mv', 'ps', 'reboot', 'rm', 'rmdir', 'sh', 'sleep',
-  'sort', 'tail', 'touch', 'true', 'uname', 'uniq', 'wc', 'which', 'whoami',
-])
-
-/** Not listed: help is what is being read, nano and more are aliases, reset is guest-only. */
-const HIDDEN = new Set(['help', 'nano', 'more', 'reset'])
-
-/** Names in rows, padded to the longest, filling the width of the terminal. */
-function columns(out: (s: string) => void, names: string[], cols: number): void {
-  const w = Math.max(...names.map(n => n.length)) + 2
-  const per = Math.max(1, Math.floor((cols - 2) / w))
-  for (let i = 0; i < names.length; i += per) {
-    out('  ' + names.slice(i, i + per).map(s => s.padEnd(w)).join('').trimEnd() + '\n')
-  }
-}
-
-export const help: Program = async p => {
-  const cols = p.tty?.cols ?? 80
-  const names = p.kernel.names().filter(n => !HIDDEN.has(n))
-  // builtinNames() rather than a list here, so the two cannot drift.
-  const shell = [...names.filter(n => SHELL.has(n)), ...builtinNames()].sort()
-
-  p.out('Programs:\n')
-  columns(s => p.out(s), names.filter(n => !SHELL.has(n)), cols)
-  p.out('Shell:\n')
-  columns(s => p.out(s), shell, cols)
-  p.out('Own programs:\n  cd bin/docs then less README.txt\n')
-  p.out('Keys:\n  [UP/DOWN] recall\n  [TAB] complete\n  [CTRL-SHIFT-UP/DOWN] and [SHIFT-PGUP/PGDN] scroll\n')
-  return 0
-}
 
 export const motd: Program = async p => {
   try {

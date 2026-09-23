@@ -163,7 +163,8 @@ interface Card {
   replyId?: string
   when: string
   footLeft?: string
-  footRight?: string
+  /** Topics, fitted to the bottom rule at draw time. */
+  tags?: string[]
   lines: Line[]
   /** Picture source, drawn under the text when the host has rasterised it. */
   image?: string
@@ -312,6 +313,40 @@ function counts(entry: FeedEntry): string {
   if (entry.replies) parts.push(`${entry.replies}R`)
   if (entry.bookmarks) parts.push(`${entry.bookmarks}B`)
   return parts.join(' ')
+}
+
+function tagParts(entry: FeedEntry): string[] {
+  const parts = entry.topics.map(t => `#${t}`)
+  if (entry.nsfw) parts.unshift('NSFW')
+  return parts
+}
+
+/**
+ * Cells left for the tag label on a bottom rule that also carries `left`.
+ * Each label is inset 2 from its corner and padded by a blank either side;
+ * one rule cell is kept between the two labels.
+ */
+function footRoom(r: Rect, left: string): number {
+  const used = left ? cells(left) + 2 : 0
+  return Math.max(0, r.w - 4 - used - 2 - 1)
+}
+
+/**
+ * Whole tags from the front while they fit in `room` cells, then MORE.
+ * A first tag wider than `room` on its own is cut and ends in MORE.
+ */
+function fitTags(parts: string[], room: number): string {
+  const all = parts.join(' ')
+  if (cells(all) <= room) return all
+  if (room <= MORE.length) return ''
+  let out = ''
+  for (const part of parts) {
+    const next = out ? `${out} ${part}` : part
+    if (cells(next) + 1 + MORE.length > room) break
+    out = next
+  }
+  if (out) return `${out} ${MORE}`
+  return [...parts[0]!].slice(0, room - MORE.length).join('').trimEnd() + MORE
 }
 
 /** The program-wide pieces a screen shares with its children. */
@@ -923,7 +958,7 @@ class FeedScreen implements Screen {
       username: entry.username,
       when: when(entry.at),
       footLeft: counts(entry),
-      footRight: this.tags(entry) || undefined,
+      tags: tagParts(entry),
       lines: [...head, ...paras(entry.body)],
       image: this.drawable(entry.image),
       links: bodyLinks(entry.body),
@@ -1199,15 +1234,10 @@ class FeedScreen implements Screen {
 
   /** Counts on the left, fixed width; topics on the right, ragged. */
   private drawFoot(term: Grid, r: Rect, entry: FeedEntry, clip: Rect): void {
-    label(term, r, counts(entry), { edge: 'bottom', clip })
-    const tags = this.tags(entry)
+    const left = counts(entry)
+    label(term, r, left, { edge: 'bottom', clip })
+    const tags = fitTags(tagParts(entry), footRoom(r, left))
     if (tags) label(term, r, tags, { edge: 'bottom', align: 'right', clip })
-  }
-
-  private tags(entry: FeedEntry): string {
-    const parts = entry.topics.map(t => `#${t}`)
-    if (entry.nsfw) parts.unshift('NSFW')
-    return parts.join(' ')
   }
 
   /** The open entry: the post and its replies as a scrolling column of boxes. */
@@ -1243,7 +1273,8 @@ class FeedScreen implements Screen {
     }
     label(term, r, card.when, { align: 'right', clip })
     if (card.footLeft) label(term, r, card.footLeft, { edge: 'bottom', clip })
-    if (card.footRight) label(term, r, card.footRight, { edge: 'bottom', align: 'right', clip })
+    const tags = card.tags && fitTags(card.tags, footRoom(r, card.footLeft ?? ''))
+    if (tags) label(term, r, tags, { edge: 'bottom', align: 'right', clip })
 
     for (let i = 0; i < card.lines.length; i++) {
       const y = inner.y + i

@@ -1,0 +1,24 @@
+diff --git a/doomgeneric/src/i_sound.c b/doomgeneric/src/i_sound.c
+index c113e1b..b903479 100644
+--- a/doomgeneric/src/i_sound.c
++++ b/doomgeneric/src/i_sound.c
+@@ -64,6 +64,9 @@ extern void I_InitTimidityConfig(void);
+ extern sound_module_t *DG_sound_module;
+ extern music_module_t *DG_music_module;
+ #endif
++#ifdef FEATURE_WASM_SOUND
++extern sound_module_t wasm_sound_module;
++#endif
+ extern sound_module_t sound_pcsound_module;
+ extern music_module_t music_opl_module;
+ 
+@@ -89,6 +92,9 @@ static int snd_mport = 0;
+ static sound_module_t *sound_modules[] = {
+ #ifdef FEATURE_SOUND
+     &DG_sound_module,
++#endif
++#ifdef FEATURE_WASM_SOUND
++    &wasm_sound_module,
+ #endif
+     NULL,
+ };

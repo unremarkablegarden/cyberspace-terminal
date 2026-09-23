@@ -1,6 +1,6 @@
 {
   "name": "@cyberspace/tui",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Full-screen program toolkit: ANSI surface, key parser, text buffer.",
   "type": "module",
   "exports": {

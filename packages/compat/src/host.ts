@@ -8,6 +8,7 @@
 // empty stack returns to line mode.
 
 import { dec, type Proc } from '@cyberspace/kernel'
+import { randomFortune } from '@cyberspace/coreutils/fortune'
 import {
   Surface, parseKeys, InputLine, TextBuffer, fitImage, halftone as rasterise, distinctCells,
   type KeyInput, type InputOptions, type BufferOptions, type CellMetrics, type Luma, type Rect,
@@ -432,7 +433,7 @@ export function runGridProgram(deps: CompatDeps): (p: Proc, program: UserProgram
       get username() { return deps.username?.() ?? p.env.USER ?? 'guest' },
       version: deps.version ?? '0.1',
       root: false,
-      fortune: () => 'No fortunes.',
+      fortune: randomFortune,
 
       get cwd() { return p.cwd },
       setCwd: () => {},

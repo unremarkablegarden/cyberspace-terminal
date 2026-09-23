@@ -24,7 +24,7 @@ import {
   type LogLine, type Span, type Rect, type KeyInput, type Screen,
 } from '@cyberspace/tui'
 import { ApiClient, ApiError } from './api.js'
-import { bodyOf, followList, hasStyle, type MsgBody } from './chatui.js'
+import { artLines, bodyOf, followList, hasStyle, type MsgBody } from './chatui.js'
 import {
   BLIP_HZ, Blinker, SILENT, Typewriter, entryLines, entryParts, hhmm,
   printing, systemLines, type ChatMessage, type ChatPictureHost, type ChatSound,
@@ -318,11 +318,12 @@ export function cmailProgram(
       username: m.senderUsername,
       timestamp: m.timestamp,
       // A picture the box is about to draw is not also named in the text.
-      content: bodyOf(m, { image: drawsPicture(m.imageUrl) }),
+      content: bodyOf(m, { image: drawsPicture(m.imageUrl), art: true }),
       action: m.isAction,
       deleted: m.deleted,
       blink: hasStyle(m.style, 'blink'),
       imageUrl: m.imageUrl,
+      art: artLines(m),
     })
 
     // A message types out its body only; the clock is drawn in the box rule
@@ -440,6 +441,12 @@ export function cmailProgram(
               attr: e.m.deleted ? DIM : NORMAL,
               spans: edges,
             })
+          }
+          // Art rows are cut to the box, never wrapped: a wrapped row breaks the drawing.
+          if (e.reveal === Infinity && !blank) {
+            for (const line of e.m.art ?? []) {
+              out.push({ text: pad + '│ ' + line.slice(0, inner).padEnd(inner) + ' │', attr: NORMAL, spans: edges })
+            }
           }
           // The picture is drawn inside the turn, below the text. DIM rather than
           // NORMAL: it matches both the exposure the rasteriser used and the

@@ -56,6 +56,8 @@ export interface EditorOptions {
   width?: number
   /** Fold long lines to the width. Default on. */
   wrap?: boolean
+  /** Remove only blank lines and trailing whitespace on hand-over, keeping the first line's indent. For ASCII art. */
+  keepIndent?: boolean
   /** Where the caret opens in `initial`. Default 'start'. */
   caret?: 'start' | 'end'
 }
@@ -87,7 +89,8 @@ export class EditorPopup implements Screen {
 
   /** The text as it would be handed over: outer whitespace removed. */
   private finished(): string {
-    return this.buf.text.trim()
+    const text = this.buf.text
+    return this.opts.keepIndent ? text.replace(/^(?:[ \t]*\n)+/, '').trimEnd() : text.trim()
   }
 
   /** Whether the buffer differs from what was last saved. */

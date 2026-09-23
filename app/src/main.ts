@@ -24,11 +24,14 @@ import { bootMachine } from './machine'
 import { writeMotd } from './motd'
 import { ConfigBox, restoreSettings } from './settings'
 import { Screensaver } from './saver'
+import { Doom } from './doom'
 import { JobPalette } from './palette'
+import { Launcher, launchables } from './launcher'
 import { NoticeBar } from './bar'
 import { saverPrefs } from './prefs'
 import { Scrollback } from './scrollback'
 import { Keyboard } from './input'
+import { KeyBar } from './keybar'
 import { parseSession, runSession, SESSION_VERSION, type TerminalSession } from './session'
 import { armUpdates, rebootOnto, updateWaiting } from './update'
 
@@ -160,7 +163,9 @@ let standbyAbort: AbortController | null = null
 let screen: CrtScreen
 let config: ConfigBox | null = null
 let saver: Screensaver | null = null
+let doom: Doom | null = null
 let palette: JobPalette | null = null
+let launcher: Launcher | null = null
 /** The notification service, once the kernel has made it. */
 let inbox: InboxService | null = null
 const bar = new NoticeBar(
@@ -204,7 +209,7 @@ const keyboard = new Keyboard({
   config: () => config,
   palette: () => palette,
   inbox: openInbox,
-  overlay: () => (config?.open ? config : saver?.open ? saver : palette?.open ? palette : null),
+  overlay: () => (config?.open ? config : doom?.open ? doom : saver?.open ? saver : palette?.open ? palette : launcher?.open ? launcher : null),
   activity: () => { lastActive = Date.now() },
   skipBoot: () => {
     if (!bootAbort) return false
@@ -286,6 +291,27 @@ async function resetProgram(p: Proc): Promise<number> {
   for (const c of await caches.keys()) await caches.delete(c)
   await withGrid(() => implode(screen.term, snd))
   location.reload()
+  return 0
+}
+
+/** config(1): the F1 box. Keys reach it through the overlay route, not the pty. */
+async function configProgram(p: Proc): Promise<number> {
+  if (!p.tty) { p.err('config: not a tty\n'); return 1 }
+  await waitForDrain()
+  if (!config || grid.locked) { p.err('config: screen busy\n'); return 1 }
+  config.toggle()
+  await config.closed()
+  return 0
+}
+
+/** launch(1): the program list. The choice runs as its own job after this one exits. */
+async function launchProgram(p: Proc): Promise<number> {
+  if (!p.tty) { p.err('launch: not a tty\n'); return 1 }
+  const programs = await launchables(p, api.authed)
+  await waitForDrain()
+  if (!launcher || grid.locked) { p.err('launch: screen busy\n'); return 1 }
+  const line = await launcher.pick(programs)
+  if (line) p.kernel.jobs.launchAfter(line)
   return 0
 }
 
@@ -382,8 +408,13 @@ const program = {
     restoreSettings(s, snd)
     config = new ConfigBox(s, snd, () => void writeMotd(api.username))
     saver = new Screensaver(s, snd, () => halted || !live)
-    palette = new JobPalette(s, snd, () => machine, name =>
-      !inbox ? 0 : name === 'inbox' ? inbox.total : name === 'cmail' ? inbox.mail : 0)
+    doom = new Doom(s, snd, waitForDrain)
+    launcher = new Launcher(s, snd)
+    palette = new JobPalette(s, snd, () => machine, {
+      badge: name => !inbox ? 0 : name === 'inbox' ? inbox.total : name === 'cmail' ? inbox.mail : 0,
+      authed: () => api.authed,
+      config: () => config?.toggle(),
+    })
     // The idle timer. Coarse on purpose: the timeout is in minutes.
     setInterval(() => {
       const prefs = saverPrefs()
@@ -405,7 +436,7 @@ const program = {
       api,
       homeKey,
       snd,
-      host: { shutdown: shutdownProgram, reboot: rebootProgram, reset: resetProgram, screensaver: screensaverProgram },
+      host: { shutdown: shutdownProgram, reboot: rebootProgram, reset: resetProgram, screensaver: screensaverProgram, doom: p => doom!.run(p), config: configProgram, launch: launchProgram },
       // Image decoding is faceplate-only, and the metrics depend on the font
       // loaded right now, which F1 can change under a running program.
       pictures: () => pictureHost(s.term),
@@ -585,11 +616,23 @@ const canvas = document.getElementById('tube') as HTMLCanvasElement
 
 try {
   await mount(canvas, program)
-  if (MOBILE) keyboard.wireSoftKeyboard(canvas)
-  else canvas.addEventListener('pointerdown', () => { saver?.stop(); keyboard.pointer() })
+  if (MOBILE) {
+    document.documentElement.classList.add('phone')
+    const keys = new KeyBar(document.getElementById('keys')!, keyboard, {
+      screen: () => {
+        const buf = xt.buffer.active
+        const top = buf.baseY - scroll.back
+        const rows: string[] = []
+        for (let y = top; y < top + ROWS; y++) rows.push(buf.getLine(y)?.translateToString(true) ?? '')
+        return rows.join('\n').trimEnd()
+      },
+      paste: text => keyboard.paste(text),
+    })
+    keyboard.wireSoftKeyboard(document.getElementById('slot')!, () => keys.takeCtrl())
+  } else canvas.addEventListener('pointerdown', () => { saver?.stop(); keyboard.pointer() })
 } catch (err) {
   const fault = document.getElementById('fault')!
   fault.style.display = 'block'
   fault.textContent = 'THE TUBE DID NOT COME UP\n\n' + String((err as Error)?.stack ?? err)
-  canvas.style.display = 'none'
+  document.getElementById('screen')!.style.display = 'none'
 }

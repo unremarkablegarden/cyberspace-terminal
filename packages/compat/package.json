@@ -1,6 +1,6 @@
 {
   "name": "@cyberspace/compat",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Runs JS user programs on a cell grid over the pty.",
   "type": "module",
   "exports": {
@@ -9,6 +9,7 @@
     "./classify": "./src/classify.ts"
   },
   "dependencies": {
+    "@cyberspace/coreutils": "workspace:*",
     "@cyberspace/crt": "workspace:*",
     "@cyberspace/kernel": "workspace:*",
     "@cyberspace/tui": "workspace:*",

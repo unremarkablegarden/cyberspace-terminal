@@ -6,7 +6,7 @@
 // Selection uses the grid's inverse-video plane rather than a marker character.
 // term.ts has carried the inverse array from the start, so this costs nothing.
 
-import { NORMAL, BRIGHT, DIM, BOLD } from './attrs.js'
+import { NORMAL, BRIGHT, DIM, BOLD, FAINT } from './attrs.js'
 import type { Grid } from './surface.js'
 import type { Screen } from './screen.js'
 import type { KeyInput } from './keys.js'
@@ -96,6 +96,12 @@ export interface SelectOptions {
    * immediately on Enter rather than flashing.
    */
   onRepaint?: () => void
+  /**
+   * Rows shown FAINT that cannot be selected or chosen. Arrows skip them, and
+   * Enter or a row key on one reports 'edge'. Should leave at least one row
+   * enabled; with none, arrows do not move.
+   */
+  disabled?: (index: number) => boolean
 }
 
 const MIN_W = 18
@@ -120,6 +126,21 @@ export class SelectPopup implements Screen {
 
   constructor(private opts: SelectOptions) {
     this.index = Math.min(Math.max(opts.selected ?? 0, 0), Math.max(0, opts.items.length - 1))
+    if (this.off(this.index)) this.index = this.next(this.index, 1)
+  }
+
+  private off(i: number): boolean {
+    return !!this.opts.disabled?.(i)
+  }
+
+  /** The next enabled row from `from` in direction `delta`, wrapping. `from` itself when none is. */
+  private next(from: number, delta: 1 | -1): number {
+    const count = this.opts.items.length
+    for (let n = 1; n <= count; n++) {
+      const i = (from + delta * n + count * n) % count
+      if (!this.off(i)) return i
+    }
+    return from
   }
 
   /**
@@ -165,8 +186,7 @@ export class SelectPopup implements Screen {
         return true
       }
       // Wraps at both ends, so holding one arrow reaches every item.
-      const delta = e.key === 'ArrowUp' ? -1 : 1
-      this.index = (this.index + delta + count) % count
+      this.index = this.next(this.index, e.key === 'ArrowUp' ? -1 : 1)
       this.opts.onFeedback?.('move', e)
       return true
     }
@@ -182,6 +202,10 @@ export class SelectPopup implements Screen {
     if (e.key === 'Enter') {
       const item = this.opts.items[this.index]
       if (item === undefined) return true
+      if (this.off(this.index)) {
+        this.opts.onFeedback?.('edge', e)
+        return true
+      }
       this.opts.onFeedback?.('choose', e)
       this.choose(item, this.index)
       return true
@@ -195,6 +219,10 @@ export class SelectPopup implements Screen {
     if (this.opts.keys && e.key.length === 1) {
       const i = this.opts.keys.findIndex(k => k.toLowerCase() === e.key.toLowerCase())
       const item = i >= 0 ? this.opts.items[i] : undefined
+      if (item !== undefined && this.off(i)) {
+        this.opts.onFeedback?.('edge', e)
+        return true
+      }
       if (item !== undefined) {
         this.index = i
         this.opts.onFeedback?.('choose', e)
@@ -307,7 +335,7 @@ export class SelectPopup implements Screen {
       // attribute applies to the background, so BRIGHT would make the selection
       // the brightest element on screen. DIM with bold text marks the row
       // without that.
-      const attr = on ? (lit ? BRIGHT : DIM) | BOLD : NORMAL
+      const attr = on ? (lit ? BRIGHT : DIM) | BOLD : this.off(first + i) ? FAINT : NORMAL
       term.text(inner.x, inner.y + i, text.slice(0, inner.w), attr, on ? 1 : 0)
       // Applied after the row rather than instead of it: the padded string
       // draws the bar and this re-attributes columns of it. Passed the item's

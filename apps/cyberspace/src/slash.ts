@@ -5,7 +5,8 @@
 // /-line whose verb is neither listed nor local never leaves the terminal.
 //
 // A deliberate subset of what the server accepts. Styles need fonts and
-// colours, /song and /gif need players, /art a composer, /img an upload.
+// colours, /song and /gif need players, /img an upload route the API lacks.
+// circ handles /art locally (a composer) and sends the result as /art text.
 
 export type SlashSurface = 'chat' | 'dm'
 

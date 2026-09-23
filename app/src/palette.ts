@@ -16,11 +16,21 @@ import { grid } from './grid'
 import type { Overlay } from './input'
 
 /** Programs offered as launchers when no job of theirs is running. */
-const MAIN = ['feed', 'circ', 'cmail', 'globe', 'inbox']
+const MAIN = ['inbox', 'feed', 'circ', 'cmail', 'globe']
+/** Launchers that exit with `not logged in` when logged out. Shown FAINT and not selectable until login. */
+export const NEEDS_LOGIN = new Set(['feed', 'circ', 'cmail', 'inbox'])
 const TITLE = 'PROGRAMS'
 const GAP = 2
 
-type Row = { kind: 'job'; job: Job } | { kind: 'launch'; name: string } | { kind: 'shell' }
+type Row = { kind: 'job'; job: Job } | { kind: 'launch'; name: string } | { kind: 'shell' } | { kind: 'config' }
+
+export interface PaletteHooks {
+  /** Unread items behind a program, by command word; drawn after its name. */
+  badge?: (name: string) => number
+  authed?: () => boolean
+  /** The config box, the last row. */
+  config?: () => void
+}
 
 export class JobPalette implements Overlay {
   private stack: ScreenStack | null = null
@@ -34,9 +44,16 @@ export class JobPalette implements Overlay {
     private screen: CrtScreen,
     private snd: Sound,
     private kernel: () => Kernel | null,
-    /** Unread items behind a program, by command word; drawn after its name. */
-    private badge: (name: string) => number = () => 0,
+    private hooks: PaletteHooks = {},
   ) {}
+
+  private badge(name: string): number {
+    return this.hooks.badge?.(name) ?? 0
+  }
+
+  private authed(): boolean {
+    return this.hooks.authed?.() ?? true
+  }
 
   get open(): boolean {
     return !!this.stack?.active
@@ -52,7 +69,7 @@ export class JobPalette implements Overlay {
     if (!kernel || grid.locked) return
     this.build(kernel)
     const jobs = kernel.jobs
-    const here = jobs.fg ? this.rows.findIndex(r => r.kind === 'job' && r.job === jobs.fg) : this.rows.length - 1
+    const here = this.rows.findIndex(r => jobs.fg ? r.kind === 'job' && r.job === jobs.fg : r.kind === 'shell')
     this.show((here + dir + this.rows.length) % this.rows.length)
   }
 
@@ -74,10 +91,13 @@ export class JobPalette implements Overlay {
   private build(kernel: Kernel): void {
     const jobs = kernel.jobs
     this.rows = jobs.list().map(job => ({ kind: 'job', job }) as Row)
+    // Logged out, login is offered first among the launchers.
+    if (!this.authed() && kernel.resolveProgram('login')) this.rows.push({ kind: 'launch', name: 'login' })
     for (const name of MAIN) {
       if (!jobs.byName(name) && kernel.resolveProgram(name)) this.rows.push({ kind: 'launch', name })
     }
     this.rows.push({ kind: 'shell' })
+    if (this.hooks.config) this.rows.push({ kind: 'config' })
     this.items = this.rows.map((r, i) => this.text(r, i))
   }
 
@@ -98,8 +118,9 @@ export class JobPalette implements Overlay {
       keys: this.rows.map((_, i) => (i < 9 ? String(i + 1) : '')),
       hint: `1-${Math.min(9, count)} ⬆⬇ ↵  DEL kill`,
       shadow: true,
+      disabled: i => this.locked(this.rows[i]!),
       decorate: (term, row, i, sel) => {
-        if (sel) return
+        if (sel || this.locked(this.rows[i]!)) return
         const r = this.rows[i]!
         // The state column, and a launcher whole, read quieter than the jobs.
         const from = r.kind === 'launch' ? 0 : this.markCol()
@@ -124,10 +145,15 @@ export class JobPalette implements Overlay {
         const r = this.rows[index]!
         if (r.kind === 'job') { if (r.job !== jobs.fg) void jobs.switchTo(r.job) }
         else if (r.kind === 'launch') void jobs.switchTo({ launch: r.name })
+        else if (r.kind === 'config') this.hooks.config?.()
         else void jobs.switchTo('shell')
       },
     })
     this.stack.push(picker)
+  }
+
+  private locked(r: Row): boolean {
+    return r.kind === 'launch' && NEEDS_LOGIN.has(r.name) && !this.authed()
   }
 
   private confirmKill(job: Job): void {
@@ -183,6 +209,7 @@ export class JobPalette implements Overlay {
   /** `cmail @bob (2)`: the line, and the unread count behind the program when there is one. */
   private label(r: Row): string {
     if (r.kind === 'shell') return 'shell'
+    if (r.kind === 'config') return 'config'
     const line = r.kind === 'job' ? r.job.line : r.name
     const n = this.badge(r.kind === 'job' ? r.job.name : r.name)
     return n > 0 ? `${line} (${n > 99 ? '99+' : n})` : line

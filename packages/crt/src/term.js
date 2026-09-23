@@ -71,6 +71,12 @@ export class Term extends CellGrid {
      */
     this.fallback = null
 
+    /**
+     * While set, raster() leaves `fb` alone and the owner writes beam bytes into it directly (doom.ts).
+     * The cells are kept, so clearing it and setting `dirty` redraws the text.
+     */
+    this.raw = false
+
     // Assigned by setFont.
     this.w = 0
     this.h = 0
@@ -113,6 +119,7 @@ export class Term extends CellGrid {
   }
 
   raster() {
+    if (this.raw) return
     const { cols, rows, font, fb, w } = this
     const { cellH, glyphs } = font
     fb.fill(0)

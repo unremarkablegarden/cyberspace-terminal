@@ -109,6 +109,8 @@ const spanCells = (spans: Span[]): number =>
 const HINT = keyHint([
   ['‹›', 'Adjust'], ['0-9↵', 'Type'], ['⬆⬇', 'Move'], ['⌫', 'Reset'], ['ESC', 'Back'],
 ])
+/** For a box narrower than HINT needs (44 columns on a phone). Typing and reset still work. */
+const SHORT_HINT = keyHint([['‹›', 'Adjust'], ['⬆⬇', 'Move'], ['ESC', 'Back']])
 const COPIED = 'COPIED'
 const COPY_FAILED = 'CLIPBOARD BLOCKED — SEE CONSOLE'
 /** How long the copy acknowledgement remains in the rule. */
@@ -424,7 +426,8 @@ export class TunePopup implements Screen {
       }
     }
 
-    label(term, box, this.flash ?? HINT, {
+    const hint = spanCells(HINT) + 6 <= box.w ? HINT : SHORT_HINT
+    label(term, box, this.flash ?? hint, {
       edge: 'bottom',
       align: 'right',
       attr: this.flash ? BRIGHT : NORMAL,

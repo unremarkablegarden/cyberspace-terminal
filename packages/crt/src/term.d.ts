@@ -42,6 +42,10 @@ export class Term extends CellGrid {
   /** Height over width of a source pixel on the face. See term.js. */
   readonly stretch: number
   fb: Uint8Array
+  /** raster() leaves `fb` to its owner while set. See term.js. */
+  raw: boolean
+  padX: number
+  padY: number
   bold: unknown
   italic: unknown
   alt: unknown
