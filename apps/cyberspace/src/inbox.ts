@@ -143,6 +143,22 @@ export function noticeTarget(n: Notice): string | null {
   }
 }
 
+/** Types whose target screen updates live, so a notice for it repeats what is shown. */
+const LIVE = new Set(['chat_mention', 'guild_chat_message', 'dm_message'])
+
+/**
+ * True when `view`, the foreground job's command line, already shows the notice.
+ * The inbox list refetches on a rise, and the cmail mailbox follows the same
+ * stream as the C-Mail notices, so both show every notice of their kind.
+ */
+export function noticeInView(n: Notice, view: string | null): boolean {
+  const v = view?.trim().toLowerCase()
+  if (!v) return false
+  if (v === 'inbox') return true
+  if (v === 'cmail') return n.type === 'dm_message'
+  return LIVE.has(n.type) && noticeTarget(n)?.toLowerCase() === v
+}
+
 /** `noticeTarget`, plus the one case that needs a request to resolve. */
 export async function openLine(api: ApiClient, n: Notice): Promise<string | null> {
   const line = noticeTarget(n)
@@ -167,8 +183,6 @@ export interface InboxHooks {
   onNotice?(n: Notice): void
   /** `count` or `mail` changed. */
   onCounts?(): void
-  /** True while C-Mail is in front; its own screen shows the message. */
-  mailInFront?(): boolean
 }
 
 /** Newest rows fetched when the count rises; more than this collapses on the bar. */
@@ -353,7 +367,7 @@ export class InboxService {
     for (const [cid, row] of this.rows) {
       const unread = row.unreadCount ?? 0
       mail += unread
-      if (snapshot || unread <= (before.get(cid) ?? 0) || this.hooks.mailInFront?.()) continue
+      if (snapshot || unread <= (before.get(cid) ?? 0)) continue
       if (this.mailOff || (row.otherUserId && this.hidden.has(row.otherUserId))) continue
       this.hooks.onNotice?.({
         id: `${MAIL_ID}${cid}-${this.now()}`,

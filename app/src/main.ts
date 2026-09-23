@@ -11,7 +11,7 @@ import { standby, strike, implode, Aborted } from '@cyberspace/crt/effects'
 import { bootSequence } from '@cyberspace/crt/boot'
 import { loadFamily, loadFallback, familyOf } from '@cyberspace/crt/fonts'
 import { Tty, bytes, type Proc, type Kernel } from '@cyberspace/kernel'
-import { ApiClient, HomeKey, MAIL_ID, noticeText, openLine, type InboxService, type Notice } from '@cyberspace/apps'
+import { ApiClient, HomeKey, MAIL_ID, noticeInView, noticeText, openLine, type InboxService, type Notice } from '@cyberspace/apps'
 import { fs } from '@zenfs/core'
 import { syncTerm } from './vt'
 import { Baud } from './baud'
@@ -175,8 +175,9 @@ const bar = new NoticeBar(
   () => store.get('notices', 'on') !== 'off',
 )
 
-/** A notice from the service goes on the bar with the line that opens it. */
+/** A notice from the service goes on the bar with the line that opens it, unless the program in front already shows it. */
 function announce(n: Notice): void {
+  if (noticeInView(n, machine?.jobs.fg?.line ?? null)) return
   void openLine(api, n).then(line => {
     bar.show({
       text: noticeText(n),
@@ -448,7 +449,6 @@ const program = {
       onInbox: svc => {
         inbox = svc
         svc.hooks.onNotice = announce
-        svc.hooks.mailInFront = () => machine?.jobs.fg?.name === 'cmail'
       },
     })
     // A kernel that fails while the animation plays would otherwise surface
