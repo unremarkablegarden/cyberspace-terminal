@@ -41,8 +41,24 @@ export class Screen {
     this.raf = requestAnimationFrame(t => this.frame(t))
   }
 
+  /** How often a repeating frame-path throw is reported (see _frameError). */
+  static ERR_EVERY_MS = 5000
+
+  // The next frame is requested from `finally`, so a throw in a program's
+  // frame() drops one frame instead of stopping the loop and freezing the last
+  // picture. Errors are rate limited by _frameError.
   frame(t) {
     if (this.stopped) return
+    try {
+      this._frame(t)
+    } catch (err) {
+      this._frameError(err, t)
+    } finally {
+      if (!this.stopped) this.raf = requestAnimationFrame(ts => this.frame(ts))
+    }
+  }
+
+  _frame(t) {
     if (!this.t0) this.t0 = t
     const { term, crt } = this
 
@@ -64,7 +80,18 @@ export class Screen {
 
     crt.resize(RENDER.pixelBudget)
     crt.render(t / 1000)
-    this.raf = requestAnimationFrame(ts => this.frame(ts))
+  }
+
+  /** Logs the first frame error, then at most one per ERR_EVERY_MS with a
+   *  count of those suppressed. `frameErrors` is the running total. */
+  _frameError(err, t) {
+    this.frameErrors = (this.frameErrors || 0) + 1
+    this._errPending = (this._errPending || 0) + 1
+    if (this._errAt != null && t - this._errAt < Screen.ERR_EVERY_MS) return
+    const suppressed = this._errPending - 1
+    this._errAt = t
+    this._errPending = 0
+    console.error(`frame: ${err?.stack || err}` + (suppressed ? ` (+${suppressed} more since the last report)` : ''))
   }
 
   /** Stop the loop and free the GL context. Not restartable. */
