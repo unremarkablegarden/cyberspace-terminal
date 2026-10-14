@@ -296,3 +296,4 @@
 - `AudioContext` for JS programs: gain, oscillator, buffer source, filter, delay, panner, compressor, shaper, convolver, `decodeAudioData`
 - `~/OS_CHART.txt`
 - Fixed `browse` refusing to install your own program when `~/bin` had no copy (cleared or new browser)
+- `~/bin/docs/PORT_LEGACY.txt`: porting an old /terminal program to a JS or PTY program

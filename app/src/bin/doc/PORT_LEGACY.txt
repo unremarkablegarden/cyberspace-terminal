@@ -1,0 +1,170 @@
+CYBER/OS — PORTING A LEGACY PROGRAM              ~/bin/docs/PORT_LEGACY.txt
+
+WHAT IS LEGACY
+
+A program published from the old cyberspace.online/terminal. It exports
+an object with a run(ctx, args) and was written against the page.
+
+It still runs here, as a JS program, in a worker. Calls to what no
+longer exists do nothing or throw. Porting replaces them with what is
+live, and moves the programs that do not need the grid to the pty.
+
+
+WHICH KIND
+
+  talks to Cyberspace (ctx.api)          JS program
+  a game, an animation, a full screen    JS program
+  widgets, pictures, ctx.snd             JS program
+  text in, text out, a pipeline          PTY program
+  prints and exits, no network           PTY program
+
+A PTY program has no ctx.api. Anything that reads or writes Cyberspace
+stays a JS program.
+
+
+START
+
+  install author/name     a copy in ~/bin
+  name                    run it as it is
+  edit ~/bin/name         ^O writes, ^X exits
+
+A refused program prints the name, line and column. Each name is in
+~/bin/docs/API.txt under REFUSED NAMES.
+
+
+BOTH KINDS
+
+  window document self    remove. A canvas is ctx.gfx.canvas(w, h).
+  globalThis
+  import                  inline it; a program is one file
+  eval, new Function      rewrite without them
+  description             required to publish, 256 characters
+
+fetch works, from this terminal's origin. A server that allowed only
+the old site's origin refuses it (CORS); there is no way round that
+from here. Pass ctx.signal (or p.signal) so Ctrl-C cancels it:
+
+  const r = await fetch(url, { signal: ctx.signal })
+
+
+A JS PROGRAM
+
+Keep the object and its run(). Replace what is gone:
+
+  legacy                            now
+  ctx.chat.open  presence  send     ctx.api on /v1/circ, or
+  ctx.chat.rooms  enter               await ctx.run('circ')
+  ctx.chat.searchUsers              ctx.api on /v1/search
+  ctx.feed.byUser  replies  watch   ctx.api on /v1/posts, /v1/replies
+  ctx.feed.reply                    ctx.api.post on /v1/replies
+  ctx.feed.searchUsers              ctx.api on /v1/search
+  ctx.feed.profile                  ctx.api on /v1/users
+  ctx.mail  ctx.compose             await ctx.run('cmail', ['@name'])
+  ctx.fs  ctx.upload                localStorage, for the program's data
+  ctx.programs  ctx.world           none
+  ctx.setState  setResume           localStorage. A JS program does not
+  takeState                           resume after a reload.
+  ctx.setCwd  config  reboot        remove. The machine's settings are
+  shutdown  toggleMute                the operator's.
+  toggleFullscreen  cyclePhosphor
+  setDecay
+
+Unchanged and live: ctx.feed.page, ctx.chat.roll, ctx.term, ctx.tui,
+ctx.attr, ctx.snd, ctx.type, ctx.sleep.
+
+ctx.api paths start with /v1/. Routes are in ~/bin/docs/NETWORK.txt.
+
+Then check these:
+
+  Ctrl-C       every await throws when it is pressed. A catch around
+               an await rethrows when ctx.signal.aborted is true;
+               try { ... } catch {} keeps a stopped program running.
+  The screen   pushScreen once, popScreen in a finally, so Ctrl-C
+               gives the screen back.
+  The size     ctx.term.cols and ctx.term.rows: 80x25, 44x20 on a
+               phone. Never a fixed 80.
+  Saves        localStorage is the program's own, 256 KB, filed under
+               the command name. Renaming the file starts it empty.
+  Sound        ctx.snd, or AudioContext. See API.txt, ctx.snd.
+
+  export default {
+    name: 'tally',
+    description: 'counts keypresses',
+    async run(ctx) {
+      let n = Number(localStorage.getItem('n')) || 0
+      let quit = false
+      ctx.pushScreen({ onKey: e => {
+        if (e.key === 'Escape') quit = true
+        else n++
+      } })
+      try {
+        while (!quit) {
+          ctx.term.clear()
+          ctx.term.text(2, 2, 'KEYS ' + n, ctx.attr.BRIGHT)
+          await ctx.sleep(50)
+        }
+      } finally {
+        localStorage.setItem('n', String(n))
+        ctx.popScreen()
+      }
+    },
+  }
+
+
+A PTY PROGRAM
+
+Replace the object with a function of the process. It returns the exit
+code, and its output can be piped.
+
+  legacy                    now
+  run(ctx, args)            export default async function (p)
+  args                      p.argv.slice(1)
+  description: '...'        export const description = '...'
+  ctx.write  ctx.writeln    p.out(s), p.out(s + '\n')
+  ctx.type  ctx.typeln      p.out. The terminal paces output itself.
+  error text                p.err(s), then return 1
+  ctx.username              p.env.USER
+  ctx.cwd                   p.cwd
+  ctx.sleep(ms)             new Promise(r => setTimeout(r, ms))
+  ctx.attr.BRIGHT  BOLD     '\x1b[1m' ... '\x1b[0m'
+  ctx.attr.DIM              '\x1b[2m' ... '\x1b[0m'
+  ctx.snd.beep              '\x07', or AudioContext
+  ctx.signal                p.signal
+  pushScreen                '\x1b[?1049h', and '\x1b[?1049l' in a
+                              finally
+  ctx.term                  cursor moves, one frame per
+                              p.tty.paint(s)
+  onKey                     p.tty.setRaw(), then bytes from
+                              await p.stdin.read()
+  ctx.api                   none
+
+stdin is read with p.stdin.read() until it returns null, the end of
+the pipe or Ctrl-D.
+
+  export const description = 'upper-cases its input'
+
+  export default async function (p) {
+    const dec = new TextDecoder()
+    for (;;) {
+      const chunk = await p.stdin.read()
+      if (chunk === null) return 0
+      p.out(dec.decode(chunk).toUpperCase())
+    }
+  }
+
+  ls ~/bin | upper
+
+A full-screen PTY program is in ~/bin/docs/TUI.txt, A PTY PROGRAM.
+
+
+PUBLISHING THE PORT
+
+  name                    test it
+  publish name note       the note is the release note
+
+The gallery lists it under the publisher's name. Credit the original
+author in the description or the source.
+
+
+  less ~/bin/docs/API.txt        everything on ctx and p
+  less ~/bin/docs/TUI.txt        drawing, both kinds

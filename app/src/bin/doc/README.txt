@@ -61,7 +61,7 @@ THREE KINDS
 
 The default export decides which; nothing is declared. Programs
 published from the old cyberspace.online/terminal are JS programs and
-still run.
+still run. Porting one: ~/bin/docs/PORT_LEGACY.txt.
 
 
 PUBLISHING
@@ -90,3 +90,4 @@ Twenty programs, 128 KB each. Supporters get a hundred at 1 MB.
   less ~/bin/docs/API.txt        how to write one
   less ~/bin/docs/TUI.txt        how one draws
   less ~/bin/docs/NETWORK.txt    the Cyberspace API
+  less ~/bin/docs/PORT_LEGACY.txt  porting an old /terminal program
