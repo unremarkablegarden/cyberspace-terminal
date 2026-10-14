@@ -25,7 +25,8 @@ THE COMMANDS
   recall name           take a program out of the gallery
 
 In the gallery: RETURN installs, S shows the source, T runs it once
-without installing, SPACE opens the description, ESC leaves.
+without installing, SPACE opens the description, ESC leaves. RETURN on
+your own program puts it back in ~/bin when the copy there is gone.
 
 
 THE EXAMPLES

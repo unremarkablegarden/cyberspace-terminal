@@ -1,17 +1,13 @@
-// Kernel file handler for JS programs. The source is not imported here: it runs
-// in a dedicated worker (program.worker.ts) so its realm holds no window, no
-// page globals and no session token. This side is the broker. It forwards the
-// worker's output to the pty, pumps the keyboard into the worker, and answers
-// the worker's capability requests (api, feed, image) against the real host,
-// re-checking each api path so a forged request cannot reach past /v1/.
+// Kernel file handler for JS programs.
+// The source is not imported here: it runs in a dedicated worker (program.worker.ts) so its realm holds no window, no page globals and no session token.
+// This side is the broker. It forwards the worker's output to the pty, pumps the keyboard into the worker, and answers the worker's capability requests (api, feed, image, audio) against the real host, re-checking each api path so a forged request cannot reach past /v1/.
 //
-// A dedicated worker's own script can post any message, so nothing a message
-// asks for is trusted more than the capability it names: api stays /v1/, image
-// stays behind the host's whitelist, and the token is never on this channel.
+// A dedicated worker's own script can post any message, so nothing a message asks for is trusted more than the capability it names: api stays /v1/, image stays behind the host's whitelist, audio ops are checked against the tables in audio-wire.ts, and the token is never on this channel.
 
 import { dec, runOnTty, allowedHandoff, type Proc, type Program } from '@cyberspace/kernel'
 import { PICT_RANGE, STORE_MAX, type CompatDeps, type CompatPictures } from './host.js'
 import type { MainMessage, RunMessage, WorkerMessage } from './program.worker.js'
+import { AudioHost } from './audio-host.js'
 
 /** A /v1/ path, or throws. Repeated here because a worker can forge the call. */
 function v1(path: unknown): string {
@@ -54,7 +50,7 @@ export function jsFileHandler(deps: CompatDeps): (path: string, data: Uint8Array
 }
 
 async function serve(
-  p: Proc, deps: CompatDeps, pictures: CompatPictures | undefined,
+  p: Proc, deps: CompatDeps, audio: AudioHost | null,
   kind: Extract<WorkerMessage, { t: 'cap' }>['kind'], args: unknown[],
 ): Promise<unknown> {
   switch (kind) {
@@ -72,6 +68,8 @@ async function serve(
     case 'feed.page': return deps.feed ? deps.feed.page(args[0] as number | undefined, args[1] as string | undefined) : []
     case 'feed.profile': return deps.feed?.profile ? deps.feed.profile(String(args[0])) : null
     case 'image': return deps.image ? deps.image(String(args[0])) : Promise.reject(new Error('NO CARRIER'))
+    case 'audio.decode': return audio ? audio.decode(args[0], args[1]) : Promise.reject(new Error('no audio'))
+    case 'audio.resume': return audio ? audio.resume() : Promise.reject(new Error('no audio'))
   }
 }
 
@@ -101,6 +99,7 @@ async function runInWorker(p: Proc, source: string, deps: CompatDeps): Promise<n
 
   const worker = new Worker(new URL('./program.worker.ts', import.meta.url), { type: 'module' })
   const pictures = deps.pictures?.()
+  const audio = deps.audio ? new AudioHost(deps.audio, m => worker.postMessage(m satisfies MainMessage)) : null
 
   return new Promise<number>(resolve => {
     let settled = false
@@ -110,6 +109,7 @@ async function runInWorker(p: Proc, source: string, deps: CompatDeps): Promise<n
       p.signal.removeEventListener('abort', onAbort)
       worker.terminate()
       pictures?.release()
+      audio?.dispose()
       // Unblock the keyboard pump's pending read (installs a fresh readers pipe).
       p.stdin.interrupt?.()
       resolve(code)
@@ -138,6 +138,7 @@ async function runInWorker(p: Proc, source: string, deps: CompatDeps): Promise<n
         }
         case 'copy': p.tty?.copy(m.text); return
         case 'pict': pictures?.set(m.codes, bitmaps(m.bits)); return
+        case 'audio': audio?.apply(m.ops); return
         case 'store': {
           const data = storeOf(m.data)
           if (data && name && deps.storage) {
@@ -147,7 +148,7 @@ async function runInWorker(p: Proc, source: string, deps: CompatDeps): Promise<n
           return
         }
         case 'cap':
-          serve(p, deps, pictures, m.kind, m.args).then(
+          serve(p, deps, audio, m.kind, m.args).then(
             value => worker.postMessage({ t: 'cap-result', id: m.id, ok: true, value } satisfies MainMessage),
             (err: unknown) => worker.postMessage({ t: 'cap-result', id: m.id, ok: false, error: (err as Error)?.message ?? String(err) } satisfies MainMessage),
           )
@@ -187,6 +188,7 @@ async function runInWorker(p: Proc, source: string, deps: CompatDeps): Promise<n
       metrics: pictures?.metrics(),
       pict: pictures?.range(PICT_RANGE),
       store,
+      audio: audio?.clock(),
     }
     worker.postMessage(msg)
   })

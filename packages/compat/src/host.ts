@@ -32,6 +32,7 @@ const kit = {
 }
 import { DotCanvas, drawEdges, teapot } from './vector.js'
 import { roll } from './roll.js'
+import type { CompatAudio } from './audio-host.js'
 
 class Aborted extends Error {}
 
@@ -130,6 +131,11 @@ export interface CompatDeps {
     save(name: string, data: Record<string, string>): Promise<void>
   }
   version?: string
+  /**
+   * The page's audio context, for the AudioContext stand-in a worker program gets (audio-proxy.ts).
+   * Absent on a host with no sound; the program then has no AudioContext at all.
+   */
+  audio?: CompatAudio
 }
 
 /**

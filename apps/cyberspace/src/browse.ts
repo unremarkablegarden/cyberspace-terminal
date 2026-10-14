@@ -147,6 +147,12 @@ class BrowseScreen {
   private installed: Installed = new Map()
 
   /**
+   * The reader's own programs that have a file at ~/bin/<name>.
+   * Publishing does not keep a local copy: the home is browser storage, so a cleared browser or a new one has an empty ~/bin while the gallery still lists the program as theirs.
+   */
+  private own = new Set<string>()
+
+  /**
    * Reveals the listing one row at a time, once, when the gallery first
    * arrives. Sorting and filtering reorder rows already on screen, so animating
    * those would make the list unreadable on every keystroke of a filter.
@@ -307,7 +313,7 @@ class BrowseScreen {
       // executable. Uninstalled rows get a blank rather than a second symbol:
       // the column is reserved either way, and a "not installed" mark would have
       // to be read on every row.
-      const held = this.installed.has(p.id) || p.mine
+      const held = this.installed.has(p.id) || this.own.has(p.id)
       const row = [
         (held ? '* ' : '  ') + cut(p.name, NAME_W - 2).padEnd(NAME_W - 2),
         cut(p.author, AUTHOR_W).padEnd(AUTHOR_W),
@@ -385,6 +391,7 @@ class BrowseScreen {
       ])
       this.all = gallery
       this.installed = installed
+      this.own = await this.ownCopies(gallery)
       this.loaded = true
     } catch (err) {
       // The registry's own error text is kept; a bare "unavailable" is not diagnosable.
@@ -395,6 +402,16 @@ class BrowseScreen {
     // Bounded by the visible rows rather than the length of the list.
     this.reveal.start(Math.min(this.view.length, this.rows(this.s)))
     this.paint()
+  }
+
+  private async ownCopies(rows: PublishedProgram[]): Promise<Set<string>> {
+    const out = new Set<string>()
+    for (const p of rows) {
+      if (!p.mine) continue
+      const st = await fs.promises.stat(paths.join(this.home, BIN_DIR, p.name)).catch(() => null)
+      if (st && !st.isDirectory()) out.add(p.id)
+    }
+    return out
   }
 
   /** Filter first, then sort what remains. */
@@ -578,13 +595,19 @@ class BrowseScreen {
   }
 
   private async install(p: PublishedProgram): Promise<void> {
-    if (p.mine) {
-      this.status = 'this one is yours — it is already in ~/bin'
-      this.paint()
-      return
-    }
-
     const dest = paths.join(this.home, BIN_DIR, p.name)
+
+    // Checked against the file rather than ownership alone.
+    // Without a local copy, the reader's own program installs like anyone else's.
+    if (p.mine) {
+      const st = await fs.promises.stat(dest).catch(() => null)
+      if (st && !st.isDirectory()) {
+        this.own.add(p.id)
+        this.status = 'this one is yours — it is already in ~/bin'
+        this.paint()
+        return
+      }
+    }
 
     // A name already in use is the reader's own file; overwriting it without
     // asking would discard their work.
@@ -625,8 +648,13 @@ class BrowseScreen {
       await fs.promises.mkdir(paths.join(this.home, BIN_DIR)).catch(() => {})
       await fs.promises.writeFile(dest, r.bytes, { mode: 0o755 })
       // Recorded with the copy; this is what marks the row installed on the next open.
-      this.installed.set(p.id, `${BIN_DIR}/${p.name}`)
-      await writeInstalled(this.home, this.installed)
+      // The reader's own program is kept out of the index, so DEL is not offered on the row and its file is never treated as a removable copy.
+      if (p.mine) {
+        this.own.add(p.id)
+      } else {
+        this.installed.set(p.id, `${BIN_DIR}/${p.name}`)
+        await writeInstalled(this.home, this.installed)
+      }
       this.status = `installed as ~/${BIN_DIR}/${p.name} — run it with ${p.name}`
       this.snd.blip(660, 0.06, 0)
     } catch (err) {

@@ -293,3 +293,6 @@
 
 - `sudo rm -rf / --no-preserve-root` (easter egg, ported from the old /terminal)
 - `alias`, `unalias`, `source`, `~/.shrc` read at shell start
+- `AudioContext` for JS programs: gain, oscillator, buffer source, filter, delay, panner, compressor, shaper, convolver, `decodeAudioData`
+- `~/OS_CHART.txt`
+- Fixed `browse` refusing to install your own program when `~/bin` had no copy (cleared or new browser)

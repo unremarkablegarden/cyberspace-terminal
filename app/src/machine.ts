@@ -144,6 +144,12 @@ function registerPrograms(kernel: Kernel, { api, homeKey, snd, host, pictures, f
       degauss: () => snd.degauss(),
       postBeep: (freq, dur) => snd.postBeep(freq, dur),
     },
+    // On the beeps bus, as doom's sound is.
+    audio: {
+      graph: () => snd.graph('beeps'),
+      enabled: () => snd.enabled,
+      unlock: () => snd.unlock(),
+    },
     feed: {
       page: async (limit = 10) => {
         const posts = await api.get<Record<string, unknown>[]>(`/v1/posts?limit=${Math.min(50, limit)}`)

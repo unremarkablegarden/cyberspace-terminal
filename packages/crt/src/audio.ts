@@ -264,6 +264,16 @@ export class Sound {
     return ctx && this.bus ? { ctx, node: this.bus[name] } : null
   }
 
+  /**
+   * The context and the bus for `name` in any state, for a program that keeps its own audio graph (compat's AudioContext stand-in).
+   * Unlike output(), this does not wait for the context to run: a program's scheduled sources start when it does, as on a page.
+   * Null before load() and after dispose().
+   */
+  graph(name: SoundChannel): { ctx: AudioContext; node: AudioNode } | null {
+    if (!this.ctx || !this.bus || this.disposed) return null
+    return { ctx: this.ctx, node: this.bus[name] }
+  }
+
   setChannel(name: SoundChannel, level: number | boolean): number {
     const value = typeof level === 'boolean' ? (level ? 1 : 0)
       : Number.isFinite(level) ? Math.min(1, Math.max(0, level)) : 0

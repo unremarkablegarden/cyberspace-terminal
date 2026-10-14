@@ -1,8 +1,6 @@
-// Runs a user program in its own realm. The source is imported and executed
-// here, not on the page, so it cannot name window, document, the page globals,
-// or localStorage; the session token lives on the page and never enters this
-// worker. The capabilities a program is allowed (output, tty, sound, the /v1/
-// API, feed, image bytes) cross back to the page as messages, brokered there.
+// Runs a user program in its own realm.
+// The source is imported and executed here, not on the page, so it cannot name window, document, the page globals, or localStorage; the session token lives on the page and never enters this worker.
+// The capabilities a program is allowed (output, tty, sound, Web Audio, the /v1/ API, feed, image bytes) cross back to the page as messages, brokered there.
 //
 // stdout, tty control and sound go out as fire-and-forget messages; api, feed
 // and image are request/response, keyed by a call id. Keyboard bytes arrive as
@@ -14,6 +12,8 @@ import type { CellMetrics } from '@cyberspace/tui'
 import {
   runGridProgram, importDefault, asGridProgram, whereInSource, STORE_MAX, type CompatDeps,
 } from './host.js'
+import { installAudio, audioMessage } from './audio-proxy.js'
+import type { AudioClock, AudioOp, AudioToWorker, DecodedMeta } from './audio-wire.js'
 
 /** Main -> worker: start one program. */
 export interface RunMessage {
@@ -28,6 +28,8 @@ export interface RunMessage {
   username?: string
   /** Which brokered capabilities the host wired, so the worker offers only those. */
   caps: { api: boolean; feed: boolean; image: boolean; run: boolean }
+  /** Absent on a host with no audio; the program then has no AudioContext. */
+  audio?: AudioClock
   /** The face's cell metrics; present when the page has a picture bank. */
   metrics?: CellMetrics
   /** Handles this run may assign bitmaps to. */
@@ -44,6 +46,7 @@ export type MainMessage =
   | { t: 'abort' }
   | { t: 'cap-result'; id: number; ok: true; value: unknown }
   | { t: 'cap-result'; id: number; ok: false; error: string }
+  | AudioToWorker
 
 /** Worker -> main. */
 export type WorkerMessage =
@@ -55,7 +58,8 @@ export type WorkerMessage =
   | { t: 'copy'; text: string }
   | { t: 'pict'; codes: number[]; bits: Uint16Array[] }
   | { t: 'store'; data: Record<string, string> }
-  | { t: 'cap'; id: number; kind: 'api.get' | 'api.post' | 'api.del' | 'feed.page' | 'feed.profile' | 'image' | 'run'; args: unknown[] }
+  | { t: 'audio'; ops: AudioOp[] }
+  | { t: 'cap'; id: number; kind: 'api.get' | 'api.post' | 'api.del' | 'feed.page' | 'feed.profile' | 'image' | 'run' | 'audio.decode' | 'audio.resume'; args: unknown[] }
   | { t: 'exit'; code: number }
   | { t: 'fault'; message: string }
 
@@ -169,6 +173,10 @@ self.onmessage = (e: MessageEvent<MainMessage>): void => {
       else p.reject(new Error(m.error))
       return
     }
+    case 'audio-clock':
+    case 'audio-ended':
+      audioMessage(m)
+      return
   }
 }
 
@@ -255,6 +263,13 @@ async function start(msg: RunMessage): Promise<void> {
   const proc = makeProc(msg, stdin)
   const deps = brokerDeps(msg)
   installStorage(msg.store)
+  if (msg.audio) {
+    installAudio(msg.audio, {
+      post: ops => post({ t: 'audio', ops }),
+      decode: (id, bytes) => call('audio.decode', [id, bytes]) as Promise<DecodedMeta>,
+      resume: () => call('audio.resume', []) as Promise<AudioClock>,
+    })
+  }
 
   let value: unknown
   try {

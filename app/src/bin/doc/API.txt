@@ -112,6 +112,17 @@ ctx.snd — SOUND
 time is in seconds: beep(880, 0.09) is 90 milliseconds. gain and jitter
 run 0 to 1.
 
+For more, AudioContext works as on a web page, with these nodes: gain,
+oscillator, buffer source, biquad filter, delay, stereo panner,
+compressor, wave shaper and convolver. decodeAudioData, createBuffer
+and every AudioParam method are there. It plays on the terminal's
+beeps channel and stops when the program exits.
+
+Missing: AnalyserNode, PeriodicWave, ScriptProcessorNode, AudioWorklet
+and media elements. The samples of a decoded buffer cannot be read
+back. suspend() does nothing, and an AudioParam's value reads as the
+last value set.
+
 
 THE SCREEN
 
@@ -340,9 +351,8 @@ Do this instead:
   a canvas to draw on     ctx.gfx.canvas(w, h)
   a second file           none; a program is one file
   a network call          ctx.api, or fetch
-  a saved setting         p.setState, for a pty program.
-                          There is nowhere else: both browser stores are
-                          refused.
+  a saved setting         localStorage; see KEEPING DATA.
+                          sessionStorage and indexedDB are refused.
 
 fetch, XMLHttpRequest, WebSocket, AudioContext, createImageBitmap,
 ImageData, WebCodecs and every plain builtin are allowed.

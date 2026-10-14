@@ -1,0 +1,22 @@
+keyboard                                                        screen
+    │                                                              ▲
+ ┌──▼───┐    pty: ANSI byte stream     ╭───────────────────────────┴───╮
+ │ tty  │ ───────────────────────────▶ │ @xterm/headless → cell grid   │
+ └──▲───┘                              │ crt: WebGL2, BDF fonts, sfx   │
+    │                                  ╰───────────────────────────────╯
+ ╔══╧═════════════════════════════ kernel ═════════════════════════════╗
+ ║  processes · pipes · signals · job control (^Z, fg, ps, kill)       ║
+ ║  ┌─────────────┐ ┌──────────────┐ ┌──────────────┐ ┌─────────────┐  ║
+ ║  │ shell       │ │ coreutils    │ │ JS programs  │ │ wasm32-wasi │  ║
+ ║  │ pipelines   │ │ edit, view   │ │ compat host  │ │ worker each │  ║
+ ║  └─────────────┘ └──────────────┘ └──────────────┘ └─────────────┘  ║
+ ║  VFS: ZenFS on OPFS, home persists in the browser                   ║
+ ╚═════════════╤══════════════════════════════════════╤════════════════╝
+               │ sync (encrypted)                     │ Bearer idToken
+        ┌──────▼─────┐                     ┌──────────▼───────────────┐
+        │ R2 storage │                     │ Cyberspace API           │
+        └────────────┘                     │ REST + RTDB streams      │
+                                           │ circ, cmail, feed, inbox │
+                                           └──────────────────────────┘
+
+ Kernel and userland: TS + wasm, no DOM. Same kernel can sit behind SSH.
