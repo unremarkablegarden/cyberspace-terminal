@@ -34,6 +34,8 @@
       margin-bottom: max(var(--kbd, 0px), env(safe-area-inset-bottom, 0px));
       touch-action: manipulation;
     }
+    /* A hardware keyboard is in use; keybar.ts sets the class. */
+    .phone.hwkbd #keys { display: none; }
     #keys .row { display: flex; gap: 4px; }
     /* Big layout: two rows, arrows as an inverted T on the right. */
     .phone #keys.big {

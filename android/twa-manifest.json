@@ -1,0 +1,52 @@
+{
+  "packageId": "online.cyberspace.terminal",
+  "host": "terminal.cyberspace.online",
+  "name": "Cyberspace Terminal",
+  "launcherName": "Terminal",
+  "display": "fullscreen",
+  "themeColor": "#000000",
+  "themeColorDark": "#000000",
+  "navigationColor": "#000000",
+  "navigationColorDark": "#000000",
+  "navigationDividerColor": "#000000",
+  "navigationDividerColorDark": "#000000",
+  "backgroundColor": "#000000",
+  "enableNotifications": false,
+  "startUrl": "/",
+  "iconUrl": "https://terminal.cyberspace.online/icons/icon-512.png",
+  "maskableIconUrl": "https://terminal.cyberspace.online/icons/maskable-512.png",
+  "splashScreenFadeOutDuration": 300,
+  "signingKey": {
+    "path": "./android.keystore",
+    "alias": "android"
+  },
+  "appVersionName": "0.8.1",
+  "appVersionCode": 1,
+  "shortcuts": [],
+  "generatorApp": "bubblewrap-cli",
+  "webManifestUrl": "https://terminal.cyberspace.online/manifest.webmanifest",
+  "fallbackType": "customtabs",
+  "features": {},
+  "alphaDependencies": {
+    "enabled": false
+  },
+  "enableSiteSettingsShortcut": true,
+  "isChromeOSOnly": false,
+  "isMetaQuest": false,
+  "fullScopeUrl": "https://terminal.cyberspace.online/",
+  "minSdkVersion": 24,
+  "orientation": "default",
+  "fingerprints": [
+    {
+      "name": "debug",
+      "value": "03:29:BA:DE:98:E8:09:3B:49:E2:61:D3:10:81:13:B8:6D:9D:60:C7:EA:CA:64:40:1C:7F:2C:D6:94:E9:57:0E"
+    }
+  ],
+  "additionalTrustedOrigins": [],
+  "retainedBundles": [],
+  "protocolHandlers": [],
+  "fileHandlers": [],
+  "launchHandlerClientMode": "",
+  "displayOverride": [],
+  "appVersion": "0.8.1"
+}

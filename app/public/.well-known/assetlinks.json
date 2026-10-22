@@ -1,0 +1,8 @@
+[{
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "online.cyberspace.terminal",
+        "sha256_cert_fingerprints": ["03:29:BA:DE:98:E8:09:3B:49:E2:61:D3:10:81:13:B8:6D:9D:60:C7:EA:CA:64:40:1C:7F:2C:D6:94:E9:57:0E"]
+      }
+    }]

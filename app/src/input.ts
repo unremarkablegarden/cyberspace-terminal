@@ -7,7 +7,7 @@ import { bytes } from '@cyberspace/kernel'
 import type { Sound } from '@cyberspace/crt/audio'
 import { softKeydownWanted, softInputKeys, SENTINEL } from '@cyberspace/crt/softkeys'
 import { aliasKey, encodeKey, encodeKeyName } from './keys'
-import { hostModifier, MAC } from './config'
+import { ANDROID, hostModifier, MAC } from './config'
 import type { Baud } from './baud'
 import type { Scrollback } from './scrollback'
 import type { ConfigBox } from './settings'
@@ -263,6 +263,10 @@ export class Keyboard {
       'position:absolute;inset:0;width:100%;height:100%;opacity:0;border:0;padding:0;margin:0;' +
       'background:transparent;color:transparent;caret-color:transparent;resize:none;' +
       'font-size:16px;touch-action:manipulation'
+    // Android draws a cursor handle under the caret after a tap. Padding the
+    // field by the viewport height puts the caret outside its clipped box, and
+    // Chrome draws no handle for a caret it cannot show.
+    if (ANDROID) field.style.cssText += ';box-sizing:border-box;overflow:hidden;padding-top:100vh'
     field.value = SENTINEL
     slot.appendChild(field)
 

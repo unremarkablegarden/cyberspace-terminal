@@ -4,9 +4,15 @@
 /**
  * Phones get the narrow grid; the soft keyboard is wired up in main.ts. An iPad
  * sends a Mac user agent by default, and 'iPad' when Safari is asked for the
- * mobile site; either way it gets the 80x25 machine.
+ * mobile site; either way it gets the 80x25 machine. An Android tablet sends
+ * no 'Mobile' token and gets it too.
  */
-export const MOBILE = /mobi|android/i.test(navigator.userAgent) && !/ipad|tablet/i.test(navigator.userAgent)
+export const MOBILE = /mobi/i.test(navigator.userAgent) && !/ipad|tablet/i.test(navigator.userAgent)
+
+export const ANDROID = /android/i.test(navigator.userAgent)
+
+/** An Android tablet: the 80x25 machine, with the phone's soft keyboard and key bar. */
+export const ANDROID_TABLET = ANDROID && !MOBILE
 
 /** An iPad: touch on a 'Mac' or 'iPad' user agent. Its keyboards have no F row or Escape. */
 export const TABLET = !MOBILE && navigator.maxTouchPoints > 1 && /ipad|macintosh/i.test(navigator.userAgent)

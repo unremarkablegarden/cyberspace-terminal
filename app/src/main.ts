@@ -16,7 +16,7 @@ import { fs } from '@zenfs/core'
 import { syncTerm } from './vt'
 import { Baud } from './baud'
 import { VERSION } from './changelog'
-import { API_URL, COLD_AFTER, COLS, CPS, ENV, MAC, MOBILE, ROWS, SOUNDS, STORE_PREFIX, TABLET, homeOf, pathOf } from './config'
+import { ANDROID_TABLET, API_URL, COLD_AFTER, COLS, CPS, ENV, MAC, MOBILE, ROWS, SOUNDS, STORE_PREFIX, TABLET, homeOf, pathOf } from './config'
 import { store } from './store'
 import { grid, withGrid } from './grid'
 import { pictureHost, standbyArt } from './image'
@@ -628,7 +628,7 @@ const canvas = document.getElementById('tube') as HTMLCanvasElement
 
 try {
   await mount(canvas, program)
-  if (MOBILE) {
+  if (MOBILE || ANDROID_TABLET) {
     document.documentElement.classList.add('phone')
     const keys = new KeyBar(document.getElementById('keys')!, keyboard, {
       screen: () => {

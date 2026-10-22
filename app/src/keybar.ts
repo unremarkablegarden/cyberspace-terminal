@@ -1,11 +1,12 @@
 // The phone key bar: a row of keys the soft keyboard lacks, under the canvas and
-// above the soft keyboard. Phones only; an iPad keeps the desktop layout.
+// above the soft keyboard. Phones and Android tablets; an iPad keeps the desktop layout.
 //
 // Caps act on pointerdown with preventDefault, so focus stays in the hidden
 // field and the soft keyboard stays up. Ported from the legacy /terminal page.
 
 import { PHOSPHORS } from '@cyberspace/crt/config'
 import { phosphorTint } from './prefs'
+import { store } from './store'
 import type { Keyboard } from './input'
 
 interface Cap {
@@ -61,6 +62,12 @@ const BIG_H = 44 * 2 + 4 + 12
  */
 const BIG_SHRINK = 24
 
+/**
+ * Soft keyboard height in CSS px above which the soft keyboard counts as open.
+ * Below it, the gap between innerHeight and the visual viewport is browser chrome or rounding.
+ */
+const SOFT_KBD_MIN = 100
+
 /** Beam levels for cap text and cap borders, as fractions of the phosphor colour. */
 const CAP_FG = 0.78
 const CAP_EDGE = 0.45
@@ -73,6 +80,15 @@ export class KeyBar {
   constructor(private el: HTMLElement, private keyboard: Keyboard, private clip: Clipboard) {
     this.render()
     this.tint()
+    // A hardware keyboard hides the bar. A keydown while no soft keyboard is
+    // open can only come from one; e.code cannot tell them apart, since Android
+    // reports an empty code for injected keys as well as soft ones. Capture
+    // phase, because the soft-keyboard field stops propagation. The choice is
+    // stored, so a deck with a keyboard boots without the bar; the soft
+    // keyboard opening shows it again.
+    let soft = false
+    this.hardware(store.get('hwkbd', '') === '1')
+    window.addEventListener('keydown', () => { if (!soft) this.hardware(true) }, true)
     const vv = window.visualViewport
     if (vv) {
       // iOS pans the visual viewport instead of resizing it in some states;
@@ -80,6 +96,8 @@ export class KeyBar {
       const fit = () => {
         const kbd = Math.max(0, Math.round(innerHeight - vv.height - vv.offsetTop))
         document.documentElement.style.setProperty('--kbd', `${kbd}px`)
+        soft = kbd > SOFT_KBD_MIN
+        if (soft) this.hardware(false)
         // The big layout only when the 4:3 canvas at full width, less
         // BIG_SHRINK, still fits above it.
         const screen = this.el.parentElement!
@@ -93,6 +111,13 @@ export class KeyBar {
       vv.addEventListener('scroll', fit)
       fit()
     }
+  }
+
+  private hardware(on: boolean): void {
+    if (document.documentElement.classList.contains('hwkbd') === on) return
+    document.documentElement.classList.toggle('hwkbd', on)
+    if (on) store.set('hwkbd', '1')
+    else store.remove('hwkbd')
   }
 
   /** The armed ^, taken by the next typed character. Disarms. */

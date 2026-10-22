@@ -37,7 +37,9 @@ export default defineConfig({
         name: 'Cyberspace Terminal',
         short_name: 'Terminal',
         description: 'A machine on the wire.',
-        display: 'standalone',
+        // Android hides the status and navigation bars. Desktop Chrome and iOS
+        // have no fullscreen launch and fall back to standalone.
+        display: 'fullscreen',
         background_color: '#000000',
         theme_color: '#000000',
         icons: [
