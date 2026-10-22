@@ -31,6 +31,19 @@ Cyberspace API.
 - Pages: `~/public_html` is a homepage at [pages.cyberspace.online](https://pages.cyberspace.online) — `edit`
   it, `upload` to it, `pages` for the URL (supporters)
 - Offline: installable PWA; the machine boots with no network
+- Android: fullscreen app, can be set as the home screen for a cyberdeck. APK from [Releases](https://github.com/unremarkablegarden/cyberspace-terminal/releases/latest)
+
+## Android
+
+The APK is not on Google Play. It is signed with the project's own key and installed by hand (sideloaded).
+
+1. Download `cyberspace-terminal.apk` from [Releases](https://github.com/unremarkablegarden/cyberspace-terminal/releases/latest) on the device.
+2. Open it. Android asks to allow installs from this source (the browser or file manager); allow it once.
+3. Install, then open Terminal.
+
+Requires Android 7 or later with Chrome installed; the app runs in Chrome without its address bar. Updates to the site reach the app without a new APK.
+
+To boot a deck straight into the terminal: Settings > Apps > Default apps > Home app > Terminal.
 
 ## Layout
 
@@ -44,6 +57,7 @@ Cyberspace API.
 | `packages/compat` | Host for JS user programs |
 | `apps/cyberspace` | Network programs and API client |
 | `app` | Site entry: boots the machine, drives the display |
+| `android` | Android app (Trusted Web Activity); build and release in its README |
 | `tools` | Repo tooling, sources for bundled wasm programs |
 | `spikes` | Feasibility probes |
 | `docs` | Engineering notes, style guides |

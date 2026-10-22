@@ -3,6 +3,6 @@
       "target": {
         "namespace": "android_app",
         "package_name": "online.cyberspace.terminal",
-        "sha256_cert_fingerprints": ["03:29:BA:DE:98:E8:09:3B:49:E2:61:D3:10:81:13:B8:6D:9D:60:C7:EA:CA:64:40:1C:7F:2C:D6:94:E9:57:0E"]
+        "sha256_cert_fingerprints": ["03:29:BA:DE:98:E8:09:3B:49:E2:61:D3:10:81:13:B8:6D:9D:60:C7:EA:CA:64:40:1C:7F:2C:D6:94:E9:57:0E", "9B:AE:0D:FC:64:79:50:6B:37:E0:67:68:F6:AF:C8:18:5C:99:C1:C0:1C:A9:66:08:54:DD:DC:4F:1C:9E:EB:4E"]
       }
     }]

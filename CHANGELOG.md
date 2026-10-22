@@ -297,3 +297,10 @@
 - `~/OS_CHART.txt`
 - Fixed `browse` refusing to install your own program when `~/bin` had no copy (cleared or new browser)
 - `~/bin/docs/PORT_LEGACY.txt`: porting an old /terminal program to a JS or PTY program
+- Android
+    - App: fullscreen, can be set as the home screen, APK on GitHub Releases
+    - Tablets get the 80x25 machine
+    - Extra keys hidden while a hardware keyboard is in use, on tablets shown only with the soft keyboard
+    - Fixed cursor handle drawn over the screen after a tap
+- Installed from the browser: fullscreen on Android
+- cIRC `/localtime`
