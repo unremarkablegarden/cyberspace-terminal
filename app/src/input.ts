@@ -263,10 +263,6 @@ export class Keyboard {
       'position:absolute;inset:0;width:100%;height:100%;opacity:0;border:0;padding:0;margin:0;' +
       'background:transparent;color:transparent;caret-color:transparent;resize:none;' +
       'font-size:16px;touch-action:manipulation'
-    // Android draws a cursor handle under the caret after a tap. Padding the
-    // field by the viewport height puts the caret outside its clipped box, and
-    // Chrome draws no handle for a caret it cannot show.
-    if (ANDROID) field.style.cssText += ';box-sizing:border-box;overflow:hidden;padding-top:100vh'
     field.value = SENTINEL
     slot.appendChild(field)
 
@@ -281,7 +277,18 @@ export class Keyboard {
       field.focus({ preventScroll: true })
     }
 
-    field.addEventListener('pointerdown', () => this.pointer())
+    if (ANDROID) {
+      // Android draws a cursor handle where a tap places the caret. The field
+      // takes no taps; a tap on the slot focuses it from code, which places no
+      // caret. The blur first makes Android raise a soft keyboard that was
+      // dismissed while the field kept focus.
+      field.style.pointerEvents = 'none'
+      slot.addEventListener('pointerdown', () => {
+        this.pointer()
+        field.blur()
+        focus()
+      })
+    } else field.addEventListener('pointerdown', () => this.pointer())
     field.addEventListener('blur', () => setTimeout(focus, 0))
     focus()
 

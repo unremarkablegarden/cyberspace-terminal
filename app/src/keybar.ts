@@ -5,6 +5,7 @@
 // field and the soft keyboard stays up. Ported from the legacy /terminal page.
 
 import { PHOSPHORS } from '@cyberspace/crt/config'
+import { ANDROID_TABLET } from './config'
 import { phosphorTint } from './prefs'
 import { store } from './store'
 import type { Keyboard } from './input'
@@ -86,8 +87,10 @@ export class KeyBar {
     // phase, because the soft-keyboard field stops propagation. The choice is
     // stored, so a deck with a keyboard boots without the bar; the soft
     // keyboard opening shows it again.
+    // An Android tablet shows the bar only while the soft keyboard is open: the
+    // screen has room for the canvas either way, and a deck usually has a keyboard.
     let soft = false
-    this.hardware(store.get('hwkbd', '') === '1')
+    this.hardware(ANDROID_TABLET || store.get('hwkbd', '') === '1')
     window.addEventListener('keydown', () => { if (!soft) this.hardware(true) }, true)
     const vv = window.visualViewport
     if (vv) {
@@ -98,6 +101,7 @@ export class KeyBar {
         document.documentElement.style.setProperty('--kbd', `${kbd}px`)
         soft = kbd > SOFT_KBD_MIN
         if (soft) this.hardware(false)
+        else if (ANDROID_TABLET) this.hardware(true)
         // The big layout only when the 4:3 canvas at full width, less
         // BIG_SHRINK, still fits above it.
         const screen = this.el.parentElement!
