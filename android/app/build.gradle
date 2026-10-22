@@ -28,10 +28,10 @@ def twaManifest = [
     launcherName: 'Terminal', // The name shown on the Android Launcher.
     themeColor: '#000000', // The color used for the status bar.
     themeColorDark: '#000000', // The color used for the dark status bar.
-    navigationColor: '#000000', // The color used for the navigation bar.
-    navigationColorDark: '#000000', // The color used for the dark navbar.
-    navigationDividerColor: '#000000', // The navbar divider color.
-    navigationDividerColorDark: '#000000', // The dark navbar divider color.
+    navigationColor: '#00000000', // The color used for the navigation bar.
+    navigationColorDark: '#00000000', // The color used for the dark navbar.
+    navigationDividerColor: '#00000000', // The navbar divider color.
+    navigationDividerColorDark: '#00000000', // The dark navbar divider color.
     backgroundColor: '#000000', // The color used for the splash screen background.
     enableNotifications: false, // Set to true to enable notification delegation.
     // Every shortcut must include the following fields:
