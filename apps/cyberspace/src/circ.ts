@@ -24,7 +24,7 @@ import { bioLines, fetchProfile, loadPortrait } from './bio.js'
 import { artLines, bodyOf, followList, hasStyle, roomViews, type MsgBody } from './chatui.js'
 import {
   ARROWS, ASLEEP, BLIP_HZ, Blinker, HEAD_W, SILENT, Typewriter, entryLines, entryParts,
-  mentions, narrowLines, nick, printing, stampedLines, systemLines, type ChatMessage,
+  hhmm, mentions, narrowLines, nick, printing, stampedLines, systemLines, type ChatMessage,
   type ChatPictureHost, type ChatSound, type ChatUser, type Picture,
 } from './chat.js'
 import { when } from './feedutil.js'
@@ -81,10 +81,11 @@ const LOCAL: LocalCommand[] = [
   { name: 'art', usage: '/art', summary: 'post a block of ASCII art' },
   { name: 'rooms', usage: '/rooms', summary: 'list them' },
   { name: 'who', usage: '/who', summary: 'who is here' },
+  { name: 'localtime', usage: '/localtime', summary: 'post your local time' },
   { name: 'quit', usage: '/quit', summary: 'leave cIRC' },
 ]
 /** Every dispatched name, aliases included. Tab and the help box show only LOCAL. */
-const LOCAL_NAMES = ['art', 'rooms', 'who', 'quit', 'exit']
+const LOCAL_NAMES = ['art', 'rooms', 'who', 'localtime', 'quit', 'exit']
 const SLASH = slashNames('chat', LOCAL)
 
 /**
@@ -260,6 +261,7 @@ export function circProgram(
       // A picture the screen is about to draw is not also named in the text.
       content: bodyOf(m, { image: drawsPicture(m.imageUrl), art: true }),
       action: m.isAction,
+      status: m.isAction && hasStyle(m.style, 'localtime'),
       system: m.isSystem,
       deleted: m.deleted,
       blink: hasStyle(m.style, 'blink'),
@@ -1103,6 +1105,8 @@ export function circProgram(
             if (narrow) openWho()
             else say(users.map(u => u.username).join(' ') || 'nobody here')
             return
+          // The server can't see this machine's clock, so the time goes with the command.
+          case 'localtime': void send(`/localtime ${hhmm()}`); paint(); return
         }
       }
       void send(text)

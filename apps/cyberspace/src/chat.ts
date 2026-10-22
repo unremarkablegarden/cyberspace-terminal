@@ -67,6 +67,8 @@ export interface ChatMessage {
   timestamp?: number
   content?: string
   action?: boolean
+  /** An action whose text names the sender itself (/localtime), so no nick leads it. */
+  status?: boolean
   system?: boolean
   deleted?: boolean
   blink?: boolean
@@ -106,7 +108,7 @@ export function entryHead(m: ChatMessage): string {
 export function entryParts(m: ChatMessage): { head: string; body: string } {
   const said = m.content ?? ''
   const text = [said, m.attachment ? IMG : ''].filter(Boolean).join(' ')
-  if (m.action) return { head: ACTION_HEAD, body: `${nick(m)} ${text}` }
+  if (m.action) return { head: ACTION_HEAD, body: m.status ? text : `${nick(m)} ${text}` }
   return { head: entryHead(m), body: text }
 }
 
@@ -258,7 +260,7 @@ export function entryLines(m: ChatMessage, width: number, opts: EntryOptions = {
 
   // The timestamp is drawn DIM so the name reads first. An action has no
   // timestamp; it runs from the margin.
-  const spans = m.action ? [name] : [{ at: 0, len: 5, attr: DIM }, name]
+  const spans = m.status ? [] : m.action ? [name] : [{ at: 0, len: 5, attr: DIM }, name]
 
   const rows: LogLine[] = wrapped.map((text, i) => ({
     text,
