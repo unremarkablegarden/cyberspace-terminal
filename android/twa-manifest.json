@@ -20,8 +20,8 @@
     "path": "./android.keystore",
     "alias": "android"
   },
-  "appVersionName": "0.8.1",
-  "appVersionCode": 1,
+  "appVersionName": "0.9.0",
+  "appVersionCode": 2,
   "shortcuts": [],
   "generatorApp": "bubblewrap-cli",
   "webManifestUrl": "https://terminal.cyberspace.online/manifest.webmanifest",
@@ -52,5 +52,5 @@
   "fileHandlers": [],
   "launchHandlerClientMode": "",
   "displayOverride": [],
-  "appVersion": "0.8.1"
+  "appVersion": "0.9.0"
 }
