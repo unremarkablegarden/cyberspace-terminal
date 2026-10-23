@@ -454,6 +454,12 @@ export class Typewriter {
     if (this.timer === null) this.start()
   }
 
+  /** Show messages from receive() whole, without typing them out. */
+  show(fresh: ChatMessage[]): void {
+    if (!fresh.length || this.closed) return
+    this.displayed = [...this.displayed, ...fresh]
+  }
+
   /** Whether anything on screen or queued is blinking. */
   get blinking(): boolean {
     return this.displayed.some(m => m.blink) || this.pending.some(m => m.blink)

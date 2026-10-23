@@ -576,7 +576,11 @@ export function cmailProgram(
       if (fresh.length) {
         // No mention tone here: every message in a thread is addressed to the reader.
         snd.blip(900)
-        wire.enqueue(fresh)
+        // The reader's own lines appear whole, as soon as they are sent.
+        const me = (api.username ?? '').toLowerCase()
+        const mine = (m: ChatMessage): boolean => (m.username ?? '').toLowerCase() === me
+        wire.show(fresh.filter(mine))
+        wire.enqueue(fresh.filter(m => !mine(m)))
       }
       drawThread()
     }
@@ -654,9 +658,19 @@ export function cmailProgram(
       scroll = 0
       drawThread()
       try {
-        const r = await api.post<{ reply?: string }>(`/v1/cmail/${convId}`, { content: text })
+        const r = await api.post<{ reply?: string; messageId?: string }>(
+          `/v1/cmail/${convId}`, { content: text })
         status = ''
         if (r?.reply) for (const line of r.reply.split('\n')) say(line)
+        // A plain message is added from the reply rather than waiting for the
+        // stream to echo it. The stream's copy replaces it, server timestamp
+        // included. A /command is left to the stream: the server sets its style.
+        if (r?.messageId && !text.startsWith('/') && !msgs.has(r.messageId)) {
+          msgs.set(r.messageId, {
+            id: r.messageId, senderUsername: api.username ?? undefined, content: text, timestamp: Date.now(),
+          })
+          feed()
+        }
       } catch (e) {
         status = 'send failed'
         snd.beep(220, 0.14)

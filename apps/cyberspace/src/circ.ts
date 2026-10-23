@@ -634,7 +634,10 @@ export function circProgram(
         if (fresh.some(m => namesMe(m, m.content ?? ''))) snd.blip(2500, 0.06)
         else snd.blip(900)
       }
-      wire.enqueue(fresh)
+      // The reader's own lines appear whole, as soon as they are sent.
+      const mine = (m: ChatMessage): boolean => (m.username ?? '').toLowerCase() === me
+      wire.show(fresh.filter(mine))
+      wire.enqueue(fresh.filter(m => !mine(m)))
       paint()
     }
 
@@ -782,9 +785,19 @@ export function circProgram(
       status = 'sending'
       paint()
       try {
-        const r = await api.post<{ reply?: string }>(`/v1/circ/${room.id}`, { content: text })
+        const r = await api.post<{ reply?: string; messageId?: string }>(
+          `/v1/circ/${room.id}`, { content: text })
         status = ''
         if (r?.reply) for (const line of r.reply.split('\n')) say(line)
+        // A plain message is added from the reply rather than waiting for the
+        // stream to echo it. The stream's copy replaces it, server timestamp
+        // included. A /command is left to the stream: the server sets its style.
+        if (r?.messageId && !text.startsWith('/') && !msgs.has(r.messageId)) {
+          msgs.set(r.messageId, {
+            id: r.messageId, username: api.username ?? undefined, content: text, timestamp: Date.now(),
+          })
+          feed()
+        }
       } catch (e) {
         status = 'send failed'
         snd.beep(220, 0.14)
