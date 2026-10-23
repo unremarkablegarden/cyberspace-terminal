@@ -27,6 +27,7 @@ import {
   hhmm, mentions, narrowLines, nick, printing, stampedLines, systemLines, type ChatMessage,
   type ChatPictureHost, type ChatSound, type ChatUser, type Picture,
 } from './chat.js'
+import { emoAt, emoInsert, emoPicker, typed } from './emo.js'
 import { when } from './feedutil.js'
 import { helpLines, routeSlash, slashNames, type LocalCommand } from './slash.js'
 
@@ -82,10 +83,11 @@ const LOCAL: LocalCommand[] = [
   { name: 'rooms', usage: '/rooms', summary: 'list them' },
   { name: 'who', usage: '/who', summary: 'who is here' },
   { name: 'localtime', usage: '/localtime', summary: 'post your local time' },
+  { name: 'emo', usage: '/emo', summary: 'insert a kaomoji' },
   { name: 'quit', usage: '/quit', summary: 'leave cIRC' },
 ]
 /** Every dispatched name, aliases included. Tab and the help box show only LOCAL. */
-const LOCAL_NAMES = ['art', 'rooms', 'who', 'localtime', 'quit', 'exit']
+const LOCAL_NAMES = ['art', 'rooms', 'who', 'localtime', 'emo', 'quit', 'exit']
 const SLASH = slashNames('chat', LOCAL)
 
 /**
@@ -1096,6 +1098,19 @@ export function circProgram(
       }))
     }
 
+    /** The kaomoji picker, replacing the /emo at `start`. Escape leaves the line as typed. */
+    const openEmo = (start: number): void => {
+      open(emoPicker({
+        bounds: { x: 0, y: 0, w: cols, h: splitY },
+        snd,
+        onRepaint: repaint,
+        onDone: (emoticon) => {
+          if (emoticon) emoInsert(input, start, emoticon)
+          close()
+        },
+      }))
+    }
+
     // --- keys ----------------------------------------------------------------
 
     const submit = (): void => {
@@ -1120,6 +1135,8 @@ export function circProgram(
             return
           // The server can't see this machine's clock, so the time goes with the command.
           case 'localtime': void send(`/localtime ${hhmm()}`); paint(); return
+          // Submitted, as after Tab completion. The line becomes /emo again for the picker to replace.
+          case 'emo': input.set('/emo'); openEmo(0); return
         }
       }
       void send(text)
@@ -1196,7 +1213,13 @@ export function circProgram(
       if (k.key === 'PageUp') { move(scroll + page); return }
       if (k.key === 'PageDown') { move(scroll - page); return }
 
-      if (input.onKey(k)) { syncSuggest(); paint() }
+      if (input.onKey(k)) {
+        syncSuggest()
+        paint()
+        // Only a typed character opens the picker, so moving the caret back past a /emo left by Escape does not reopen it.
+        const at = typed(k) ? emoAt(input) : -1
+        if (at >= 0) openEmo(at)
+      }
     }
 
     // --- run -----------------------------------------------------------------

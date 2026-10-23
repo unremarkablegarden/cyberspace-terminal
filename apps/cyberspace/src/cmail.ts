@@ -30,6 +30,7 @@ import {
   printing, systemLines, type ChatMessage, type ChatPictureHost, type ChatSound,
   type Picture,
 } from './chat.js'
+import { emoAt, emoInsert, emoPicker, typed } from './emo.js'
 import { helpLines, routeSlash, slashNames, type LocalCommand } from './slash.js'
 
 interface Conversation {
@@ -71,10 +72,11 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000
 
 /** Commands this program handles itself; the server resolves the rest. */
 const LOCAL: LocalCommand[] = [
+  { name: 'emo', usage: '/emo', summary: 'insert a kaomoji' },
   { name: 'quit', usage: '/quit', summary: 'leave C-Mail' },
 ]
 /** Every dispatched name, aliases included. Tab and the help box show only LOCAL. */
-const LOCAL_NAMES = ['quit', 'exit']
+const LOCAL_NAMES = ['emo', 'quit', 'exit']
 const SLASH = slashNames('dm', LOCAL)
 
 const INDEX_HINT: Span[] = [
@@ -802,6 +804,20 @@ export function cmailProgram(
       void loadIndex()
     }
 
+    /** The kaomoji picker, replacing the /emo at `start`. Escape leaves the line as typed. */
+    const openEmo = (start: number): void => {
+      open(emoPicker({
+        bounds: { x: 0, y: 0, w: cols, h: threadSplitY },
+        snd,
+        // The stack repaints only on keys, so the flash on Enter draws the popup itself.
+        onRepaint: () => { stack.top?.draw?.(s); paintNow() },
+        onDone: (emoticon) => {
+          if (emoticon) emoInsert(input, start, emoticon)
+          close(drawThread)
+        },
+      }))
+    }
+
     const threadKey = (k: KeyInput): void => {
       // Checked first: the scroll keys measure against the whole log.
       print.finish()
@@ -820,8 +836,12 @@ export function cmailProgram(
           return
         }
         if (route && 'help' in route) { openThreadHelp(); return }
-        // The only local commands are /quit and /exit.
-        if (route && 'local' in route) { running = false; return }
+        if (route && 'local' in route) {
+          // Submitted, as after Tab completion. The line becomes /emo again for the picker to replace.
+          if (route.local === 'emo') { input.set('/emo'); openEmo(0); return }
+          running = false
+          return
+        }
         void send(text)
         drawThread()
         return
@@ -839,7 +859,12 @@ export function cmailProgram(
       if (k.key === 'ArrowDown') { move(scroll - 1); return }
       if (k.key === 'PageUp') { move(scroll + page); return }
       if (k.key === 'PageDown') { move(scroll - page); return }
-      if (input.onKey(k)) drawThread()
+      if (input.onKey(k)) {
+        drawThread()
+        // Only a typed character opens the picker, so moving the caret back past a /emo left by Escape does not reopen it.
+        const at = typed(k) ? emoAt(input) : -1
+        if (at >= 0) openEmo(at)
+      }
     }
 
     // --- run -----------------------------------------------------------------

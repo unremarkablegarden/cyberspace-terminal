@@ -90,6 +90,11 @@ export class InputLine {
     return this.text
   }
 
+  /** The caret, as an offset into the value. */
+  get caret() {
+    return this.pos
+  }
+
   /**
    * Replace the whole value, as a completion does. The caret moves to the end
    * unless a position is given.
