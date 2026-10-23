@@ -16,7 +16,7 @@ import { fs } from '@zenfs/core'
 import { syncTerm } from './vt'
 import { Baud } from './baud'
 import { VERSION } from './changelog'
-import { ANDROID_TABLET, API_URL, COLD_AFTER, COLS, CPS, ENV, MAC, MOBILE, ROWS, SOUNDS, STORE_PREFIX, TABLET, homeOf, pathOf } from './config'
+import { ANDROID_TABLET, API_URL, COLD_AFTER, COLS, CPS, ENV, GRID_SIZE, MAC, MOBILE, ROWS, SOUNDS, STORE_PREFIX, TABLET, homeOf, pathOf } from './config'
 import { store } from './store'
 import { grid, withGrid } from './grid'
 import { pictureHost, standbyArt } from './image'
@@ -377,6 +377,7 @@ function saveSession(): void {
     // excludeAltBuffer stores the shell scrollback underneath a full-screen
     // program rather than the program's own painting, which comes back when
     // the resume line runs the program again.
+    grid: GRID_SIZE,
     screen: ser.serialize({
       scrollback: SESSION_SCROLLBACK,
       excludeAltBuffer: true,
@@ -415,7 +416,8 @@ const program = {
     void loadFallback(s.term)
 
     restoreSettings(s, snd)
-    config = new ConfigBox(s, snd, () => void writeMotd(api.username))
+    // A warm reload: pagehide parks the session, and it resumes at the new size.
+    config = new ConfigBox(s, snd, () => void writeMotd(api.username), () => location.reload())
     saver = new Screensaver(s, snd, () => halted || !live)
     doom = new Doom(s, snd, waitForDrain)
     launcher = new Launcher(s, snd)
@@ -530,7 +532,9 @@ const program = {
       }
     }
 
-    const saved = loadSession()
+    const parked = loadSession()
+    // A screen saved at another grid size rewraps badly, so it is dropped; the cwd and jobs are kept.
+    const saved = parked && parked.grid && parked.grid !== GRID_SIZE ? { ...parked, screen: '' } : parked
     if (saved) {
       // Written straight to the parser, bypassing the rate limiter: restoring a
       // screen is a repaint, not program output.

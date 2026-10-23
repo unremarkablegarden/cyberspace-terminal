@@ -1,6 +1,6 @@
 {
   "name": "@cyberspace/coreutils",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "description": "Core tools: ls, cat, grep and friends.",
   "type": "module",
   "exports": {

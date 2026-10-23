@@ -69,6 +69,11 @@ export interface Setting {
    * are presets with nothing to adjust.
    */
   tune?(value: string): TuneSpec | null
+  /**
+   * Applied on Enter rather than on movement.
+   * For a value that cannot be previewed, such as GRID, which reloads the page.
+   */
+  onEnter?: boolean
 }
 
 /**
@@ -278,7 +283,7 @@ export class SettingsScreen implements Screen {
       // A group's children are switches rather than alternatives, so moving
       // between them must not activate one, or a child could not be passed over
       // to reach the next. Enter changes a child.
-      if (!setting?.children) this.apply(e)
+      if (!setting?.children && !setting?.onEnter) this.apply(e)
       else this.opts.onFeedback?.('move', e)
       return true
     }
@@ -301,8 +306,8 @@ export class SettingsScreen implements Screen {
         // pressed rather than moved onto.
         const child = setting?.children?.[this.value]
         if (child) { this.advance(child, e); return true }
-        // Otherwise the value has applied since the cursor landed on it, so this
-        // confirms what is already in effect.
+        if (setting?.onEnter) this.apply(e)
+        // The value is now in effect, applied when the cursor landed on it or by onEnter above, so Enter closes the box.
         this.opts.onFeedback?.('cancel', e)
         this.opts.onDone()
         return true

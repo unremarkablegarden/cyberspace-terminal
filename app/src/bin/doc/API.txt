@@ -24,8 +24,8 @@ Anything else is refused with `not a program (missing export default)`.
 
 THE LOOP
 
-A JS program is given an 80x25 grid of cells, 44x20 on a phone. A
-ticker diffs that grid to the terminal every 33 milliseconds, and only
+A JS program is given the machine's grid of cells: 80x25, 44x20 on a
+phone, or 44x20, 80x25 or 132x43 as chosen in F1. A ticker diffs that grid to the terminal every 33 milliseconds, and only
 when something has changed it. The first pushScreen takes the alternate
 screen; popScreen back to an empty stack returns to line mode, where
 ctx.write goes out as ordinary text.

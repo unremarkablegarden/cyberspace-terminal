@@ -304,3 +304,7 @@
     - Fixed cursor handle drawn over the screen after a tap
 - Installed from the browser: fullscreen on Android
 - cIRC `/localtime`
+
+## v0.9
+
+- `F1` grid: 44x20, 80x25 or 132x43, reloads into the session

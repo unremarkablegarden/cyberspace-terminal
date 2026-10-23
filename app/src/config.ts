@@ -31,8 +31,23 @@ export const MAC = /Mac|iPhone|iPad|iPod/.test(navigator.platform)
 export const hostModifier = (e: { metaKey: boolean; ctrlKey: boolean }): boolean =>
   MAC ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey
 
-export const COLS = MOBILE ? 44 : 80
-export const ROWS = MOBILE ? 20 : 25
+/** Prefix on everything this faceplate keeps in localStorage. */
+export const STORE_PREFIX = 'csterm.'
+
+/** The grid sizes F1 offers, as cols x rows. */
+export const GRIDS = ['44x20', '80x25', '132x43']
+
+/**
+ * The grid chosen in F1, else the device's own: 44x20 on a phone, 80x25 elsewhere.
+ * Read once at load, since nothing resizes the tty after boot; a change in F1 reloads the page.
+ * Read from localStorage directly because store.ts imports this file.
+ */
+export const GRID_SIZE = ((): string => {
+  const saved = localStorage.getItem(STORE_PREFIX + 'grid')
+  return saved && GRIDS.includes(saved) ? saved : MOBILE ? '44x20' : '80x25'
+})()
+
+export const [COLS, ROWS] = GRID_SIZE.split('x').map(Number)
 export const HOME = '/home/guest'
 
 /** A member's home sits next to guest's on the same OPFS mount. */
@@ -64,9 +79,6 @@ export const CPS = 240
 
 /** Time away after which the next visit is a cold boot, with the full boot animation. */
 export const COLD_AFTER = 10 * 60 * 1000
-
-/** Prefix on everything this faceplate keeps in localStorage. */
-export const STORE_PREFIX = 'csterm.'
 
 /** The environment every shell starts with. USER, HOME and PATH follow the login (main.ts). */
 export const ENV = {

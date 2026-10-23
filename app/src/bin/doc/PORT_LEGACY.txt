@@ -82,7 +82,7 @@ Then check these:
   The screen   pushScreen once, popScreen in a finally, so Ctrl-C
                gives the screen back.
   The size     ctx.term.cols and ctx.term.rows: 80x25, 44x20 on a
-               phone. Never a fixed 80.
+               phone, 132x43 when chosen in F1. Never a fixed 80.
   Saves        localStorage is the program's own, 256 KB, filed under
                the command name. Renaming the file starts it empty.
   Sound        ctx.snd, or AudioContext. See API.txt, ctx.snd.

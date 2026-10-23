@@ -63,9 +63,9 @@ export function motdPictures(p: ChatPictures): void {
   pictures = p
 }
 
-/** The globe's rows, rasterised for the current font; none on a phone or without a bank. */
+/** The globe's rows, rasterised for the current font; none on the 44-column grid or without a bank. */
 async function globe(): Promise<string[]> {
-  if (MOBILE || !pictures) return []
+  if (COLS < 80 || !pictures) return []
   // The host caches by font and size, so a rewrite costs nothing while the
   // font stays and re-rasterises when F1 changes it.
   return pictures.load(GLOBE_SRC, GLOBE_SRC, GLOBE_COLS, GLOBE_ROWS).then(p => p.lines, () => [])

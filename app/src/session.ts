@@ -37,6 +37,11 @@ export interface TerminalSession {
   uid: string
   /** The screen serialised as ANSI, scrollback included. See @xterm/addon-serialize. */
   screen: string
+  /**
+   * The grid the screen was saved at, as cols x rows (config.ts GRIDS).
+   * Absent in sessions saved before it was recorded, which were all at the device's own grid.
+   */
+  grid?: string
   cwd: string
   /**
    * The job table. Each entry is the command line that brings the program
@@ -64,6 +69,7 @@ export function parseSession(raw: unknown, uid: string, now: number): TerminalSe
   if (now - s.at > SESSION_MAX_AGE || s.at > now) return null
 
   if (typeof s.screen !== 'string' || typeof s.cwd !== 'string' || !s.cwd) return null
+  if (s.grid !== undefined && typeof s.grid !== 'string') return null
   if (!Array.isArray(s.jobs)) return null
   const jobs: ParkedJob[] = []
   for (const j of s.jobs as unknown[]) {
@@ -80,6 +86,7 @@ export function parseSession(raw: unknown, uid: string, now: number): TerminalSe
     at: s.at,
     uid: s.uid,
     screen: s.screen,
+    ...(s.grid === undefined ? {} : { grid: s.grid }),
     cwd: s.cwd,
     jobs,
     fg: s.fg as number | null,
@@ -113,7 +120,7 @@ export async function runSession(host: SessionHost, saved: TerminalSession | nul
   const { kernel, tty } = host
   let cwd = saved?.cwd ?? ENV.HOME
   // A restored screen already contains the motd, so the first shell skips it.
-  let quiet = !!saved
+  let quiet = !!saved?.screen
   while (!host.halted()) {
     if (!quiet) {
       const motd = await readText('/etc/motd').catch(() => '')

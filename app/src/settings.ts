@@ -12,6 +12,7 @@ import { CRT_CONTROLS } from '@cyberspace/crt/controls'
 import { SAVER_NAMES } from '@cyberspace/crt/saverdefs'
 import type { KeyInput, KnobGroup } from '@cyberspace/tui'
 import { store } from './store'
+import { GRIDS, GRID_SIZE } from './config'
 import { grid } from './grid'
 import {
   CUSTOM_PHOSPHOR, CUSTOM_PHOSPHOR_DEFAULT, SAVER_MINUTES, USER_PRESET, customPhosphor,
@@ -70,7 +71,7 @@ function resetUserParam(screen: CrtScreen, key?: string): void {
  * storage, not in the box: saving a preset extends the SCREEN list, and the
  * shell can change any of these while the box is closed.
  */
-function settings(screen: CrtScreen, snd: Sound, onFont?: () => void): Setting[] {
+function settings(screen: CrtScreen, snd: Sound, onFont?: () => void, onGrid?: () => void): Setting[] {
   const channel = (name: 'background' | 'keys' | 'beeps'): Setting => ({
     label: name,
     values: AUDIO_LEVELS.map(([label]) => label),
@@ -105,6 +106,19 @@ function settings(screen: CrtScreen, snd: Sound, onFont?: () => void): Setting[]
         } catch {
           return fontLabel(store.get('font', 'terminus-8x16'))
         }
+      },
+    },
+    {
+      // The tty size is fixed at boot, so a new grid reloads into the parked session.
+      label: 'GRID',
+      values: GRIDS,
+      onEnter: true,
+      current: () => GRID_SIZE,
+      select: (value) => {
+        if (value === GRID_SIZE) return value
+        store.set('grid', value)
+        onGrid?.()
+        return value
       },
     },
     {
@@ -227,9 +241,12 @@ export class ConfigBox {
   /** Resolvers for closed(), run on release. */
   private waiting: (() => void)[] = []
 
-  /** `onFont` runs after a font change lands: pictures rasterised for the old cell size need redoing. */
-  constructor(screen: CrtScreen, snd: Sound, onFont?: () => void) {
-    this.overlay = new SettingsOverlay(screen.term, () => settings(screen, snd, onFont))
+  /**
+   * `onFont` runs after a font change lands: pictures rasterised for the old cell size need redoing.
+   * `onGrid` runs after a new grid size is stored, to reload the page onto it.
+   */
+  constructor(screen: CrtScreen, snd: Sound, onFont?: () => void, onGrid?: () => void) {
+    this.overlay = new SettingsOverlay(screen.term, () => settings(screen, snd, onFont, onGrid))
     this.overlay.onFeedback = kind => {
       if (kind === 'edge') snd.beep(220, 0.04)
       // Same close sound the other screens use.
