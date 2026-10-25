@@ -102,12 +102,28 @@ export interface BufferOptions {
 
 const DEFAULT_MAX = 65536
 const DEFAULT_WIDTH = 56
+/** Undo steps kept. Beyond it the oldest is dropped. */
+const UNDO_MAX = 200
+
+/** Text, caret and selection, as recorded for undo. */
+interface Snapshot { str: string; at: number; anchor: number | null }
+
+/**
+ * Kind of an edit, for grouping undo steps. Consecutive edits of one kind are
+ * one step: a typed word, the spaces after it, a run of Backspace or Delete.
+ * null is always a step of its own: Enter, cut, ^K, deleting a selection.
+ */
+type Run = 'word' | 'space' | 'delete' | null
 
 export class TextBuffer {
   private str: string
   private at = 0
   /** Other end of the selection, or null when nothing is selected. */
   private anchor: number | null = null
+  private undos: Snapshot[] = []
+  private redos: Snapshot[] = []
+  /** Kind of the last edit. A caret move clears it, so typing after a move is a new step. */
+  private run: Run = null
   /** First visible row of the folded text. Owned by the caller that draws. */
   top = 0
   private cols = 0
@@ -125,6 +141,7 @@ export class TextBuffer {
   /** Move the caret; a shifted move extends the selection, a plain one drops it. */
   private moveTo(to: number, shift: boolean): boolean {
     to = Math.max(0, Math.min(to, this.str.length))
+    this.run = null
     if (shift) { if (this.anchor === null) this.anchor = this.at; this.at = to }
     else { this.anchor = null; this.at = to }
     return true
@@ -136,6 +153,43 @@ export class TextBuffer {
     this.str = this.str.slice(0, s[0]) + this.str.slice(s[1])
     this.at = s[0]
     this.anchor = null
+    return true
+  }
+
+  /**
+   * Apply an edit and record the state before it as an undo step, unless the
+   * edit continues a run of the same kind. An edit that leaves the text as it
+   * was records nothing. Any recorded edit clears the redo steps.
+   */
+  private change(kind: Run, edit: () => void): void {
+    const before = { str: this.str, at: this.at, anchor: this.anchor }
+    edit()
+    if (this.str === before.str) return
+    if (kind === null || kind !== this.run) {
+      this.undos.push(before)
+      if (this.undos.length > UNDO_MAX) this.undos.shift()
+    }
+    this.redos = []
+    this.run = kind
+  }
+
+  /** Go back one step. Caret and selection return to where they were before it. */
+  undo(): boolean {
+    return this.restore(this.undos, this.redos)
+  }
+
+  redo(): boolean {
+    return this.restore(this.redos, this.undos)
+  }
+
+  private restore(from: Snapshot[], to: Snapshot[]): boolean {
+    const s = from.pop()
+    if (!s) return this.reject()
+    to.push({ str: this.str, at: this.at, anchor: this.anchor })
+    this.str = s.str
+    this.at = s.at
+    this.anchor = s.anchor
+    this.run = null
     return true
   }
 
@@ -161,6 +215,9 @@ export class TextBuffer {
     this.at = 0
     this.top = 0
     this.anchor = null
+    this.undos = []
+    this.redos = []
+    this.run = null
   }
 
   rows(): Fold[] {
@@ -182,10 +239,15 @@ export class TextBuffer {
       const s = this.selection()
       if (s) {
         this.opts.clipboard?.(this.str.slice(s[0], s[1]))
-        if (e.key === 'x') this.deleteSel()
+        if (e.key === 'x') this.change(null, () => this.deleteSel())
       }
       return true
     }
+
+    // The host maps cmd+Z and ctrl+shift+Z to undo, cmd+shift+Z and ^Y to redo.
+    // Plain ^Z is the suspend key and never reaches a program.
+    if (e.ctrlKey && e.shiftKey && e.key === 'z') return this.undo()
+    if (e.ctrlKey && e.key === 'y') return this.redo()
 
     const shift = e.shiftKey
     // Ctrl or Alt with an arrow means word granularity; the host sends the same
@@ -194,12 +256,12 @@ export class TextBuffer {
 
     if (e.key === 'ArrowLeft') {
       const s = this.selection()
-      if (s && !shift) { this.at = s[0]; this.anchor = null; return true }
+      if (s && !shift) return this.moveTo(s[0], false)
       return this.moveTo(word ? wordLeft(this.str, this.at) : this.at - 1, shift)
     }
     if (e.key === 'ArrowRight') {
       const s = this.selection()
-      if (s && !shift) { this.at = s[1]; this.anchor = null; return true }
+      if (s && !shift) return this.moveTo(s[1], false)
       return this.moveTo(word ? wordRight(this.str, this.at) : this.at + 1, shift)
     }
     if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
@@ -216,17 +278,15 @@ export class TextBuffer {
     }
 
     if (e.key === 'Enter') { this.insert('\n'); return true }
-    if (e.key === 'Backspace') {
-      if (this.deleteSel()) return true
-      if (!this.at) return this.reject()
-      this.str = this.str.slice(0, this.at - 1) + this.str.slice(this.at)
-      this.at--
-      return true
-    }
-    if (e.key === 'Delete') {
-      if (this.deleteSel()) return true
-      if (this.at >= this.str.length) return this.reject()
-      this.str = this.str.slice(0, this.at) + this.str.slice(this.at + 1)
+    if (e.key === 'Backspace' || e.key === 'Delete') {
+      if (this.selection()) { this.change(null, () => this.deleteSel()); return true }
+      const back = e.key === 'Backspace'
+      if (back ? !this.at : this.at >= this.str.length) return this.reject()
+      this.change('delete', () => {
+        const at = back ? this.at - 1 : this.at
+        this.str = this.str.slice(0, at) + this.str.slice(at + 1)
+        this.at = at
+      })
       return true
     }
 
@@ -238,19 +298,22 @@ export class TextBuffer {
 
   /** Insert a run of text at the caret. Refused rather than truncated if it does not fit. */
   insert(s: string): void {
-    // Typing or pasting over a selection replaces it.
-    this.deleteSel()
-    const max = this.opts.maxLength ?? DEFAULT_MAX
-    if (this.str.length + s.length > max) { this.opts.onReject?.(); return }
+    const kind: Run = s.length > 1 || s === '\n' ? null : /\s/.test(s) ? 'space' : 'word'
+    this.change(kind, () => {
+      // Typing or pasting over a selection replaces it.
+      this.deleteSel()
+      const max = this.opts.maxLength ?? DEFAULT_MAX
+      if (this.str.length + s.length > max) { this.opts.onReject?.(); return }
 
-    const next = this.str.slice(0, this.at) + s + this.str.slice(this.at)
-    if (this.opts.wrap === false
-      && next.split('\n').some(line => textWidth(line) > this.width)) {
-      this.opts.onReject?.()
-      return
-    }
-    this.str = next
-    this.at += s.length
+      const next = this.str.slice(0, this.at) + s + this.str.slice(this.at)
+      if (this.opts.wrap === false
+        && next.split('\n').some(line => textWidth(line) > this.width)) {
+        this.opts.onReject?.()
+        return
+      }
+      this.str = next
+      this.at += s.length
+    })
   }
 
   /** Home/End on the folded row rather than the hard line. */
@@ -273,8 +336,10 @@ export class TextBuffer {
     const end = nl === -1 ? this.str.length : nl + 1
     const from = nl === -1 && start > 0 ? start - 1 : start
 
-    this.str = this.str.slice(0, from) + this.str.slice(end)
-    this.at = Math.min(from, this.str.length)
+    this.change(null, () => {
+      this.str = this.str.slice(0, from) + this.str.slice(end)
+      this.at = Math.min(from, this.str.length)
+    })
     return true
   }
 

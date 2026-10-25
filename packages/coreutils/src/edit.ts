@@ -22,6 +22,14 @@ const HINT: Span[] = [
   { text: ' Exit' },
 ]
 
+// Prepended to the legend where the row has room; the keys app/src/keys.ts encodes.
+const undoHint = (mac: boolean): Span[] => [
+  { text: mac ? ' CMD-Z ' : ' CTRL-SHIFT-Z ', inverse: true, attr: DIM },
+  { text: ' Undo ' },
+]
+// Columns the bottom-left caret position needs, as in `Ln 100/1000  Col 80`.
+const POS_W = 20
+
 export const edit: Program = async p => {
   if (!p.tty) {
     p.err('edit: no tty\n')
@@ -43,6 +51,10 @@ export const edit: Program = async p => {
   const tty = p.tty
   const cols = tty.cols
   const rows = tty.rows
+  const width = (spans: Span[]): number => spans.reduce((n, x) => n + cells(x.text), 2)
+  const full = [...undoHint((p.env.OSTYPE ?? '').startsWith('darwin')), ...HINT]
+  const hint = cols - 2 - width(full) >= POS_W ? full : HINT
+  const hintW = width(hint)
   const s = new Surface(cols, rows)
   const buf = new TextBuffer({ initial, width: cols, clipboard: t => tty.copy(t) })
   const stack = new ScreenStack(s as never)
@@ -88,7 +100,6 @@ export const edit: Program = async p => {
       ], { edge: 'bottom', align: 'left', max: cols - 2 })
       s.showCursor = false
     } else {
-      const hintW = HINT.reduce((n, x) => n + cells(x.text), 2)
       // Bottom-left: a transient notice while one stands, else the caret's line
       // and column. Line and total count hard lines, not folded rows.
       const head = buf.text.slice(0, buf.caret)
@@ -97,7 +108,7 @@ export const edit: Program = async p => {
       const col = buf.caret - head.lastIndexOf('\n')
       const left = notice || `Ln ${line}/${total}  Col ${col}`
       label(s, outer, left, { edge: 'bottom', align: 'left', max: cols - 2 - hintW })
-      label(s, outer, HINT, { edge: 'bottom', align: 'right' })
+      label(s, outer, hint, { edge: 'bottom', align: 'right' })
       // Hidden while revealing, as the caret would sit on a blank row.
       s.showCursor = !saving && !print.running
     }

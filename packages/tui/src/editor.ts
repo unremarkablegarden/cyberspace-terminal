@@ -125,6 +125,7 @@ export class EditorPopup implements Screen {
         return true
       }
       if (e.key === 'k') return this.edited(this.buf.killLine())
+      if (e.key === 'z' || e.key === 'y') return this.edited(this.buf.key(e))
       return false
     }
 

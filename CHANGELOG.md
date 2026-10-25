@@ -310,3 +310,4 @@
 - `F1` grid: 44x20, 80x25 or 132x43, reloads into the session
 - cIRC, C-Mail: `/emo` kaomoji picker
 - cIRC, C-Mail: own messages shown on send
+- `edit`, multi-line boxes: undo and redo (`CMD-Z`, `SHIFT-CMD-Z`; `CTRL-SHIFT-Z`, `CTRL-Y` off a Mac)

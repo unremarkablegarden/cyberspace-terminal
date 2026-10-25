@@ -53,6 +53,8 @@ export const help: Program = async p => {
       + '  [CMD-C] copy\n  [CMD-X] cut\n  [CMD-V] paste\n'
     : '  [SHIFT-LEFT/RIGHT] select\n  [CTRL-SHIFT-LEFT/RIGHT] select word\n  [SHIFT-HOME/END] select to line edge\n'
       + '  [CTRL-SHIFT-C] copy\n  [CTRL-SHIFT-X] cut\n  [CTRL-V] paste\n')
+  out('Undo (edit, multi-line boxes):\n')
+  out(mac ? '  [CMD-Z] undo\n  [SHIFT-CMD-Z] redo\n' : '  [CTRL-SHIFT-Z] undo\n  [CTRL-Y] redo\n')
 
   const tty = p.tty
   if (!tty) { p.out(text); return 0 }

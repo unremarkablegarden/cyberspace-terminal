@@ -27,6 +27,10 @@ const MOVE_FINAL: Record<string, string> = {
 // macOS Cmd chord and the Ctrl+Shift chord map here, so Ctrl+C stays SIGINT.
 const COPY = '\x1b[99;6u'
 const CUT = '\x1b[120;6u'
+// Undo and redo for the text editors, decoded as Ctrl+Shift+z / Ctrl+Shift+y.
+// Plain ^Z is SIGTSTP. Ctrl+Y needs no mapping: it reaches a program as ^Y.
+const UNDO = '\x1b[122;6u'
+const REDO = '\x1b[121;6u'
 
 /**
  * A movement key with a modifier, as xterm's `CSI 1 ; mod final`. mod is one
@@ -93,6 +97,7 @@ export function encodeKey(e: KeyboardEvent): string | null {
     if (e.key === 'ArrowRight') return e.shiftKey ? '\x1b[1;2F' : NAMED.End
     if (e.key === 'c' || e.key === 'C') return COPY
     if (e.key === 'x' || e.key === 'X') return CUT
+    if (e.key === 'z' || e.key === 'Z') return e.shiftKey ? REDO : UNDO
     return null
   }
   if (e.metaKey) return null
@@ -101,6 +106,7 @@ export function encodeKey(e: KeyboardEvent): string | null {
   if (e.ctrlKey && e.shiftKey && !e.altKey) {
     if (e.key === 'c' || e.key === 'C') return COPY
     if (e.key === 'x' || e.key === 'X') return CUT
+    if (e.key === 'z' || e.key === 'Z') return UNDO
   }
 
   // Ctrl+V and Ctrl+Shift+V are paste on Windows and Linux. Returning null
