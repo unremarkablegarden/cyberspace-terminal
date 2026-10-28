@@ -1,6 +1,6 @@
 // File tools: ls cat cp mv rm mkdir rmdir touch tree chmod.
 
-import { paths, type Proc, type Program } from '@cyberspace/kernel'
+import { paths, writeLines, type Proc, type Program } from '@cyberspace/kernel'
 import { fsp, resolve, flags, inputText, strerror } from './util.js'
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -76,7 +76,7 @@ export const ls: Program = async p => {
 
 export const cat: Program = async p => {
   const { args } = flags(p, '')
-  p.out(await inputText(p, args))
+  writeLines(p.stdout, await inputText(p, args))
   return 0
 }
 
