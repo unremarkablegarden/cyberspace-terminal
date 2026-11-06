@@ -206,6 +206,16 @@ function blockLines(lines: string[], indent: number, attr: number): LogLine[] {
   return lines.map(text => ({ text: pad + text, attr }))
 }
 
+/**
+ * hangingWrap applied per line of the body, because it folds all whitespace and
+ * would turn a line break into a space. Every line after the first hangs under
+ * the text column. Indentation within a line is not kept.
+ */
+function wrapLines(head: string, body: string, width: number): string[] {
+  const pad = ' '.repeat(head.length)
+  return body.split('\n').flatMap((line, i) => hangingWrap(i === 0 ? head : pad, line, width))
+}
+
 /** A system line, indented to the same gutter as messages. */
 export function systemLines(text: string, width: number, indent = HEAD_W): LogLine[] {
   return hangingWrap(' '.repeat(indent), text, width).map(line => ({ text: line }))
@@ -236,7 +246,7 @@ export function entryLines(m: ChatMessage, width: number, opts: EntryOptions = {
   // Until the prefix has finished typing there is no text column to hang under.
   let wrapped = reveal < head.length
     ? [head.slice(0, reveal)]
-    : hangingWrap(head, said, width)
+    : wrapLines(head, said, width)
 
   // A mention draws the whole entry on the modal background. Tested against the
   // text typed out so far, so the highlight appears on the character that
@@ -361,7 +371,7 @@ export function narrowLines(m: ChatMessage, width: number, opts: EntryOptions = 
   // still yield a row, and a blank line above a picture wastes one in this pane.
   const blank = m.blink && opts.blinkOn === false
   if (said || !tail.length) {
-    for (const line of hangingWrap('', said, width)) {
+    for (const line of wrapLines('', said, width)) {
       rows.push({ text: blank ? '' : line, attr: NORMAL })
     }
   }

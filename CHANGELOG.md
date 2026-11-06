@@ -311,3 +311,7 @@
 - cIRC, C-Mail: `/emo` kaomoji picker
 - cIRC, C-Mail: own messages shown on send
 - `edit`, multi-line boxes: undo and redo (`CMD-Z`, `SHIFT-CMD-Z`; `CTRL-SHIFT-Z`, `CTRL-Y` off a Mac)
+
+## v0.9.1
+
+- cIRC, C-Mail: line breaks in messages shown, 10 lines at most

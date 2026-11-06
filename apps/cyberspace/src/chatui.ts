@@ -44,6 +44,21 @@ export interface BodyDrawn {
   art?: boolean
 }
 
+/** Same limit as the website, so a message occupies the same number of lines on both. */
+const MAX_LINES = 10
+
+/**
+ * Runs of blank lines become one blank line, and lines past MAX_LINES join the
+ * last line with spaces. Applied on display because the database caps a message
+ * by length only (2048 characters). CR is removed first: plain() would replace a
+ * CRLF cluster with a symbol.
+ */
+function capLines(text: string): string {
+  const lines = text.replace(/\r/g, '').replace(/\n{3,}/g, '\n\n').split('\n')
+  if (lines.length <= MAX_LINES) return lines.join('\n')
+  return [...lines.slice(0, MAX_LINES - 1), lines.slice(MAX_LINES - 1).join(' ')].join('\n')
+}
+
 export function bodyOf(m: MsgBody, drawn: BodyDrawn = {}): string {
   const art = hasStyle(m.style, 'art')
   if (art && drawn.art) return ''
@@ -61,7 +76,7 @@ export function bodyOf(m: MsgBody, drawn: BodyDrawn = {}): string {
   // The picture stands for it; the address is never read out.
   if (m.imageUrl && text.trim() === m.imageUrl) text = ''
   if (m.imageUrl && !drawn.image) text += ' [IMG]'
-  return plain(text.trim())
+  return plain(capLines(text.trim()))
 }
 
 /**
