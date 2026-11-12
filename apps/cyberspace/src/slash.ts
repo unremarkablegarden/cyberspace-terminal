@@ -27,6 +27,7 @@ export const COMMANDS: SlashCommand[] = [
   { name: 'hi5', usage: '/hi5 [@user]', summary: 'high-fives someone', surfaces: BOTH },
   { name: 'slap', usage: '/slap [@user]', summary: 'slaps someone', surfaces: BOTH },
   { name: 'dice', usage: '/dice <notation>', summary: 'roll dice — 4d6kh3, 2d6+1d4+3, adv, d%', surfaces: BOTH },
+  { name: 'coin', usage: '/coin', summary: 'flip a coin', surfaces: BOTH },
   { name: 'fortune', usage: '/fortune', summary: 'open a fortune cookie', surfaces: BOTH },
   { name: '8ball', usage: '/8ball <question>', summary: 'ask the magic 8-ball', surfaces: BOTH },
   { name: 'blink', usage: '/blink <message>', summary: 'say it in blinking text', surfaces: BOTH },

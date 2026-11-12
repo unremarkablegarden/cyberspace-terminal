@@ -195,7 +195,7 @@ const HOLD_MS = 5 * 60_000
 export class InboxService {
   /** Unread notifications, as the server counts them (capped at 101 there). */
   count = 0
-  /** Unread C-Mail messages across all conversations. */
+  /** C-Mail conversations with unread messages, as the website counts them. */
   mail = 0
 
   private lastSeen = ''
@@ -314,7 +314,7 @@ export class InboxService {
     try {
       const rows = await this.api.get<{ unreadCount?: number }[]>('/v1/cmail')
       if (this.rows.size) return
-      const mail = rows.reduce((n, r) => n + (r.unreadCount ?? 0), 0)
+      const mail = rows.filter(r => (r.unreadCount ?? 0) > 0).length
       if (mail !== this.mail) {
         this.mail = mail
         this.changed()
@@ -366,7 +366,7 @@ export class InboxService {
     let mail = 0
     for (const [cid, row] of this.rows) {
       const unread = row.unreadCount ?? 0
-      mail += unread
+      if (unread > 0) mail++
       if (snapshot || unread <= (before.get(cid) ?? 0)) continue
       if (this.mailOff || (row.otherUserId && this.hidden.has(row.otherUserId))) continue
       this.hooks.onNotice?.({

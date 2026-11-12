@@ -322,3 +322,8 @@
 - `F1` sync config: on or off per device
 - `help`: shell listed first, keys for the operator's OS
 - `help`: keys and select in two columns where the grid is wide enough
+
+## v0.9.3
+
+- cIRC, C-Mail: `/coin`
+- C-Mail count: conversations with unread mail, not unread messages
