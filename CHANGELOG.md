@@ -315,3 +315,10 @@
 ## v0.9.1
 
 - cIRC, C-Mail: line breaks in messages shown, 10 lines at most
+
+## v0.9.2
+
+- `F1` config saved to the account and applied at login, grid size excepted
+- `F1` sync config: on or off per device
+- `help`: shell listed first, keys for the operator's OS
+- `help`: keys and select in two columns where the grid is wide enough

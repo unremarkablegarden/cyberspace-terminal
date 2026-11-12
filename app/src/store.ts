@@ -1,8 +1,15 @@
 import { STORE_PREFIX } from './config'
 
+const watchers: ((key: string) => void)[] = []
+
 /** localStorage for the faceplate's own settings, namespaced by STORE_PREFIX. */
 export const store = {
   get: (k: string, fallback: string) => localStorage.getItem(STORE_PREFIX + k) ?? fallback,
-  set: (k: string, v: string) => localStorage.setItem(STORE_PREFIX + k, v),
+  set: (k: string, v: string) => {
+    localStorage.setItem(STORE_PREFIX + k, v)
+    for (const w of watchers) w(k)
+  },
   remove: (k: string) => localStorage.removeItem(STORE_PREFIX + k),
+  /** Run `fn` with the key after every set. */
+  watch: (fn: (key: string) => void) => { watchers.push(fn) },
 }

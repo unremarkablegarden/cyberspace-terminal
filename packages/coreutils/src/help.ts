@@ -38,23 +38,40 @@ export const help: Program = async p => {
   let text = ''
   const out = (s: string) => { text += s }
 
-  out('Programs:\n')
-  columns(out, names.filter(n => !SHELL.has(n)), cols)
   out('Shell:\n')
   columns(out, shell, cols)
-  out('Own programs:\n  cd bin/docs then less README.txt\n')
+  out('Programs:\n')
+  columns(out, names.filter(n => !SHELL.has(n)), cols)
   out("Aliases:\n  alias ll='ls -l', kept in ~/.shrc\n")
-  out('Keys:\n  [UP/DOWN] recall\n  [TAB] complete\n  [CTRL-SHIFT-UP/DOWN] and [SHIFT-PGUP/PGDN] scroll\n')
-  out('Select, copy and paste (command line, edit, chat):\n')
-  // The chords app/src/keys.ts encodes. Off a Mac, ^C stays SIGINT, so copy and cut take Shift.
   const mac = (p.env.OSTYPE ?? '').startsWith('darwin')
-  out(mac
-    ? '  [SHIFT-LEFT/RIGHT] select\n  [SHIFT-OPT-LEFT/RIGHT] select word\n  [SHIFT-CMD-LEFT/RIGHT] select to line edge\n'
-      + '  [CMD-C] copy\n  [CMD-X] cut\n  [CMD-V] paste\n'
-    : '  [SHIFT-LEFT/RIGHT] select\n  [CTRL-SHIFT-LEFT/RIGHT] select word\n  [SHIFT-HOME/END] select to line edge\n'
-      + '  [CTRL-SHIFT-C] copy\n  [CTRL-SHIFT-X] cut\n  [CTRL-V] paste\n')
-  out('Undo (edit, multi-line boxes):\n')
-  out(mac ? '  [CMD-Z] undo\n  [SHIFT-CMD-Z] redo\n' : '  [CTRL-SHIFT-Z] undo\n  [CTRL-Y] redo\n')
+  // Bindings in app/src/input.ts, scrollback.ts and keys.ts. A Mac keyboard has
+  // no Page Up key: Fn-Up sends it. Ctrl-Opt-digit is the F-key alias in keys.ts.
+  const keys = [
+    'Keys:', '  [UP/DOWN] recall', '  [TAB] complete', '  [CTRL-SHIFT-UP/DOWN] scroll line',
+    ...(mac
+      ? ['  [SHIFT-FN-UP/DOWN] scroll page', '  [F1] or [CTRL-OPT-1] config', '  [CMD-K] switch job', '  [CMD-I] inbox', '  [CMD-.] escape']
+      : ['  [SHIFT-PGUP/PGDN] scroll page', '  [F1] config', '  [CTRL-K] switch job', '  [CTRL-I] inbox']),
+  ]
+  // The key combinations app/src/keys.ts encodes. Off a Mac, ^C stays SIGINT, so copy and cut take Shift.
+  const select = [
+    'Select, copy and paste:',
+    ...(mac
+      ? ['  [SHIFT-LEFT/RIGHT] select', '  [SHIFT-OPT-LEFT/RIGHT] select word', '  [SHIFT-CMD-LEFT/RIGHT] select to line edge',
+        '  [CMD-C] copy', '  [CMD-X] cut', '  [CMD-V] paste']
+      : ['  [SHIFT-LEFT/RIGHT] select', '  [CTRL-SHIFT-LEFT/RIGHT] select word', '  [SHIFT-HOME/END] select to line edge',
+        '  [CTRL-SHIFT-C] copy', '  [CTRL-SHIFT-X] cut', '  [CTRL-V] paste']),
+    'Undo (edit, multi-line boxes):',
+    mac ? '  [CMD-Z] undo  [SHIFT-CMD-Z] redo' : '  [CTRL-SHIFT-Z] undo  [CTRL-Y] redo',
+  ]
+  // Two columns when both fit the tty width, else one after the other (the 44-column phone grid).
+  const left = Math.max(...keys.map(l => l.length)) + 2
+  if (left + Math.max(...select.map(l => l.length)) <= cols) {
+    for (let i = 0; i < Math.max(keys.length, select.length); i++) {
+      out(((keys[i] ?? '').padEnd(left) + (select[i] ?? '')).trimEnd() + '\n')
+    }
+  } else {
+    out([...keys, ...select].join('\n') + '\n')
+  }
 
   const tty = p.tty
   if (!tty) { p.out(text); return 0 }

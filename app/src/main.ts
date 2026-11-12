@@ -22,7 +22,8 @@ import { grid, withGrid } from './grid'
 import { pictureHost, standbyArt } from './image'
 import { bootMachine } from './machine'
 import { writeMotd } from './motd'
-import { ConfigBox, restoreSettings } from './settings'
+import { ConfigBox, reapplySettings, restoreSettings } from './settings'
+import { SettingsSync } from './prefsync'
 import { Screensaver } from './saver'
 import { Doom } from './doom'
 import { doomsdayProgram } from './doomsday'
@@ -418,6 +419,15 @@ const program = {
     restoreSettings(s, snd)
     // A warm reload: pagehide parks the session, and it resumes at the new size.
     config = new ConfigBox(s, snd, () => void writeMotd(api.username), () => location.reload())
+    // A pull during the boot animation waits for it: a font swap changes the
+    // cell size under a sequence laid out for the old one.
+    let booted!: () => void
+    const bootDone = new Promise<void>(res => { booted = res })
+    new SettingsSync(api, async () => {
+      await bootDone
+      await reapplySettings(s, snd)
+      void writeMotd(api.username)
+    })
     saver = new Screensaver(s, snd, () => halted || !live)
     doom = new Doom(s, snd, waitForDrain)
     launcher = new Launcher(s, snd)
@@ -510,6 +520,7 @@ const program = {
       snd.powerOn()
     }
     store.set('lastSeen', String(Date.now()))
+    booted()
 
     const kernel = await kernelP
     // The identity must resolve before loadSession runs: a parked scrollback is

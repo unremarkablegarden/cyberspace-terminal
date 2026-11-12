@@ -19,6 +19,7 @@ import {
   phosphorTint, readAudio, saverPrefs, screenParams, setSaverPrefs, userParams, writeAudio,
   writeCustomPhosphor, writeUserParams, type Hsl,
 } from './prefs'
+import { SYNC_KEY, syncEnabled } from './prefsync'
 
 /** Volume steps offered by the AUDIO rows, and the gain each maps to. */
 const AUDIO_LEVELS: [string, number][] = [['off', 0], ['25%', 0.25], ['50%', 0.5], ['100%', 1]]
@@ -224,6 +225,13 @@ function settings(screen: CrtScreen, snd: Sound, onFont?: () => void, onGrid?: (
         },
       ],
     },
+    {
+      // Per device. On, the settings above except GRID follow the account; see prefsync.ts.
+      label: 'SYNC CONFIG',
+      values: ['on', 'off'],
+      current: () => syncEnabled() ? 'on' : 'off',
+      select: (v) => { store.set(SYNC_KEY, v); return v },
+    },
   ]
 }
 
@@ -305,4 +313,18 @@ export function restoreSettings(screen: CrtScreen, snd: Sound): void {
 
   screen.crt.setParams(screenParams())
   screen.crt.setPhosphor(phosphorTint())
+}
+
+/**
+ * Apply saved preferences to a running machine, after a settings pull has
+ * replaced them. A font that fails to load leaves the current face in place.
+ */
+export async function reapplySettings(screen: CrtScreen, snd: Sound): Promise<void> {
+  restoreSettings(screen, snd)
+  try {
+    await loadFamily(screen.term, familyOf(store.get('font', 'terminus-8x16')))
+    screen.crt.setSource(screen.term.w, screen.term.h)
+  } catch {
+    // Kept on the current face until the next boot tries the stored one.
+  }
 }
