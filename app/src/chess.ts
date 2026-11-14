@@ -47,6 +47,32 @@ const GLYPH: Record<Piece['color'], Record<Piece['kind'], string>> = {
   white: { king: '♔', queen: '♕', rook: '♖', bishop: '♗', knight: '♘', pawn: '♙' },
   black: { king: '♚', queen: '♛', rook: '♜', bishop: '♝', knight: '♞', pawn: '♟' },
 }
+const PIECE_ART: Record<Piece['kind'], string[]> = {
+  king: [
+    '.....#.....', '....###....', '.....#.....', '...#####...',
+    '.....#.....', '...#####...', '..#######..', '.#########.', '###########',
+  ],
+  queen: [
+    '#...#...#..', '.#########.', '..#######..', '...#####...',
+    '..#######..', '.#########.', '###########', '###########', '###########',
+  ],
+  rook: [
+    '#..#..#..#.', '###########', '..#######..', '..#######..',
+    '..#######..', '.#########.', '###########', '###########', '###########',
+  ],
+  bishop: [
+    '.....#.....', '....###....', '....#.#....', '...#####...',
+    '....###....', '...#####...', '..#######..', '.#########.', '###########',
+  ],
+  knight: [
+    '.......####', '......#####', '.....##.###', '....#######',
+    '...########', '..#########', '..######...', '.#########.', '###########',
+  ],
+  pawn: [
+    '....###....', '...#####...', '...#####...', '....###....',
+    '....###....', '...#####...', '..#######..', '.#########.', '###########',
+  ],
+}
 
 const glyphOf = (piece: Piece): string => GLYPH[piece.color][piece.kind]
 
@@ -341,7 +367,7 @@ export class Chess implements Overlay, Screen {
     }
     const filesY = board.y + board.h
     const statusY = filesY + 2
-    center(term, wide ? board.y - 2 : 1, 'CHESS', BOLD | BRIGHT)
+    center(term, wide ? board.y - 1 : 1, 'CHESS', BOLD | BRIGHT)
 
     clear(term, board)
     frame(term, board, NORMAL)
@@ -435,21 +461,97 @@ export class Chess implements Overlay, Screen {
 
     const dark = (square.row + square.col) % 2 === 1
     const focus = selected || cursor || check
-    const marked = focus || !!target
-    let attr = dark ? BG : NORMAL
-    if (piece) attr |= piece.color === 'white' ? BOLD | BRIGHT : DIM
-    if (target) attr = (dark ? BG : 0) | MUTED
-    if (focus) attr = (dark ? BG : 0) | BOLD | BRIGHT
-    const inverse = marked ? 1 : 0
-    const pieceX = Math.floor(width / 2)
-    const pieceY = Math.floor(height / 2)
-
-    // BG shades dark squares; inverse fills legal destinations and focus squares.
+    const squareAttr = dark ? BG : NORMAL
     for (let dy = 0; dy < height; dy++) {
       for (let dx = 0; dx < width; dx++) {
-        const glyph = piece && dx === pieceX && dy === pieceY ? glyphOf(piece) : ' '
-        term.put(x + dx, y + dy, glyph, attr, inverse)
+        term.put(x + dx, y + dy, ' ', squareAttr)
       }
+    }
+    if (piece) drawPiece(term, piece, x, y, width, height)
+
+    if (target && piece) this.markCorners(term, square, x, y, width, height, MUTED)
+    else if (target) this.markMove(term, square, x, y, width, height)
+    if (focus) this.markCorners(term, square, x, y, width, height, BOLD | BRIGHT)
+  }
+
+  private markMove(term: Grid, square: Square, x: number, y: number, width: number, height: number): void {
+    const markW = width >= 4 ? 2 : 1
+    const markX = width >= 4 ? x + Math.floor((width - markW) / 2) : x + (square.row + square.col) % width
+    const markY = y + Math.floor(height / 2)
+    for (let dx = 0; dx < markW; dx++) term.put(markX + dx, markY, ' ', MUTED, 1)
+  }
+
+  private markCorners(term: Grid, square: Square, x: number, y: number, width: number, height: number, attr: number): void {
+    if (width <= 2 || height <= 1) {
+      const markX = x + (square.row + square.col) % width
+      term.put(markX, y + Math.floor(height / 2), ' ', attr, 1)
+      return
+    }
+
+    const corners = new Set([
+      `${x},${y}`,
+      `${x + width - 1},${y}`,
+      `${x},${y + height - 1}`,
+      `${x + width - 1},${y + height - 1}`,
+    ])
+    for (const point of corners) {
+      const [px, py] = point.split(',').map(Number)
+      term.put(px!, py!, ' ', attr, 1)
+    }
+  }
+}
+
+type BitmapGrid = Grid & {
+  font?: { cellW: number; cellH: number }
+  advance?: number
+  putGlyph?: (x: number, y: number, bits: ArrayLike<number>, attr?: number) => void
+}
+
+/** Rasterize a larger silhouette so the fallback chess glyph cannot shrink inside its square. */
+function drawPiece(term: Grid, piece: Piece, x: number, y: number, width: number, height: number): void {
+  const bitmap = term as BitmapGrid
+  const font = bitmap.font
+  const putGlyph = bitmap.putGlyph
+  if (!font || !putGlyph || font.cellW > 16) {
+    term.put(x + Math.floor(width / 2), y + Math.floor(height / 2), glyphOf(piece), piece.color === 'white' ? BOLD | BRIGHT : DIM)
+    return
+  }
+
+  const advance = bitmap.advance ?? font.cellW + 1
+  const pixelW = width * advance
+  const pixelH = height * font.cellH
+  const spriteW = Math.max(1, Math.round(pixelW * 0.64))
+  const spriteH = Math.max(1, Math.round(pixelH * 0.72))
+  const left = Math.floor((pixelW - spriteW) / 2)
+  const top = Math.floor((pixelH - spriteH) / 2)
+  const art = PIECE_ART[piece.kind]
+  const artW = art[0]!.length
+  const pixels = new Uint8Array(pixelW * pixelH)
+
+  for (let py = 0; py < spriteH; py++) {
+    const artY = Math.floor(py * art.length / spriteH)
+    for (let px = 0; px < spriteW; px++) {
+      const artX = Math.floor(px * artW / spriteW)
+      if (art[artY]![artX] === '#') pixels[(top + py) * pixelW + left + px] = 1
+    }
+  }
+
+  const attr = piece.color === 'white' ? BOLD | BRIGHT : DIM
+  for (let cy = 0; cy < height; cy++) {
+    for (let cx = 0; cx < width; cx++) {
+      const bits = new Uint16Array(font.cellH)
+      let lit = false
+      for (let py = 0; py < font.cellH; py++) {
+        const row = (cy * font.cellH + py) * pixelW + cx * advance
+        let word = 0
+        for (let px = 0; px < font.cellW; px++) {
+          if (pixels[row + px]) word |= 1 << (font.cellW - px - 1)
+        }
+        if (advance > font.cellW && pixels[row + font.cellW]) word |= 1
+        bits[py] = word
+        lit ||= word !== 0
+      }
+      if (lit) putGlyph.call(bitmap, x + cx, y + cy, bits, attr)
     }
   }
 }
