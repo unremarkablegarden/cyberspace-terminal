@@ -1,11 +1,1 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg version="1.1" viewBox="0 0 4096 4096" xmlns="http://www.w3.org/2000/svg">
-  <title>Rook</title>
-  <path d="m2341.1 696.85h362.33v-291.99h583.99v799.26l-473.16 364.46v1018.8l362.33 362.33v436.93h326.1v509.39h-2909.3v-509.39h326.1v-436.93l364.46-362.33v-1018.8l-473.16-364.46v-799.26h581.86v291.99h364.46v-291.99h583.99z" fill="#000"/>
-  <path d="m2741.8 1423.7 270.68-219.53h-1926.7l272.81 219.53z" fill="#fff"/>
-  <path d="m2976.3 2949.7-219.53-217.4h-1413.1l-223.79 217.4z" fill="#fff"/>
-  <path d="m3140.4 1059.2v-509.39h-291.99v291.99h-656.46v-291.99h-287.73v291.99h-654.32v-291.99h-291.99v509.39z" fill="#fff"/>
-  <path d="m2667.2 1568.6h-1236.2v1018.8h1236.2z" fill="#fff"/>
-  <path d="m3029.5 3096.8h-1960.8v289.86h1960.8z" fill="#fff"/>
-  <path d="m3359.9 3531.6h-2621.6v219.53h2621.6z" fill="#fff"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" style="color-scheme:light only" width="45" height="45" viewBox="0 0 45 45"><g fill="#fff" fill-rule="evenodd" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"><path stroke-linecap="butt" d="M9 39h27v-3H9zm3-3v-4h21v4zm-1-22V9h4v2h5V9h5v2h5V9h4v5"/><path d="m34 14-3 3H14l-3-3"/><path stroke-linecap="butt" stroke-linejoin="miter" d="M31 17v12.5H14V17"/><path d="m31 29.5 1.5 2.5h-20l1.5-2.5"/><path fill="none" stroke-linejoin="miter" d="M11 14h23"/></g></svg>

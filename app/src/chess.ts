@@ -338,10 +338,18 @@ export class Chess implements Overlay, Screen {
 
   private drawBoard(term: Grid): void {
     const wide = term.cols >= 76 && term.rows >= 24
-    // At 76x24 each side panel gets 18 columns; 120x36 unlocks a larger board.
+    // Wide screens put controls and status beside the board.
     const large = wide && term.cols >= 120 && term.rows >= 36
-    const squareW = large ? 6 : wide ? 4 : 2
     const squareH = large ? 3 : wide ? 2 : 1
+    const metrics = term as Grid & { font?: { cellW: number; cellH: number }; advance?: number; stretch?: number }
+    const cellW = metrics.font?.cellW ?? 8
+    const cellH = metrics.font?.cellH ?? 16
+    const advance = metrics.advance ?? cellW + 1
+    const stretch = metrics.stretch ?? 1
+    // Match each terminal square to the CRT's physical pixel aspect. An odd
+    // width also gives every file label a true center cell.
+    const idealSquareW = squareH * cellH * stretch / advance
+    const squareW = wide ? Math.max(3, 2 * Math.round((idealSquareW - 1) / 2) + 1) : 2
     const boardW = squareW * 8 + 2
     const boardH = squareH * 8 + 2
     const gap = 2
@@ -359,15 +367,20 @@ export class Chess implements Overlay, Screen {
 
     clear(term, board)
     frame(term, board, NORMAL)
+    const innerX = board.x + 1
+    const innerY = board.y + 1
     for (let row = 0; row < 8; row++) {
-      const y = board.y + 1 + row * squareH
-      term.text(board.x - 2, y + Math.floor(squareH / 2), String(8 - row), MUTED)
+      const y = innerY + row * squareH
+      const rankY = y + Math.floor((squareH - 1) / 2)
+      term.text(board.x - 2, rankY, String(8 - row), MUTED)
       for (let col = 0; col < 8; col++) {
-        this.drawSquare(term, { row, col }, board.x + 1 + col * squareW, y, squareW, squareH)
+        const x = innerX + col * squareW
+        this.drawSquare(term, { row, col }, x, y, squareW, squareH)
       }
     }
     for (let col = 0; col < 8; col++) {
-      term.put(board.x + 1 + col * squareW + Math.floor(squareW / 2), filesY, 'abcdefgh'[col]!, MUTED)
+      const centerX = innerX + col * squareW + Math.floor((squareW - 1) / 2)
+      term.put(centerX, filesY, 'abcdefgh'[col]!, MUTED)
     }
 
     const result = resultOf(this.state)
@@ -443,8 +456,10 @@ export class Chess implements Overlay, Screen {
     }
     if (piece) {
       const image = this.art[`${piece.color}-${piece.kind}`]
-      if (image) drawSvg(term, image, x, y, width, height,
-        highlight ?? (piece.color === 'white' ? BOLD | BRIGHT : DIM), highlight === null ? 0 : 1)
+      if (image) {
+        const pieceAttr = highlight ?? (piece.color === 'white' ? BOLD | BRIGHT : DIM)
+        drawSvg(term, image, x, y, width, height, pieceAttr | (dark ? BG : 0), highlight === null ? 0 : 1)
+      }
     }
 
   }
@@ -472,7 +487,10 @@ function loadSvg(name: ArtName): Promise<ImageBitmap | undefined> {
   const loading = (async (): Promise<ImageBitmap | undefined> => {
     let url: string | undefined
     try {
-      const source = SVG_SOURCE[name].replace('<svg ', '<svg width="256" height="256" ')
+      const source = SVG_SOURCE[name].replace(/<svg\b([^>]*)>/, (_match, attributes: string) => {
+        const view = attributes.replace(/\s+(?:width|height)="[^"]*"/g, '')
+        return `<svg${view} width="256" height="256">`
+      })
       url = URL.createObjectURL(new Blob([source], { type: 'image/svg+xml' }))
       const image = new Image()
       image.src = url
