@@ -46,7 +46,6 @@ const LOGO_W = 19
 const LOGO_H = 10
 type PieceArt = `${Piece['color']}-${Piece['kind']}`
 type ArtName = 'logo' | PieceArt
-type ArtMode = 'solid' | 'outline'
 
 const SVG_SOURCE: Record<ArtName, string> = {
   logo: logoSvg,
@@ -334,7 +333,7 @@ export class Chess implements Overlay, Screen {
     const height = Math.min(LOGO_H, term.rows - y)
     const x = Math.max(0, Math.floor((term.cols - width) / 2))
     const image = this.art.logo
-    if (image) drawSvg(term, image, x, y, width, height, BOLD | BRIGHT, 'solid')
+    if (image) drawSvg(term, image, x, y, width, height, BOLD | BRIGHT)
   }
 
   private drawBoard(term: Grid): void {
@@ -422,23 +421,6 @@ export class Chess implements Overlay, Screen {
 
     term.text(x, row, 'CURSOR', MUTED)
     term.text(x, row + 1, squareName(this.cursor).toUpperCase(), BOLD)
-    row += 3
-
-    if (!this.selected) return
-    const piece = getPiece(this.state, this.selected)
-    term.text(x, row, 'SELECTED', MUTED)
-    row = writeLines(term, x, row + 1, width,
-      `${squareName(this.selected)} ${piece?.color ?? ''} ${piece?.kind ?? ''}`.trim().toUpperCase(), BOLD) + 1
-
-    if (!this.moves.length) {
-      term.text(x, row, 'NO LEGAL MOVES', MUTED)
-      return
-    }
-
-    term.text(x, row, `LEGAL MOVES ${this.moves.length}`, MUTED)
-    const destinations = this.moves.slice(0, 12).map(move => squareName(move.to))
-    if (this.moves.length > destinations.length) destinations.push(`+${this.moves.length - destinations.length}`)
-    writeLines(term, x, row + 1, width, destinations.join(' ').toUpperCase(), BRIGHT)
   }
 
   private drawSquare(term: Grid, square: Square, x: number, y: number, width: number, height: number): void {
@@ -451,47 +433,20 @@ export class Chess implements Overlay, Screen {
     const dark = (square.row + square.col) % 2 === 1
     const focus = selected || cursor || check
     const squareAttr = dark ? BG : NORMAL
+    const highlight = focus ? BOLD | BRIGHT
+      : target ? ((square.row + square.col) % 2 ? DIM : MUTED)
+      : null
     for (let dy = 0; dy < height; dy++) {
       for (let dx = 0; dx < width; dx++) {
-        term.put(x + dx, y + dy, ' ', squareAttr)
+        term.put(x + dx, y + dy, ' ', highlight ?? squareAttr, highlight === null ? 0 : 1)
       }
     }
     if (piece) {
       const image = this.art[`${piece.color}-${piece.kind}`]
       if (image) drawSvg(term, image, x, y, width, height,
-        piece.color === 'white' ? BOLD | BRIGHT : DIM,
-        piece.color === 'white' ? 'outline' : 'solid')
+        highlight ?? (piece.color === 'white' ? BOLD | BRIGHT : DIM), highlight === null ? 0 : 1)
     }
 
-    if (target && piece) this.markCorners(term, square, x, y, width, height, MUTED)
-    else if (target) this.markMove(term, square, x, y, width, height)
-    if (focus) this.markCorners(term, square, x, y, width, height, BOLD | BRIGHT)
-  }
-
-  private markMove(term: Grid, square: Square, x: number, y: number, width: number, height: number): void {
-    const markW = width >= 4 ? 2 : 1
-    const markX = width >= 4 ? x + Math.floor((width - markW) / 2) : x + (square.row + square.col) % width
-    const markY = y + Math.floor(height / 2)
-    for (let dx = 0; dx < markW; dx++) term.put(markX + dx, markY, ' ', MUTED, 1)
-  }
-
-  private markCorners(term: Grid, square: Square, x: number, y: number, width: number, height: number, attr: number): void {
-    if (width <= 2 || height <= 1) {
-      const markX = x + (square.row + square.col) % width
-      term.put(markX, y + Math.floor(height / 2), ' ', attr, 1)
-      return
-    }
-
-    const corners = new Set([
-      `${x},${y}`,
-      `${x + width - 1},${y}`,
-      `${x},${y + height - 1}`,
-      `${x + width - 1},${y + height - 1}`,
-    ])
-    for (const point of corners) {
-      const [px, py] = point.split(',').map(Number)
-      term.put(px!, py!, ' ', attr, 1)
-    }
   }
 }
 
@@ -499,7 +454,7 @@ type BitmapGrid = Grid & {
   font?: { cellW: number; cellH: number }
   advance?: number
   stretch?: number
-  putGlyph?: (x: number, y: number, bits: ArrayLike<number>, attr?: number) => void
+  putGlyph?: (x: number, y: number, bits: ArrayLike<number>, attr?: number, inv?: number) => void
 }
 
 interface GlyphSprite {
@@ -534,7 +489,8 @@ function loadSvg(name: ArtName): Promise<ImageBitmap | undefined> {
 }
 
 function drawSvg(
-  term: Grid, image: ImageBitmap, x: number, y: number, cols: number, rows: number, attr: number, mode: ArtMode,
+  term: Grid, image: ImageBitmap, x: number, y: number, cols: number, rows: number,
+  attr: number, inverse = 0,
 ): void {
   const surface = term as BitmapGrid
   const font = surface.font
@@ -543,7 +499,7 @@ function drawSvg(
 
   const advance = surface.advance ?? font.cellW + 1
   const stretch = surface.stretch ?? 1
-  const key = `${cols}x${rows}:${font.cellW}x${font.cellH}:${advance}:${stretch.toFixed(3)}:${mode}`
+  const key = `${cols}x${rows}:${font.cellW}x${font.cellH}:${advance}:${stretch.toFixed(3)}`
   let cache = spriteCache.get(image)
   if (!cache) {
     cache = new Map()
@@ -551,7 +507,7 @@ function drawSvg(
   }
   let sprite = cache.get(key)
   if (!sprite) {
-    sprite = rasterSvg(image, cols, rows, font.cellW, font.cellH, advance, stretch, mode)
+    sprite = rasterSvg(image, cols, rows, font.cellW, font.cellH, advance, stretch)
     if (!sprite) return
     cache.set(key, sprite)
   }
@@ -559,14 +515,14 @@ function drawSvg(
   for (let cy = 0; cy < sprite.rows; cy++) {
     for (let cx = 0; cx < sprite.cols; cx++) {
       const bits = sprite.cells[cy * sprite.cols + cx]
-      if (bits) putGlyph.call(surface, x + cx, y + cy, bits, attr)
+      if (bits) putGlyph.call(surface, x + cx, y + cy, bits, attr, inverse)
     }
   }
 }
 
 function rasterSvg(
   image: ImageBitmap, cols: number, rows: number, cellW: number, cellH: number,
-  advance: number, stretch: number, mode: ArtMode,
+  advance: number, stretch: number,
 ): GlyphSprite | undefined {
   const pixelW = cols * advance
   const pixelH = rows * cellH
@@ -594,15 +550,11 @@ function rasterSvg(
         let word = 0
         for (let px = 0; px < cellW; px++) {
           const i = (row + px) * 4
-          const alpha = pixels[i + 3]!
-          const luma = 0.2126 * pixels[i]! + 0.7152 * pixels[i + 1]! + 0.0722 * pixels[i + 2]!
-          if (alpha > 64 && (mode === 'solid' || luma < 128)) word |= 1 << (cellW - px - 1)
+          if (pixels[i + 3]! > 64) word |= 1 << (cellW - px - 1)
         }
         if (advance > cellW) {
           const i = (row + cellW) * 4
-          const alpha = pixels[i + 3]!
-          const luma = 0.2126 * pixels[i]! + 0.7152 * pixels[i + 1]! + 0.0722 * pixels[i + 2]!
-          if (alpha > 64 && (mode === 'solid' || luma < 128)) word |= 1
+          if (pixels[i + 3]! > 64) word |= 1
         }
         bits[py] = word
         lit ||= word !== 0
