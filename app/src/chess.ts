@@ -24,6 +24,19 @@ import {
   resultOf, sameSquare,
   type Move, type Piece, type Square,
 } from './chess/rules'
+import bishopSvg from './chess/svg/bishop.svg?raw'
+import blackBishopSvg from './chess/svg/black-bishop.svg?raw'
+import blackKingSvg from './chess/svg/black-king.svg?raw'
+import blackKnightSvg from './chess/svg/black-knight.svg?raw'
+import blackPawnSvg from './chess/svg/black-pawn.svg?raw'
+import blackQueenSvg from './chess/svg/black-queen.svg?raw'
+import blackRookSvg from './chess/svg/black-rook.svg?raw'
+import kingSvg from './chess/svg/king.svg?raw'
+import knightSvg from './chess/svg/knight.svg?raw'
+import logoSvg from './chess/svg/logo.svg?raw'
+import pawnSvg from './chess/svg/pawn.svg?raw'
+import queenSvg from './chess/svg/queen.svg?raw'
+import rookSvg from './chess/svg/rook.svg?raw'
 
 type Mode = 'menu' | 'board'
 
@@ -35,20 +48,20 @@ type PieceArt = `${Piece['color']}-${Piece['kind']}`
 type ArtName = 'logo' | PieceArt
 type ArtMode = 'solid' | 'outline'
 
-const SVG_URLS: Record<ArtName, string> = {
-  logo: new URL('./chess/svg/logo.svg', import.meta.url).href,
-  'white-king': new URL('./chess/svg/king.svg', import.meta.url).href,
-  'white-queen': new URL('./chess/svg/queen.svg', import.meta.url).href,
-  'white-rook': new URL('./chess/svg/rook.svg', import.meta.url).href,
-  'white-bishop': new URL('./chess/svg/bishop.svg', import.meta.url).href,
-  'white-knight': new URL('./chess/svg/knight.svg', import.meta.url).href,
-  'white-pawn': new URL('./chess/svg/pawn.svg', import.meta.url).href,
-  'black-king': new URL('./chess/svg/black-king.svg', import.meta.url).href,
-  'black-queen': new URL('./chess/svg/black-queen.svg', import.meta.url).href,
-  'black-rook': new URL('./chess/svg/black-rook.svg', import.meta.url).href,
-  'black-bishop': new URL('./chess/svg/black-bishop.svg', import.meta.url).href,
-  'black-knight': new URL('./chess/svg/black-knight.svg', import.meta.url).href,
-  'black-pawn': new URL('./chess/svg/black-pawn.svg', import.meta.url).href,
+const SVG_SOURCE: Record<ArtName, string> = {
+  logo: logoSvg,
+  'white-king': kingSvg,
+  'white-queen': queenSvg,
+  'white-rook': rookSvg,
+  'white-bishop': bishopSvg,
+  'white-knight': knightSvg,
+  'white-pawn': pawnSvg,
+  'black-king': blackKingSvg,
+  'black-queen': blackQueenSvg,
+  'black-rook': blackRookSvg,
+  'black-bishop': blackBishopSvg,
+  'black-knight': blackKnightSvg,
+  'black-pawn': blackPawnSvg,
 }
 
 /** The game overlay. It is both the host's overlay and the screen on the stack. */
@@ -291,7 +304,7 @@ export class Chess implements Overlay, Screen {
   private ensureArt(): void {
     if (this.artLoading || this.artLoaded) return
     this.artLoading = true
-    void Promise.all((Object.keys(SVG_URLS) as ArtName[]).map(async name => {
+    void Promise.all((Object.keys(SVG_SOURCE) as ArtName[]).map(async name => {
       const image = await loadSvg(name)
       if (image) this.art[name] = image
     })).finally(() => {
@@ -503,9 +516,7 @@ function loadSvg(name: ArtName): Promise<ImageBitmap | undefined> {
   if (cached) return cached
   const loading = (async (): Promise<ImageBitmap | undefined> => {
     try {
-      const response = await fetch(SVG_URLS[name])
-      if (!response.ok) return undefined
-      const source = (await response.text()).replace('<svg ', '<svg width="256" height="256" ')
+      const source = SVG_SOURCE[name].replace('<svg ', '<svg width="256" height="256" ')
       const image = new Blob([source], { type: 'image/svg+xml' })
       return await createImageBitmap(image)
     } catch {
