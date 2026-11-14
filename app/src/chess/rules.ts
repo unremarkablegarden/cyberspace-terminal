@@ -487,8 +487,8 @@ export function evaluate(state: ChessState): number {
 }
 
 /**
- * The machine's choice: a two-ply search with alpha-beta pruning. Two plies
- * see the answer to its own move, which is enough to avoid hanging a piece
+ * The machine's choice: a three-ply search with alpha-beta pruning. The root
+ * move, the answer to it and one reply are enough to avoid hanging a piece
  * without making the faceplate wait. Equal scores are collected so the game
  * does not repeat the same opening every time.
  */
