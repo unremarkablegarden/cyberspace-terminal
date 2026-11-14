@@ -27,54 +27,29 @@ import {
 
 type Mode = 'menu' | 'board'
 
-const PAWN = [
-  '.......#####.......',
-  '.....#########.....',
-  '....###########....',
-  '....###########....',
-  '......#######......',
-  '........###........',
-  '......#######......',
-  '....###########....',
-  '..###############..',
-  '###################',
-]
-const PAWN_W = PAWN[0]!.length
 const MENU = ['Play with Machine', 'Play with someone']
 const MACHINE_DELAY = 350
-/** Unicode chess pieces. The coverage face carries all twelve; see FALLBACK_FONT. */
-const GLYPH: Record<Piece['color'], Record<Piece['kind'], string>> = {
-  white: { king: '♔', queen: '♕', rook: '♖', bishop: '♗', knight: '♘', pawn: '♙' },
-  black: { king: '♚', queen: '♛', rook: '♜', bishop: '♝', knight: '♞', pawn: '♟' },
-}
-const PIECE_ART: Record<Piece['kind'], string[]> = {
-  king: [
-    '.....#.....', '....###....', '.....#.....', '...#####...',
-    '.....#.....', '...#####...', '..#######..', '.#########.', '###########',
-  ],
-  queen: [
-    '#...#...#..', '.#########.', '..#######..', '...#####...',
-    '..#######..', '.#########.', '###########', '###########', '###########',
-  ],
-  rook: [
-    '#..#..#..#.', '###########', '..#######..', '..#######..',
-    '..#######..', '.#########.', '###########', '###########', '###########',
-  ],
-  bishop: [
-    '.....#.....', '....###....', '....#.#....', '...#####...',
-    '....###....', '...#####...', '..#######..', '.#########.', '###########',
-  ],
-  knight: [
-    '.......####', '......#####', '.....##.###', '....#######',
-    '...########', '..#########', '..######...', '.#########.', '###########',
-  ],
-  pawn: [
-    '....###....', '...#####...', '...#####...', '....###....',
-    '....###....', '...#####...', '..#######..', '.#########.', '###########',
-  ],
-}
+const LOGO_W = 19
+const LOGO_H = 10
+type PieceArt = `${Piece['color']}-${Piece['kind']}`
+type ArtName = 'logo' | PieceArt
+type ArtMode = 'solid' | 'outline'
 
-const glyphOf = (piece: Piece): string => GLYPH[piece.color][piece.kind]
+const SVG_URLS: Record<ArtName, string> = {
+  logo: new URL('./chess/svg/logo.svg', import.meta.url).href,
+  'white-king': new URL('./chess/svg/king.svg', import.meta.url).href,
+  'white-queen': new URL('./chess/svg/queen.svg', import.meta.url).href,
+  'white-rook': new URL('./chess/svg/rook.svg', import.meta.url).href,
+  'white-bishop': new URL('./chess/svg/bishop.svg', import.meta.url).href,
+  'white-knight': new URL('./chess/svg/knight.svg', import.meta.url).href,
+  'white-pawn': new URL('./chess/svg/pawn.svg', import.meta.url).href,
+  'black-king': new URL('./chess/svg/black-king.svg', import.meta.url).href,
+  'black-queen': new URL('./chess/svg/black-queen.svg', import.meta.url).href,
+  'black-rook': new URL('./chess/svg/black-rook.svg', import.meta.url).href,
+  'black-bishop': new URL('./chess/svg/black-bishop.svg', import.meta.url).href,
+  'black-knight': new URL('./chess/svg/black-knight.svg', import.meta.url).href,
+  'black-pawn': new URL('./chess/svg/black-pawn.svg', import.meta.url).href,
+}
 
 /** The game overlay. It is both the host's overlay and the screen on the stack. */
 export class Chess implements Overlay, Screen {
@@ -89,6 +64,9 @@ export class Chess implements Overlay, Screen {
   private thinking = false
   private timer: ReturnType<typeof setTimeout> | null = null
   private note = ''
+  private art: Partial<Record<ArtName, ImageBitmap>> = {}
+  private artLoading = false
+  private artLoaded = false
 
   constructor(private screen: CrtScreen, private snd: Sound) {}
 
@@ -99,6 +77,7 @@ export class Chess implements Overlay, Screen {
   /** Open the title card. The picker calls this after its own screen is gone. */
   start(): void {
     if (this.open || grid.locked) return
+    this.ensureArt()
     this.stack ??= new ScreenStack(this.screen.term as never)
     grid.lock()
     this.cursorWas = RENDER.cursor
@@ -309,11 +288,24 @@ export class Chess implements Overlay, Screen {
     this.draw(this.screen.term as never)
   }
 
-  private drawMenu(term: Grid): void {
-    const logoY = Math.max(1, Math.floor((term.rows - PAWN.length - 8) / 2))
-    this.drawPawn(term, logoY)
+  private ensureArt(): void {
+    if (this.artLoading || this.artLoaded) return
+    this.artLoading = true
+    void Promise.all((Object.keys(SVG_URLS) as ArtName[]).map(async name => {
+      const image = await loadSvg(name)
+      if (image) this.art[name] = image
+    })).finally(() => {
+      this.artLoading = false
+      this.artLoaded = true
+      this.repaint()
+    })
+  }
 
-    const nameY = logoY + PAWN.length + 1
+  private drawMenu(term: Grid): void {
+    const logoY = Math.max(1, Math.floor((term.rows - LOGO_H - 8) / 2))
+    this.drawLogo(term, logoY)
+
+    const nameY = logoY + LOGO_H + 1
     center(term, nameY, 'CHESS', BOLD | BRIGHT)
     const optionY = nameY + 2
     MENU.forEach((label, index) => {
@@ -324,28 +316,12 @@ export class Chess implements Overlay, Screen {
     center(term, term.rows - 2, 'ARROWS move  ENTER choose  ESC close', MUTED)
   }
 
-  /** Draw the logo as bitmaps so the CRT raster gives it the same pixel shape at every font size. */
-  private drawPawn(term: Grid, y: number): void {
-    const x = Math.max(0, Math.floor((term.cols - PAWN_W) / 2))
-    const crt = term as Grid & {
-      font?: { cellW: number; cellH: number }
-      putGlyph?: (x: number, y: number, bits: ArrayLike<number>, attr?: number) => void
-    }
-    const font = crt.font
-    const putGlyph = crt.putGlyph
-
-    if (!font || !putGlyph) {
-      PAWN.forEach((row, py) => term.text(x, y + py, row.replaceAll('#', '█').replaceAll('.', ' '), BOLD | BRIGHT))
-      return
-    }
-
-    const cellW = Math.min(16, font.cellW)
-    const pixels = new Uint16Array(font.cellH).fill((1 << cellW) - 1)
-    PAWN.forEach((row, py) => {
-      for (let px = 0; px < row.length; px++) {
-        if (row[px] === '#') putGlyph.call(crt, x + px, y + py, pixels, BOLD | BRIGHT)
-      }
-    })
+  private drawLogo(term: Grid, y: number): void {
+    const width = Math.min(LOGO_W, term.cols)
+    const height = Math.min(LOGO_H, term.rows - y)
+    const x = Math.max(0, Math.floor((term.cols - width) / 2))
+    const image = this.art.logo
+    if (image) drawSvg(term, image, x, y, width, height, BOLD | BRIGHT, 'solid')
   }
 
   private drawBoard(term: Grid): void {
@@ -467,7 +443,12 @@ export class Chess implements Overlay, Screen {
         term.put(x + dx, y + dy, ' ', squareAttr)
       }
     }
-    if (piece) drawPiece(term, piece, x, y, width, height)
+    if (piece) {
+      const image = this.art[`${piece.color}-${piece.kind}`]
+      if (image) drawSvg(term, image, x, y, width, height,
+        piece.color === 'white' ? BOLD | BRIGHT : DIM,
+        piece.color === 'white' ? 'outline' : 'solid')
+    }
 
     if (target && piece) this.markCorners(term, square, x, y, width, height, MUTED)
     else if (target) this.markMove(term, square, x, y, width, height)
@@ -504,56 +485,116 @@ export class Chess implements Overlay, Screen {
 type BitmapGrid = Grid & {
   font?: { cellW: number; cellH: number }
   advance?: number
+  stretch?: number
   putGlyph?: (x: number, y: number, bits: ArrayLike<number>, attr?: number) => void
 }
 
-/** Rasterize a larger silhouette so the fallback chess glyph cannot shrink inside its square. */
-function drawPiece(term: Grid, piece: Piece, x: number, y: number, width: number, height: number): void {
-  const bitmap = term as BitmapGrid
-  const font = bitmap.font
-  const putGlyph = bitmap.putGlyph
-  if (!font || !putGlyph || font.cellW > 16) {
-    term.put(x + Math.floor(width / 2), y + Math.floor(height / 2), glyphOf(piece), piece.color === 'white' ? BOLD | BRIGHT : DIM)
-    return
+interface GlyphSprite {
+  cols: number
+  rows: number
+  cells: (Uint16Array | undefined)[]
+}
+
+const svgBitmaps = new Map<ArtName, Promise<ImageBitmap | undefined>>()
+const spriteCache = new WeakMap<ImageBitmap, Map<string, GlyphSprite>>()
+
+function loadSvg(name: ArtName): Promise<ImageBitmap | undefined> {
+  const cached = svgBitmaps.get(name)
+  if (cached) return cached
+  const loading = (async (): Promise<ImageBitmap | undefined> => {
+    try {
+      const response = await fetch(SVG_URLS[name])
+      if (!response.ok) return undefined
+      const source = (await response.text()).replace('<svg ', '<svg width="256" height="256" ')
+      const image = new Blob([source], { type: 'image/svg+xml' })
+      return await createImageBitmap(image)
+    } catch {
+      return undefined
+    }
+  })()
+  svgBitmaps.set(name, loading)
+  return loading
+}
+
+function drawSvg(
+  term: Grid, image: ImageBitmap, x: number, y: number, cols: number, rows: number, attr: number, mode: ArtMode,
+): void {
+  const surface = term as BitmapGrid
+  const font = surface.font
+  const putGlyph = surface.putGlyph
+  if (!font || !putGlyph || font.cellW > 16 || typeof OffscreenCanvas === 'undefined') return
+
+  const advance = surface.advance ?? font.cellW + 1
+  const stretch = surface.stretch ?? 1
+  const key = `${cols}x${rows}:${font.cellW}x${font.cellH}:${advance}:${stretch.toFixed(3)}:${mode}`
+  let cache = spriteCache.get(image)
+  if (!cache) {
+    cache = new Map()
+    spriteCache.set(image, cache)
+  }
+  let sprite = cache.get(key)
+  if (!sprite) {
+    sprite = rasterSvg(image, cols, rows, font.cellW, font.cellH, advance, stretch, mode)
+    if (!sprite) return
+    cache.set(key, sprite)
   }
 
-  const advance = bitmap.advance ?? font.cellW + 1
-  const pixelW = width * advance
-  const pixelH = height * font.cellH
-  const spriteW = Math.max(1, Math.round(pixelW * 0.64))
-  const spriteH = Math.max(1, Math.round(pixelH * 0.72))
-  const left = Math.floor((pixelW - spriteW) / 2)
-  const top = Math.floor((pixelH - spriteH) / 2)
-  const art = PIECE_ART[piece.kind]
-  const artW = art[0]!.length
-  const pixels = new Uint8Array(pixelW * pixelH)
-
-  for (let py = 0; py < spriteH; py++) {
-    const artY = Math.floor(py * art.length / spriteH)
-    for (let px = 0; px < spriteW; px++) {
-      const artX = Math.floor(px * artW / spriteW)
-      if (art[artY]![artX] === '#') pixels[(top + py) * pixelW + left + px] = 1
+  for (let cy = 0; cy < sprite.rows; cy++) {
+    for (let cx = 0; cx < sprite.cols; cx++) {
+      const bits = sprite.cells[cy * sprite.cols + cx]
+      if (bits) putGlyph.call(surface, x + cx, y + cy, bits, attr)
     }
   }
+}
 
-  const attr = piece.color === 'white' ? BOLD | BRIGHT : DIM
-  for (let cy = 0; cy < height; cy++) {
-    for (let cx = 0; cx < width; cx++) {
-      const bits = new Uint16Array(font.cellH)
+function rasterSvg(
+  image: ImageBitmap, cols: number, rows: number, cellW: number, cellH: number,
+  advance: number, stretch: number, mode: ArtMode,
+): GlyphSprite | undefined {
+  const pixelW = cols * advance
+  const pixelH = rows * cellH
+  if (!pixelW || !pixelH) return undefined
+
+  const canvas = new OffscreenCanvas(pixelW, pixelH)
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })
+  if (!ctx) return undefined
+  ctx.clearRect(0, 0, pixelW, pixelH)
+
+  const pixelAspect = image.width / image.height * stretch
+  const boxAspect = pixelW / pixelH
+  const drawW = boxAspect > pixelAspect ? pixelH * pixelAspect : pixelW
+  const drawH = boxAspect > pixelAspect ? pixelH : pixelW / pixelAspect
+  ctx.drawImage(image, (pixelW - drawW) / 2, (pixelH - drawH) / 2, drawW, drawH)
+  const pixels = ctx.getImageData(0, 0, pixelW, pixelH).data
+  const cells: (Uint16Array | undefined)[] = new Array(cols * rows)
+
+  for (let cy = 0; cy < rows; cy++) {
+    for (let cx = 0; cx < cols; cx++) {
+      const bits = new Uint16Array(cellH)
       let lit = false
-      for (let py = 0; py < font.cellH; py++) {
-        const row = (cy * font.cellH + py) * pixelW + cx * advance
+      for (let py = 0; py < cellH; py++) {
+        const row = (cy * cellH + py) * pixelW + cx * advance
         let word = 0
-        for (let px = 0; px < font.cellW; px++) {
-          if (pixels[row + px]) word |= 1 << (font.cellW - px - 1)
+        for (let px = 0; px < cellW; px++) {
+          const i = (row + px) * 4
+          const alpha = pixels[i + 3]!
+          const luma = 0.2126 * pixels[i]! + 0.7152 * pixels[i + 1]! + 0.0722 * pixels[i + 2]!
+          if (alpha > 64 && (mode === 'solid' || luma < 128)) word |= 1 << (cellW - px - 1)
         }
-        if (advance > font.cellW && pixels[row + font.cellW]) word |= 1
+        if (advance > cellW) {
+          const i = (row + cellW) * 4
+          const alpha = pixels[i + 3]!
+          const luma = 0.2126 * pixels[i]! + 0.7152 * pixels[i + 1]! + 0.0722 * pixels[i + 2]!
+          if (alpha > 64 && (mode === 'solid' || luma < 128)) word |= 1
+        }
         bits[py] = word
         lit ||= word !== 0
       }
-      if (lit) putGlyph.call(bitmap, x + cx, y + cy, bits, attr)
+      if (lit) cells[cy * cols + cx] = bits
     }
   }
+
+  return { cols, rows, cells }
 }
 
 function squareName(square: Square): string {

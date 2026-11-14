@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320">
+  <title>Chess: standing pawn over a fallen pawn</title>
+  <defs>
+    <g id="pawn">
+      <circle cx="160" cy="62" r="38"/>
+      <path d="M145 99c-13 9-20 22-20 38 0 14 8 27 19 35l-17 64c-24 8-42 24-52 47h170c-10-23-28-39-52-47l-17-64c11-8 19-21 19-35 0-16-7-29-20-38z"/>
+      <path d="M62 283h196l20 30H42zM36 313h248v28H36z"/>
+    </g>
+  </defs>
+  <g fill="#000">
+    <use href="#pawn" transform="matrix(0 .38 -.38 0 210 190)"/>
+    <use href="#pawn" transform="matrix(.72 0 0 .72 45 28)"/>
+  </g>
+</svg>
