@@ -515,12 +515,18 @@ function loadSvg(name: ArtName): Promise<ImageBitmap | undefined> {
   const cached = svgBitmaps.get(name)
   if (cached) return cached
   const loading = (async (): Promise<ImageBitmap | undefined> => {
+    let url: string | undefined
     try {
       const source = SVG_SOURCE[name].replace('<svg ', '<svg width="256" height="256" ')
-      const image = new Blob([source], { type: 'image/svg+xml' })
+      url = URL.createObjectURL(new Blob([source], { type: 'image/svg+xml' }))
+      const image = new Image()
+      image.src = url
+      await image.decode()
       return await createImageBitmap(image)
     } catch {
       return undefined
+    } finally {
+      if (url) URL.revokeObjectURL(url)
     }
   })()
   svgBitmaps.set(name, loading)
