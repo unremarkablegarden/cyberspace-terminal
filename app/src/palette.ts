@@ -22,7 +22,7 @@ export const NEEDS_LOGIN = new Set(['feed', 'circ', 'cmail', 'inbox'])
 const TITLE = 'PROGRAMS'
 const GAP = 2
 
-type Row = { kind: 'job'; job: Job } | { kind: 'launch'; name: string } | { kind: 'shell' } | { kind: 'config' }
+type Row = { kind: 'job'; job: Job } | { kind: 'launch'; name: string } | { kind: 'games' } | { kind: 'shell' } | { kind: 'config' }
 
 export interface PaletteHooks {
   /** Unread items behind a program, by command word; drawn after its name. */
@@ -96,20 +96,26 @@ export class JobPalette implements Overlay {
     for (const name of MAIN) {
       if (!jobs.byName(name) && kernel.resolveProgram(name)) this.rows.push({ kind: 'launch', name })
     }
+    // The games shelf is a nested list, so the row carries no command of its own.
+    this.rows.push({ kind: 'games' })
     this.rows.push({ kind: 'shell' })
     if (this.hooks.config) this.rows.push({ kind: 'config' })
     this.items = this.rows.map((r, i) => this.text(r, i))
   }
 
-  private show(selected: number): void {
-    const jobs = this.kernel()!.jobs
-    const count = this.rows.length
+  private begin(): void {
     this.stack ??= new ScreenStack(this.screen.term as never)
     grid.lock()
     this.cursorWas = RENDER.cursor
     RENDER.cursor = false
     this.sticky = false
     this.snd.tick()
+  }
+
+  private show(selected: number): void {
+    const jobs = this.kernel()!.jobs
+    const count = this.rows.length
+    this.begin()
 
     const picker = new SelectPopup({
       title: TITLE,
@@ -140,16 +146,45 @@ export class JobPalette implements Overlay {
         return true
       },
       onDone: (item, index) => {
-        this.hide()
-        if (item === null) return
+        if (item === null) { this.hide(); return }
         const r = this.rows[index]!
+        if (r.kind === 'games') { this.showGames(); return }
+        this.hide()
         if (r.kind === 'job') { if (r.job !== jobs.fg) void jobs.switchTo(r.job) }
         else if (r.kind === 'launch') void jobs.switchTo({ launch: r.name })
         else if (r.kind === 'config') this.hooks.config?.()
         else void jobs.switchTo('shell')
       },
     })
-    this.stack.push(picker)
+    this.stack!.push(picker)
+  }
+
+  /** The beta games list. A chosen game is handed to the host, which owns the screen. */
+  private showGames(): void {
+    this.hide()
+    this.begin()
+    const stack = this.stack!
+    stack.push(new SelectPopup({
+      title: 'GAMES',
+      items: ['CHESS'],
+      hint: 'beta  ESC back',
+      shadow: true,
+      keys: ['1'],
+      onFeedback: kind => {
+        if (kind === 'edge') this.snd.beep(220, 0.04)
+        else if (kind === 'move') this.snd.tick()
+        else if (kind === 'cancel') this.snd.blip(420, 0.09, 0)
+      },
+      onDone: item => {
+        if (item !== null) return
+        this.hide()
+        const kernel = this.kernel()
+        if (!kernel) return
+        this.build(kernel)
+        const at = this.rows.findIndex(r => r.kind === 'games')
+        this.show(Math.max(at, 0))
+      },
+    }))
   }
 
   private locked(r: Row): boolean {
@@ -202,7 +237,7 @@ export class JobPalette implements Overlay {
     const key = i < 9 ? String(i + 1) : ' '
     const gap = ' '.repeat(GAP)
     const fg = this.kernel()?.jobs.fg
-    const mark = r.kind !== 'job' ? '' : r.job === fg ? '·' : r.job.state
+    const mark = r.kind === 'games' ? 'beta' : r.kind !== 'job' ? '' : r.job === fg ? '·' : r.job.state
     return `${key}${gap}${this.label(r).padEnd(this.nameW())}${gap}${mark}`.trimEnd()
   }
 
@@ -210,6 +245,7 @@ export class JobPalette implements Overlay {
   private label(r: Row): string {
     if (r.kind === 'shell') return 'shell'
     if (r.kind === 'config') return 'config'
+    if (r.kind === 'games') return 'games'
     const line = r.kind === 'job' ? r.job.line : r.name
     const n = this.badge(r.kind === 'job' ? r.job.name : r.name)
     return n > 0 ? `${line} (${n > 99 ? '99+' : n})` : line
