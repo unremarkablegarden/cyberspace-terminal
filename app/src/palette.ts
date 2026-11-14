@@ -161,7 +161,7 @@ export class JobPalette implements Overlay {
     this.stack!.push(picker)
   }
 
-  /** The beta games list. A chosen game is handed to the host, which owns the screen. */
+  /** A chosen game is handed to the host, which owns the screen. */
   private showGames(): void {
     this.hide()
     this.begin()
@@ -169,7 +169,7 @@ export class JobPalette implements Overlay {
     stack.push(new SelectPopup({
       title: 'GAMES',
       items: ['CHESS'],
-      hint: 'beta  ESC back',
+      hint: 'ESC back',
       shadow: true,
       keys: ['1'],
       onFeedback: kind => {
@@ -243,7 +243,7 @@ export class JobPalette implements Overlay {
     const key = i < 9 ? String(i + 1) : ' '
     const gap = ' '.repeat(GAP)
     const fg = this.kernel()?.jobs.fg
-    const mark = r.kind === 'games' ? 'beta' : r.kind !== 'job' ? '' : r.job === fg ? '·' : r.job.state
+    const mark = r.kind !== 'job' ? '' : r.job === fg ? '·' : r.job.state
     return `${key}${gap}${this.label(r).padEnd(this.nameW())}${gap}${mark}`.trimEnd()
   }
 

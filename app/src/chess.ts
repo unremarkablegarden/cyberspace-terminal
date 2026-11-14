@@ -27,14 +27,20 @@ import {
 
 type Mode = 'menu' | 'board'
 
-const LOGO = [
-  '  ____ _   _ _____ ____ ____  ',
-  ' / ___| | | | ____/ ___/ ___| ',
-  '| |   | |_| |  _| \\___ \\___ \\ ',
-  '| |___|  _  | |___ ___) |__) |',
-  ' \\____|_| |_|_____|____/____/ ',
+const PAWN = [
+  '......###......',
+  '.....#####.....',
+  '....#######....',
+  '....#######....',
+  '.....#####.....',
+  '......###......',
+  '......###......',
+  '.....#####.....',
+  '...#########...',
+  '.#############.',
+  '###############',
 ]
-const LOGO_W = Math.max(...LOGO.map(line => line.length))
+const PAWN_W = PAWN[0]!.length
 const MENU = ['Play with Machine', 'Play with someone']
 const MACHINE_DELAY = 350
 /** Unicode chess pieces. The coverage face carries all twelve; see FALLBACK_FONT. */
@@ -119,8 +125,7 @@ export class Chess implements Overlay, Screen {
       this.newGame()
       return true
     }
-    // The two-player chair is not wired yet. The row stays selected, so the list
-    // does not pretend that something started.
+    // Keep the reserved second option on the title card.
     this.snd.beep(220, 0.04)
     return true
   }
@@ -280,19 +285,40 @@ export class Chess implements Overlay, Screen {
   }
 
   private drawMenu(term: Grid): void {
-    const logoY = Math.max(2, Math.floor(term.rows / 6))
-    const logoX = Math.max(0, Math.floor((term.cols - LOGO_W) / 2))
-    LOGO.forEach((line, row) => term.text(logoX, logoY + row, line, BOLD | BRIGHT))
+    const logoY = Math.max(1, Math.floor((term.rows - PAWN.length - 8) / 2))
+    this.drawPawn(term, logoY)
 
-    center(term, logoY + LOGO.length + 1, 'beta', MUTED)
-    const optionY = logoY + LOGO.length + 4
+    const nameY = logoY + PAWN.length + 1
+    center(term, nameY, 'CHESS', BOLD | BRIGHT)
+    const optionY = nameY + 2
     MENU.forEach((label, index) => {
       const text = ` ${label} `
       const x = Math.max(0, Math.floor((term.cols - text.length) / 2))
       term.text(x, optionY + index * 2, text, BOLD, index === this.menuIndex ? 1 : 0)
     })
-    center(term, optionY + MENU.length * 2, 'two-player chess is not wired yet', MUTED)
-    center(term, term.rows - 2, 'UP/DOWN  move     ENTER  choose     ESC  close', MUTED)
+    center(term, term.rows - 2, 'ARROWS move  ENTER choose  ESC close', MUTED)
+  }
+
+  /** Draw the logo as bitmaps so the CRT raster gives it the same pixel shape at every font size. */
+  private drawPawn(term: Grid, y: number): void {
+    const x = Math.max(0, Math.floor((term.cols - PAWN_W) / 2))
+    const crt = term as Grid & {
+      font?: { cellW: number; cellH: number }
+      putGlyph?: (x: number, y: number, bits: ArrayLike<number>, attr?: number) => void
+    }
+
+    if (!crt.font || !crt.putGlyph) {
+      PAWN.forEach((row, py) => term.text(x, y + py, row.replaceAll('#', '█').replaceAll('.', ' '), BOLD | BRIGHT))
+      return
+    }
+
+    const cellW = Math.min(16, crt.font.cellW)
+    const pixels = new Uint16Array(crt.font.cellH).fill((1 << cellW) - 1)
+    PAWN.forEach((row, py) => {
+      for (let px = 0; px < row.length; px++) {
+        if (row[px] === '#') crt.putGlyph(x + px, y + py, pixels, BOLD | BRIGHT)
+      }
+    })
   }
 
   private drawBoard(term: Grid): void {
