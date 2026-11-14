@@ -14,7 +14,7 @@ import type { CrtScreen } from '@cyberspace/crt'
 import type { Sound } from '@cyberspace/crt/audio'
 import { RENDER } from '@cyberspace/crt/config'
 import {
-  BOLD, BRIGHT, DIM, MUTED, NORMAL, ScreenStack, clear, frame,
+  BG, BOLD, BRIGHT, DIM, MUTED, NORMAL, ScreenStack, clear, frame,
   type Grid, type KeyInput, type Rect, type Screen,
 } from '@cyberspace/tui'
 import { grid } from './grid'
@@ -42,6 +42,9 @@ const PAWN = [
 ]
 const PAWN_W = PAWN[0]!.length
 const MENU = ['Play with Machine', 'Play with someone']
+const SQUARE_W = 2
+const BOARD_W = SQUARE_W * 8 + 2
+const BOARD_H = 10
 const MACHINE_DELAY = 350
 /** Unicode chess pieces. The coverage face carries all twelve; see FALLBACK_FONT. */
 const GLYPH: Record<Piece['color'], Record<Piece['kind'], string>> = {
@@ -306,27 +309,29 @@ export class Chess implements Overlay, Screen {
       font?: { cellW: number; cellH: number }
       putGlyph?: (x: number, y: number, bits: ArrayLike<number>, attr?: number) => void
     }
+    const font = crt.font
+    const putGlyph = crt.putGlyph
 
-    if (!crt.font || !crt.putGlyph) {
+    if (!font || !putGlyph) {
       PAWN.forEach((row, py) => term.text(x, y + py, row.replaceAll('#', '█').replaceAll('.', ' '), BOLD | BRIGHT))
       return
     }
 
-    const cellW = Math.min(16, crt.font.cellW)
-    const pixels = new Uint16Array(crt.font.cellH).fill((1 << cellW) - 1)
+    const cellW = Math.min(16, font.cellW)
+    const pixels = new Uint16Array(font.cellH).fill((1 << cellW) - 1)
     PAWN.forEach((row, py) => {
       for (let px = 0; px < row.length; px++) {
-        if (row[px] === '#') crt.putGlyph(x + px, y + py, pixels, BOLD | BRIGHT)
+        if (row[px] === '#') putGlyph.call(crt, x + px, y + py, pixels, BOLD | BRIGHT)
       }
     })
   }
 
   private drawBoard(term: Grid): void {
     const board: Rect = {
-      x: Math.max(2, Math.floor((term.cols - 28) / 2)),
-      y: Math.max(3, Math.floor((term.rows - 10) / 2) - 1),
-      w: 26,
-      h: 10,
+      x: Math.max(3, Math.floor((term.cols - BOARD_W) / 2)),
+      y: Math.max(3, Math.floor((term.rows - BOARD_H) / 2) - 1),
+      w: BOARD_W,
+      h: BOARD_H,
     }
     const filesY = board.y + board.h
     const statusY = filesY + 2
@@ -338,11 +343,11 @@ export class Chess implements Overlay, Screen {
       const y = board.y + 1 + row
       term.text(board.x - 2, y, String(8 - row), MUTED)
       for (let col = 0; col < 8; col++) {
-        this.drawSquare(term, { row, col }, board.x + 1 + col * 3, y)
+        this.drawSquare(term, { row, col }, board.x + 1 + col * SQUARE_W, y)
       }
     }
     for (let col = 0; col < 8; col++) {
-      term.put(board.x + 2 + col * 3, filesY, 'abcdefgh'[col]!, MUTED)
+      term.put(board.x + 1 + col * SQUARE_W, filesY, 'abcdefgh'[col]!, MUTED)
     }
 
     const result = resultOf(this.state)
@@ -352,8 +357,8 @@ export class Chess implements Overlay, Screen {
       center(term, statusY + 1, 'check', BRIGHT)
     }
     center(term, term.rows - 2, result.over
-      ? 'n  new game     ESC  menu'
-      : 'ARROWS  move     ENTER  select/move     n  new     ESC  menu', MUTED)
+      ? 'n new game  ESC menu'
+      : 'ARROWS move  ENTER play  n new  ESC menu', MUTED)
   }
 
   private drawSquare(term: Grid, square: Square, x: number, y: number): void {
@@ -363,28 +368,18 @@ export class Chess implements Overlay, Screen {
     const cursor = sameSquare(this.cursor, square)
     const check = piece?.kind === 'king' && piece.color === this.state.turn && isCheck(this.state, this.state.turn)
 
-    let text = '   '
-    let attr = NORMAL
-    if (piece) {
-      text = ` ${glyphOf(piece)} `
-      // The display has one phosphor, so the sides differ by beam level: the
-      // player's white pieces are bright and the machine's are dim.
-      attr = piece.color === 'white' ? BOLD | BRIGHT : DIM
-    }
-    if (target) {
-      text = piece ? `!${glyphOf(piece)}!` : ' * '
-      attr = piece ? BOLD | BRIGHT : MUTED
-    }
-    if (selected && piece) {
-      text = `[${glyphOf(piece)}]`
-      attr = BOLD | BRIGHT
-    }
-    if (check) {
-      text = `!${glyphOf(piece)}!`
-      attr = BOLD | BRIGHT
-    }
-    if (cursor) attr |= BRIGHT
-    term.text(x, y, text, attr, cursor ? 1 : 0)
+    const dark = (square.row + square.col) % 2 === 1
+    const focus = selected || cursor || check
+    const marked = focus || !!target
+    let attr = dark ? BG : NORMAL
+    if (piece) attr |= piece.color === 'white' ? BOLD | BRIGHT : DIM
+    if (target) attr = (dark ? BG : 0) | MUTED
+    if (focus) attr = (dark ? BG : 0) | BOLD | BRIGHT
+    const inverse = marked ? 1 : 0
+
+    // BG shades dark squares; inverse fills legal destinations and focus squares.
+    term.put(x, y, piece ? glyphOf(piece) : ' ', attr, inverse)
+    term.put(x + 1, y, ' ', attr, inverse)
   }
 }
 
