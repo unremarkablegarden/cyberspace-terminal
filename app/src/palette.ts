@@ -30,6 +30,8 @@ export interface PaletteHooks {
   authed?: () => boolean
   /** The config box, the last row. */
   config?: () => void
+  /** A game chosen from the games shelf. The host owns the game screen. */
+  game?: (name: string) => void
 }
 
 export class JobPalette implements Overlay {
@@ -176,13 +178,17 @@ export class JobPalette implements Overlay {
         else if (kind === 'cancel') this.snd.blip(420, 0.09, 0)
       },
       onDone: item => {
-        if (item !== null) return
+        if (item === null) {
+          this.hide()
+          const kernel = this.kernel()
+          if (!kernel) return
+          this.build(kernel)
+          const at = this.rows.findIndex(r => r.kind === 'games')
+          this.show(Math.max(at, 0))
+          return
+        }
         this.hide()
-        const kernel = this.kernel()
-        if (!kernel) return
-        this.build(kernel)
-        const at = this.rows.findIndex(r => r.kind === 'games')
-        this.show(Math.max(at, 0))
+        this.hooks.game?.(item.toLowerCase())
       },
     }))
   }

@@ -28,6 +28,7 @@ import { Screensaver } from './saver'
 import { Doom } from './doom'
 import { doomsdayProgram } from './doomsday'
 import { JobPalette } from './palette'
+import { Chess } from './chess'
 import { Launcher, launchables } from './launcher'
 import { NoticeBar } from './bar'
 import { saverPrefs } from './prefs'
@@ -167,6 +168,7 @@ let config: ConfigBox | null = null
 let saver: Screensaver | null = null
 let doom: Doom | null = null
 let palette: JobPalette | null = null
+let chess: Chess | null = null
 let launcher: Launcher | null = null
 /** The notification service, once the kernel has made it. */
 let inbox: InboxService | null = null
@@ -212,7 +214,7 @@ const keyboard = new Keyboard({
   config: () => config,
   palette: () => palette,
   inbox: openInbox,
-  overlay: () => (config?.open ? config : doom?.open ? doom : saver?.open ? saver : palette?.open ? palette : launcher?.open ? launcher : null),
+  overlay: () => (chess?.open ? chess : config?.open ? config : doom?.open ? doom : saver?.open ? saver : palette?.open ? palette : launcher?.open ? launcher : null),
   activity: () => { lastActive = Date.now() },
   skipBoot: () => {
     if (!bootAbort) return false
@@ -431,10 +433,12 @@ const program = {
     saver = new Screensaver(s, snd, () => halted || !live)
     doom = new Doom(s, snd, waitForDrain)
     launcher = new Launcher(s, snd)
+    chess = new Chess(s, snd)
     palette = new JobPalette(s, snd, () => machine, {
       badge: name => !inbox ? 0 : name === 'inbox' ? inbox.total : name === 'cmail' ? inbox.mail : 0,
       authed: () => api.authed,
       config: () => config?.toggle(),
+      game: name => { if (name === 'chess') chess?.start() },
     })
     // The idle timer. Coarse on purpose: the timeout is in minutes.
     setInterval(() => {
