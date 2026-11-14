@@ -46,6 +46,7 @@ const LOGO_W = 19
 const LOGO_H = 10
 type PieceArt = `${Piece['color']}-${Piece['kind']}`
 type ArtName = 'logo' | PieceArt
+type PieceStyle = 'solid' | 'outline'
 
 const SVG_SOURCE: Record<ArtName, string> = {
   logo: logoSvg,
@@ -458,7 +459,9 @@ export class Chess implements Overlay, Screen {
       const image = this.art[`${piece.color}-${piece.kind}`]
       if (image) {
         const pieceAttr = highlight ?? (piece.color === 'white' ? BOLD | BRIGHT : DIM)
-        drawSvg(term, image, x, y, width, height, pieceAttr | (dark ? BG : 0), highlight === null ? 0 : 1)
+        const style = piece.color === 'white' ? 'solid' : 'outline'
+        drawSvg(term, image, x, y, width, height,
+          pieceAttr | (dark ? BG : 0), highlight === null ? 0 : 1, style)
       }
     }
 
@@ -508,7 +511,7 @@ function loadSvg(name: ArtName): Promise<ImageBitmap | undefined> {
 
 function drawSvg(
   term: Grid, image: ImageBitmap, x: number, y: number, cols: number, rows: number,
-  attr: number, inverse = 0,
+  attr: number, inverse = 0, style: PieceStyle = 'solid',
 ): void {
   const surface = term as BitmapGrid
   const font = surface.font
@@ -517,7 +520,7 @@ function drawSvg(
 
   const advance = surface.advance ?? font.cellW + 1
   const stretch = surface.stretch ?? 1
-  const key = `${cols}x${rows}:${font.cellW}x${font.cellH}:${advance}:${stretch.toFixed(3)}`
+  const key = `${cols}x${rows}:${font.cellW}x${font.cellH}:${advance}:${stretch.toFixed(3)}:${style}`
   let cache = spriteCache.get(image)
   if (!cache) {
     cache = new Map()
@@ -525,7 +528,7 @@ function drawSvg(
   }
   let sprite = cache.get(key)
   if (!sprite) {
-    sprite = rasterSvg(image, cols, rows, font.cellW, font.cellH, advance, stretch)
+    sprite = rasterSvg(image, cols, rows, font.cellW, font.cellH, advance, stretch, style)
     if (!sprite) return
     cache.set(key, sprite)
   }
@@ -540,7 +543,7 @@ function drawSvg(
 
 function rasterSvg(
   image: ImageBitmap, cols: number, rows: number, cellW: number, cellH: number,
-  advance: number, stretch: number,
+  advance: number, stretch: number, style: PieceStyle,
 ): GlyphSprite | undefined {
   const pixelW = cols * advance
   const pixelH = rows * cellH
@@ -557,22 +560,39 @@ function rasterSvg(
   const drawH = boxAspect > pixelAspect ? pixelH : pixelW / pixelAspect
   ctx.drawImage(image, (pixelW - drawW) / 2, (pixelH - drawH) / 2, drawW, drawH)
   const pixels = ctx.getImageData(0, 0, pixelW, pixelH).data
+  const mask = new Uint8Array(pixelW * pixelH)
+  for (let i = 0; i < mask.length; i++) mask[i] = pixels[i * 4 + 3]! > 64 ? 1 : 0
   const cells: (Uint16Array | undefined)[] = new Array(cols * rows)
+
+  const visible = (px: number, py: number): boolean => {
+    const at = py * pixelW + px
+    if (!mask[at]) return false
+    if (style === 'solid') return true
+
+    // Keep a two-pixel edge. The inside stays transparent so the checker
+    // square reads as the dark side's fill.
+    for (let oy = -2; oy <= 2; oy++) {
+      for (let ox = -2; ox <= 2; ox++) {
+        if (!ox && !oy) continue
+        const nx = px + ox
+        const ny = py + oy
+        if (nx < 0 || ny < 0 || nx >= pixelW || ny >= pixelH || !mask[ny * pixelW + nx]) return true
+      }
+    }
+    return false
+  }
 
   for (let cy = 0; cy < rows; cy++) {
     for (let cx = 0; cx < cols; cx++) {
       const bits = new Uint16Array(cellH)
       let lit = false
       for (let py = 0; py < cellH; py++) {
-        const row = (cy * cellH + py) * pixelW + cx * advance
         let word = 0
         for (let px = 0; px < cellW; px++) {
-          const i = (row + px) * 4
-          if (pixels[i + 3]! > 64) word |= 1 << (cellW - px - 1)
+          if (visible(cx * advance + px, cy * cellH + py)) word |= 1 << (cellW - px - 1)
         }
         if (advance > cellW) {
-          const i = (row + cellW) * 4
-          if (pixels[i + 3]! > 64) word |= 1
+          if (visible(cx * advance + cellW, cy * cellH + py)) word |= 1
         }
         bits[py] = word
         lit ||= word !== 0
