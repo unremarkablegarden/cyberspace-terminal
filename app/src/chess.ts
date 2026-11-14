@@ -14,7 +14,7 @@ import type { CrtScreen } from '@cyberspace/crt'
 import type { Sound } from '@cyberspace/crt/audio'
 import { RENDER } from '@cyberspace/crt/config'
 import {
-  BOLD, BRIGHT, MUTED, NORMAL, ScreenStack, clear, frame,
+  BOLD, BRIGHT, DIM, MUTED, NORMAL, ScreenStack, clear, frame,
   type Grid, type KeyInput, type Rect, type Screen,
 } from '@cyberspace/tui'
 import { grid } from './grid'
@@ -334,7 +334,9 @@ export class Chess implements Overlay, Screen {
     let attr = NORMAL
     if (piece) {
       text = ` ${pieceLetter(piece)} `
-      attr = piece.color === 'white' ? BOLD : NORMAL
+      // The display has one phosphor, so the sides differ by beam level: the
+      // player's white pieces are bright and the machine's are dim.
+      attr = piece.color === 'white' ? BOLD | BRIGHT : DIM
     }
     if (target) {
       text = piece ? `!${pieceLetter(piece)}!` : ' * '
