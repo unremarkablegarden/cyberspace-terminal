@@ -21,8 +21,8 @@ import { grid } from './grid'
 import type { Overlay } from './input'
 import {
   applyMove, chooseMachineMove, getMoves, getPiece, isCheck, newChessState,
-  pieceLetter, resultOf, sameSquare,
-  type Move, type Square,
+  resultOf, sameSquare,
+  type Move, type Piece, type Square,
 } from './chess/rules'
 
 type Mode = 'menu' | 'board'
@@ -37,6 +37,13 @@ const LOGO = [
 const LOGO_W = Math.max(...LOGO.map(line => line.length))
 const MENU = ['Play with Machine', 'Play with someone']
 const MACHINE_DELAY = 350
+/** Unicode chess pieces. The coverage face carries all twelve; see FALLBACK_FONT. */
+const GLYPH: Record<Piece['color'], Record<Piece['kind'], string>> = {
+  white: { king: '♔', queen: '♕', rook: '♖', bishop: '♗', knight: '♘', pawn: '♙' },
+  black: { king: '♚', queen: '♛', rook: '♜', bishop: '♝', knight: '♞', pawn: '♟' },
+}
+
+const glyphOf = (piece: Piece): string => GLYPH[piece.color][piece.kind]
 
 /** The game overlay. It is both the host's overlay and the screen on the stack. */
 export class Chess implements Overlay, Screen {
@@ -333,21 +340,21 @@ export class Chess implements Overlay, Screen {
     let text = '   '
     let attr = NORMAL
     if (piece) {
-      text = ` ${pieceLetter(piece)} `
+      text = ` ${glyphOf(piece)} `
       // The display has one phosphor, so the sides differ by beam level: the
       // player's white pieces are bright and the machine's are dim.
       attr = piece.color === 'white' ? BOLD | BRIGHT : DIM
     }
     if (target) {
-      text = piece ? `!${pieceLetter(piece)}!` : ' * '
+      text = piece ? `!${glyphOf(piece)}!` : ' * '
       attr = piece ? BOLD | BRIGHT : MUTED
     }
     if (selected && piece) {
-      text = `[${pieceLetter(piece)}]`
+      text = `[${glyphOf(piece)}]`
       attr = BOLD | BRIGHT
     }
     if (check) {
-      text = `!${pieceLetter(piece)}!`
+      text = `!${glyphOf(piece)}!`
       attr = BOLD | BRIGHT
     }
     if (cursor) attr |= BRIGHT

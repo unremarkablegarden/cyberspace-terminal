@@ -57,9 +57,6 @@ export interface GameResult {
 }
 
 const FILES = 'abcdefgh'
-const LETTER: Record<Kind, string> = {
-  pawn: 'P', knight: 'N', bishop: 'B', rook: 'R', queen: 'Q', king: 'K',
-}
 
 const VALUE: Record<Kind, number> = {
   pawn: 100,
@@ -99,10 +96,6 @@ export const sameSquare = (a: Square, b: Square): boolean =>
 
 export const squareName = (square: Square): string =>
   FILES[square.col]! + String(8 - square.row)
-
-/** A piece as a single board letter. White is upper case, black is lower case. */
-export const pieceLetter = (piece: Piece): string =>
-  piece.color === 'white' ? LETTER[piece.kind] : LETTER[piece.kind]!.toLowerCase()
 
 export const pieceName = (piece: Piece): string =>
   `${piece.color} ${piece.kind}`
