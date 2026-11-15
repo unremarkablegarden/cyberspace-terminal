@@ -14,7 +14,7 @@ import type { CrtScreen } from '@cyberspace/crt'
 import type { Sound } from '@cyberspace/crt/audio'
 import { RENDER } from '@cyberspace/crt/config'
 import {
-  BG, BOLD, BRIGHT, DIM, MUTED, NORMAL, ScreenStack, clear, frame,
+  BG, BOLD, BRIGHT, DIM, MUTED, NORMAL, ScreenStack, SelectPopup, clear, frame,
   type Grid, type KeyInput, type Rect, type Screen,
 } from '@cyberspace/tui'
 import { grid } from './grid'
@@ -22,7 +22,7 @@ import type { Overlay } from './input'
 import {
   applyMove, getMoves, getPiece, isCheck, newChessState,
   resultOf, sameSquare,
-  type Move, type Piece, type Square,
+  type Color, type Move, type Piece, type Square,
 } from './chess/rules'
 import { StockfishEngine } from './chess/stockfish'
 import chessLogoUrl from './chess/assets/chess-logo.png?url'
@@ -42,6 +42,7 @@ import rookSvg from './chess/svg/rook.svg?raw'
 type Mode = 'menu' | 'board'
 
 const MENU = ['Play with Machine', 'Play with someone']
+const COLOR_MENU = ['Random', 'White', 'Black']
 const MACHINE_DELAY = 350
 type PieceArt = `${Piece['color']}-${Piece['kind']}`
 type ArtName = 'logo' | PieceArt
@@ -68,6 +69,7 @@ export class Chess implements Overlay, Screen {
   private cursorWas = true
   private mode: Mode = 'menu'
   private menuIndex = 0
+  private playerColor: Color = 'white'
   private state = newChessState()
   private cursor: Square = { row: 6, col: 4 }
   private selected: Square | null = null
@@ -120,7 +122,7 @@ export class Chess implements Overlay, Screen {
 
   draw(term: Grid): void {
     clear(term, { x: 0, y: 0, w: term.cols, h: term.rows })
-    if (this.mode === 'menu') this.drawMenu(term)
+    if (this.mode !== 'board') this.drawMenu(term)
     else this.drawBoard(term)
     term.showCursor = false
     term.dirty = true
@@ -139,7 +141,7 @@ export class Chess implements Overlay, Screen {
     }
     if (e.key !== 'Enter') return false
     if (this.menuIndex === 0) {
-      this.newGame()
+      this.openColorPicker()
       return true
     }
     // Keep the reserved second option on the title card.
@@ -172,8 +174,9 @@ export class Chess implements Overlay, Screen {
       : key === 'ArrowDown' ? { row: 1, col: 0 }
       : key === 'ArrowLeft' ? { row: 0, col: -1 }
       : { row: 0, col: 1 }
-    const row = Math.min(7, Math.max(0, this.cursor.row + step.row))
-    const col = Math.min(7, Math.max(0, this.cursor.col + step.col))
+    const direction = this.playerColor === 'black' ? -1 : 1
+    const row = Math.min(7, Math.max(0, this.cursor.row + step.row * direction))
+    const col = Math.min(7, Math.max(0, this.cursor.col + step.col * direction))
     if (row === this.cursor.row && col === this.cursor.col) {
       this.snd.beep(220, 0.03)
       return
@@ -223,6 +226,33 @@ export class Chess implements Overlay, Screen {
     this.moves = []
   }
 
+  private openColorPicker(): void {
+    if (!this.stack) return
+    this.stack.push(new SelectPopup({
+      title: 'PLAY AS',
+      items: COLOR_MENU,
+      selected: 0,
+      hint: 'ARROWS MOVE  ENTER SELECT  ESC BACK',
+      shadow: true,
+      onFeedback: kind => {
+        if (kind === 'move') this.snd.tick()
+        else if (kind === 'edge') this.snd.beep(220, 0.04)
+        else if (kind === 'cancel') this.snd.blip(420, 0.09, 0)
+      },
+      onDone: (item, index) => {
+        this.stack?.pop()
+        if (item === null) {
+          this.repaint()
+          return
+        }
+        this.playerColor = index === 0
+          ? (Math.random() < 0.5 ? 'white' : 'black')
+          : index === 1 ? 'white' : 'black'
+        this.newGame()
+      },
+    }))
+  }
+
   private playMove(move: Move): void {
     this.state = applyMove(this.state, move)
     this.cursor = move.to
@@ -234,7 +264,7 @@ export class Chess implements Overlay, Screen {
       this.note = result.text
       return
     }
-    if (this.state.turn === 'black') this.startMachine()
+    if (this.state.turn !== this.playerColor) this.startMachine()
   }
 
   private startMachine(): void {
@@ -275,13 +305,14 @@ export class Chess implements Overlay, Screen {
   private newGame(): void {
     this.stopMachine()
     this.state = newChessState()
-    this.cursor = { row: 6, col: 4 }
+    this.cursor = { row: this.playerColor === 'white' ? 6 : 1, col: 4 }
     this.clearSelection()
     this.thinking = false
     this.note = ''
     this.mode = 'board'
     this.snd.tick()
-    this.repaint()
+    if (this.state.turn !== this.playerColor) this.startMachine()
+    else this.repaint()
   }
 
   private toMenu(): void {
@@ -342,16 +373,17 @@ export class Chess implements Overlay, Screen {
     const advance = metrics.advance ?? (metrics.font?.cellW ?? 8) + 1
     const stretch = metrics.stretch ?? 1
     const targetLogoRows = term.rows >= 40 && term.cols >= 70 ? 14 : term.rows >= 28 ? 11 : term.rows >= 18 ? 8 : 4
-    const logoRows = Math.min(targetLogoRows, Math.max(3, term.rows - 10))
-    const logoWidth = Math.min(Math.max(3, term.cols - 4), Math.round(logoRows * cellH * stretch / advance))
-    const logoHeight = Math.min(logoRows, Math.max(3, Math.round(logoWidth * advance / (cellH * stretch))))
     const optionStep = term.rows < 20 ? 1 : 2
     const optionRows = (MENU.length - 1) * optionStep + 1
-    const contentHeight = logoHeight + 1 + 1 + 2 + optionRows
-    const hints = term.rows < 13 ? [] : term.cols >= 38
+    const hints = term.rows < 16 ? [] : term.cols >= 38
       ? ['ARROWS MOVE  ENTER SELECT  ESC CLOSE']
       : term.cols >= 26 ? ['ARROWS MOVE / ENTER SELECT', 'ESC CLOSE'] : ['ARROWS / ENTER', 'ESC']
     const hintsY = term.rows - hints.length - 2
+    const maxLogoRows = Math.max(3, hintsY - optionRows - 4)
+    const logoRows = Math.min(targetLogoRows, Math.max(3, term.rows - 10), maxLogoRows)
+    const logoWidth = Math.min(Math.max(3, term.cols - 4), Math.round(logoRows * cellH * stretch / advance))
+    const logoHeight = Math.min(logoRows, Math.max(3, Math.round(logoWidth * advance / (cellH * stretch))))
+    const contentHeight = logoHeight + 1 + 1 + 2 + optionRows
     const logoY = Math.max(0, Math.floor((hintsY - contentHeight) / 2))
     this.drawLogo(term, logoY, logoWidth, logoHeight)
     const titleY = logoY + logoHeight + 1
@@ -411,15 +443,15 @@ export class Chess implements Overlay, Screen {
     for (let row = 0; row < 8; row++) {
       const y = innerY + row * squareH
       const rankY = y + Math.floor((squareH - 1) / 2)
-      term.text(board.x - 2, rankY, String(8 - row), MUTED)
+      term.text(board.x - 2, rankY, String(this.playerColor === 'white' ? 8 - row : row + 1), MUTED)
       for (let col = 0; col < 8; col++) {
         const x = innerX + col * squareW
-        this.drawSquare(term, { row, col }, x, y, squareW, squareH)
+        this.drawSquare(term, this.boardSquare(row, col), x, y, squareW, squareH)
       }
     }
     for (let col = 0; col < 8; col++) {
       const centerX = innerX + col * squareW + Math.floor((squareW - 1) / 2)
-      term.put(centerX, filesY, 'abcdefgh'[col]!, MUTED)
+      term.put(centerX, filesY, 'abcdefgh'[this.playerColor === 'white' ? col : 7 - col]!, MUTED)
     }
 
     const result = resultOf(this.state)
@@ -462,8 +494,10 @@ export class Chess implements Overlay, Screen {
     row = writeLines(term, x, row, width, status.toUpperCase(), result.over ? BRIGHT : BOLD) + 1
 
     if (!result.over) {
-      term.text(x, row, 'YOU     WHITE', MUTED)
-      term.text(x, row + 1, 'STOCKFISH BLACK', MUTED)
+      const player = this.playerColor.toUpperCase()
+      const machine = this.playerColor === 'white' ? 'BLACK' : 'WHITE'
+      term.text(x, row, `YOU     ${player}`, MUTED)
+      term.text(x, row + 1, `STOCKFISH ${machine}`, MUTED)
       row += 3
     }
     if (!result.over && isCheck(this.state, this.state.turn)) {
@@ -473,6 +507,12 @@ export class Chess implements Overlay, Screen {
 
     term.text(x, row, 'CURSOR', MUTED)
     term.text(x, row + 1, squareName(this.cursor).toUpperCase(), BOLD)
+  }
+
+  private boardSquare(row: number, col: number): Square {
+    return this.playerColor === 'white'
+      ? { row, col }
+      : { row: 7 - row, col: 7 - col }
   }
 
   private drawSquare(term: Grid, square: Square, x: number, y: number, width: number, height: number): void {
