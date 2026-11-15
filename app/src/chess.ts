@@ -6,9 +6,9 @@
 //
 // The player is white and the machine is black. Arrow keys move a cursor over
 // the board, Enter picks up a piece, and the squares the piece can reach are
-// marked. Enter on a marked square plays the move. The rules and the machine
-// search live in chess/rules.ts; this file only turns keys into moves and moves
-// into cells.
+// marked. Enter on a marked square plays the move. The rules live in
+// chess/rules.ts and the Stockfish bridge in chess/stockfish.ts; this file
+// turns keys into moves and moves into cells.
 
 import type { CrtScreen } from '@cyberspace/crt'
 import type { Sound } from '@cyberspace/crt/audio'
@@ -20,10 +20,12 @@ import {
 import { grid } from './grid'
 import type { Overlay } from './input'
 import {
-  applyMove, chooseMachineMove, getMoves, getPiece, isCheck, newChessState,
+  applyMove, getMoves, getPiece, isCheck, newChessState,
   resultOf, sameSquare,
   type Move, type Piece, type Square,
 } from './chess/rules'
+import { StockfishEngine } from './chess/stockfish'
+import chessLogoUrl from './chess/assets/chess-logo.png?url'
 import bishopSvg from './chess/svg/bishop.svg?raw'
 import blackBishopSvg from './chess/svg/black-bishop.svg?raw'
 import blackKingSvg from './chess/svg/black-king.svg?raw'
@@ -33,7 +35,6 @@ import blackQueenSvg from './chess/svg/black-queen.svg?raw'
 import blackRookSvg from './chess/svg/black-rook.svg?raw'
 import kingSvg from './chess/svg/king.svg?raw'
 import knightSvg from './chess/svg/knight.svg?raw'
-import logoSvg from './chess/svg/logo.svg?raw'
 import pawnSvg from './chess/svg/pawn.svg?raw'
 import queenSvg from './chess/svg/queen.svg?raw'
 import rookSvg from './chess/svg/rook.svg?raw'
@@ -42,14 +43,11 @@ type Mode = 'menu' | 'board'
 
 const MENU = ['Play with Machine', 'Play with someone']
 const MACHINE_DELAY = 350
-const LOGO_W = 19
-const LOGO_H = 10
 type PieceArt = `${Piece['color']}-${Piece['kind']}`
 type ArtName = 'logo' | PieceArt
 type PieceStyle = 'solid' | 'outline'
 
-const SVG_SOURCE: Record<ArtName, string> = {
-  logo: logoSvg,
+const SVG_SOURCE: Record<PieceArt, string> = {
   'white-king': kingSvg,
   'white-queen': queenSvg,
   'white-rook': rookSvg,
@@ -75,6 +73,8 @@ export class Chess implements Overlay, Screen {
   private selected: Square | null = null
   private moves: Move[] = []
   private thinking = false
+  private engine: StockfishEngine | null = null
+  private machineRequest = 0
   private timer: ReturnType<typeof setTimeout> | null = null
   private note = ''
   private art: Partial<Record<ArtName, ImageBitmap>> = {}
@@ -238,13 +238,22 @@ export class Chess implements Overlay, Screen {
   }
 
   private startMachine(): void {
+    const request = ++this.machineRequest
     this.thinking = true
     this.note = 'machine is thinking...'
     this.repaint()
     this.timer = setTimeout(() => {
       this.timer = null
       if (!this.open || this.mode !== 'board') return
-      const move = chooseMachineMove(this.state)
+      void this.playMachine(request)
+    }, MACHINE_DELAY)
+  }
+
+  private async playMachine(request: number): Promise<void> {
+    try {
+      this.engine ??= new StockfishEngine()
+      const move = await this.engine.chooseMove(this.state)
+      if (request !== this.machineRequest || !this.open || this.mode !== 'board') return
       this.thinking = false
       if (!move) {
         this.note = resultOf(this.state).text
@@ -255,12 +264,16 @@ export class Chess implements Overlay, Screen {
         const result = resultOf(this.state)
         this.note = result.over ? result.text : ''
       }
-      this.repaint()
-    }, MACHINE_DELAY)
+    } catch {
+      if (request !== this.machineRequest) return
+      this.thinking = false
+      this.note = 'stockfish unavailable'
+    }
+    this.repaint()
   }
 
   private newGame(): void {
-    this.stopTimer()
+    this.stopMachine()
     this.state = newChessState()
     this.cursor = { row: 6, col: 4 }
     this.clearSelection()
@@ -272,7 +285,7 @@ export class Chess implements Overlay, Screen {
   }
 
   private toMenu(): void {
-    this.stopTimer()
+    this.stopMachine()
     this.mode = 'menu'
     this.thinking = false
     this.clearSelection()
@@ -283,7 +296,7 @@ export class Chess implements Overlay, Screen {
   }
 
   private close(): void {
-    this.stopTimer()
+    this.stopMachine()
     while (this.stack?.active) this.stack.pop()
     grid.unlock()
     RENDER.cursor = this.cursorWas
@@ -295,6 +308,14 @@ export class Chess implements Overlay, Screen {
     this.timer = null
   }
 
+  private stopMachine(): void {
+    this.machineRequest++
+    this.stopTimer()
+    this.engine?.dispose()
+    this.engine = null
+    this.thinking = false
+  }
+
   private repaint(): void {
     if (!this.open || this.stack?.top !== this) return
     this.screen.term.dirty = true
@@ -304,8 +325,9 @@ export class Chess implements Overlay, Screen {
   private ensureArt(): void {
     if (this.artLoading || this.artLoaded) return
     this.artLoading = true
-    void Promise.all((Object.keys(SVG_SOURCE) as ArtName[]).map(async name => {
-      const image = await loadSvg(name)
+    const names: ArtName[] = ['logo', ...(Object.keys(SVG_SOURCE) as PieceArt[])]
+    void Promise.all(names.map(async name => {
+      const image = await loadArt(name)
       if (image) this.art[name] = image
     })).finally(() => {
       this.artLoading = false
@@ -315,23 +337,39 @@ export class Chess implements Overlay, Screen {
   }
 
   private drawMenu(term: Grid): void {
-    const logoY = Math.max(1, Math.floor((term.rows - LOGO_H - 8) / 2))
-    this.drawLogo(term, logoY)
-
-    const nameY = logoY + LOGO_H + 1
-    center(term, nameY, 'CHESS', BOLD | BRIGHT)
-    const optionY = nameY + 2
+    const metrics = term as Grid & { font?: { cellW: number; cellH: number }; advance?: number; stretch?: number }
+    const cellH = metrics.font?.cellH ?? 16
+    const advance = metrics.advance ?? (metrics.font?.cellW ?? 8) + 1
+    const stretch = metrics.stretch ?? 1
+    const targetLogoRows = term.rows >= 40 && term.cols >= 70 ? 14 : term.rows >= 28 ? 11 : term.rows >= 18 ? 8 : 4
+    const logoRows = Math.min(targetLogoRows, Math.max(3, term.rows - 10))
+    const logoWidth = Math.min(Math.max(3, term.cols - 4), Math.round(logoRows * cellH * stretch / advance))
+    const logoHeight = Math.min(logoRows, Math.max(3, Math.round(logoWidth * advance / (cellH * stretch))))
+    const optionStep = term.rows < 20 ? 1 : 2
+    const optionRows = (MENU.length - 1) * optionStep + 1
+    const contentHeight = logoHeight + 1 + 1 + 2 + optionRows
+    const hints = term.rows < 13 ? [] : term.cols >= 38
+      ? ['ARROWS MOVE  ENTER SELECT  ESC CLOSE']
+      : term.cols >= 26 ? ['ARROWS MOVE / ENTER SELECT', 'ESC CLOSE'] : ['ARROWS / ENTER', 'ESC']
+    const hintsY = term.rows - hints.length - 2
+    const logoY = Math.max(0, Math.floor((hintsY - contentHeight) / 2))
+    this.drawLogo(term, logoY, logoWidth, logoHeight)
+    const titleY = logoY + logoHeight + 1
+    center(term, titleY, 'CHESS', BOLD | BRIGHT)
+    const optionY = titleY + 3
     MENU.forEach((label, index) => {
+      const selected = index === this.menuIndex
       const text = ` ${label} `
       const x = Math.max(0, Math.floor((term.cols - text.length) / 2))
-      term.text(x, optionY + index * 2, text, BOLD, index === this.menuIndex ? 1 : 0)
+      term.text(x, optionY + index * optionStep, text, selected ? BOLD | BRIGHT : MUTED, selected ? 1 : 0)
     })
-    center(term, term.rows - 2, 'ARROWS move  ENTER choose  ESC close', MUTED)
+
+    hints.forEach((hint, index) => center(term, hintsY + index, hint, MUTED))
   }
 
-  private drawLogo(term: Grid, y: number): void {
-    const width = Math.min(LOGO_W, term.cols)
-    const height = Math.min(LOGO_H, term.rows - y)
+  private drawLogo(term: Grid, y: number, logoWidth: number, logoHeight: number): void {
+    const width = Math.min(logoWidth, term.cols)
+    const height = Math.min(logoHeight, term.rows - y)
     const x = Math.max(0, Math.floor((term.cols - width) / 2))
     const image = this.art.logo
     if (image) drawSvg(term, image, x, y, width, height, BOLD | BRIGHT)
@@ -425,7 +463,7 @@ export class Chess implements Overlay, Screen {
 
     if (!result.over) {
       term.text(x, row, 'YOU     WHITE', MUTED)
-      term.text(x, row + 1, 'MACHINE BLACK', MUTED)
+      term.text(x, row + 1, 'STOCKFISH BLACK', MUTED)
       row += 3
     }
     if (!result.over && isCheck(this.state, this.state.turn)) {
@@ -481,22 +519,26 @@ interface GlyphSprite {
   cells: (Uint16Array | undefined)[]
 }
 
-const svgBitmaps = new Map<ArtName, Promise<ImageBitmap | undefined>>()
+const artBitmaps = new Map<ArtName, Promise<ImageBitmap | undefined>>()
 const spriteCache = new WeakMap<ImageBitmap, Map<string, GlyphSprite>>()
 
-function loadSvg(name: ArtName): Promise<ImageBitmap | undefined> {
-  const cached = svgBitmaps.get(name)
+function loadArt(name: ArtName): Promise<ImageBitmap | undefined> {
+  const cached = artBitmaps.get(name)
   if (cached) return cached
   const loading = (async (): Promise<ImageBitmap | undefined> => {
     let url: string | undefined
     try {
-      const source = SVG_SOURCE[name].replace(/<svg\b([^>]*)>/, (_match, attributes: string) => {
-        const view = attributes.replace(/\s+(?:width|height)="[^"]*"/g, '')
-        return `<svg${view} width="256" height="256">`
-      })
-      url = URL.createObjectURL(new Blob([source], { type: 'image/svg+xml' }))
       const image = new Image()
-      image.src = url
+      if (name === 'logo') {
+        image.src = chessLogoUrl
+      } else {
+        const source = SVG_SOURCE[name].replace(/<svg\b([^>]*)>/, (_match, attributes: string) => {
+          const view = attributes.replace(/\s+(?:width|height)="[^"]*"/g, '')
+          return `<svg${view} width="256" height="256">`
+        })
+        url = URL.createObjectURL(new Blob([source], { type: 'image/svg+xml' }))
+        image.src = url
+      }
       await image.decode()
       return await createImageBitmap(image)
     } catch {
@@ -505,7 +547,7 @@ function loadSvg(name: ArtName): Promise<ImageBitmap | undefined> {
       if (url) URL.revokeObjectURL(url)
     }
   })()
-  svgBitmaps.set(name, loading)
+  artBitmaps.set(name, loading)
   return loading
 }
 

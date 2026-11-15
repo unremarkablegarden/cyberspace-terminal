@@ -1,4 +1,4 @@
-// Chess rules and the small machine opponent.
+// Chess rules.
 //
 // The board is a plain 8x8 array, row 0 is rank 8 and row 7 is rank 1. White
 // starts at the bottom, so white pawns move toward row 0. Pieces are objects
@@ -57,15 +57,6 @@ export interface GameResult {
 }
 
 const FILES = 'abcdefgh'
-
-const VALUE: Record<Kind, number> = {
-  pawn: 100,
-  knight: 320,
-  bishop: 330,
-  rook: 500,
-  queen: 900,
-  king: 0,
-}
 
 const KNIGHT_STEPS: Square[] = [
   { row: -2, col: -1 }, { row: -2, col: 1 },
@@ -460,61 +451,4 @@ function clearRookRight(state: ChessState, color: Color, square: Square): void {
     if (color === 'white') state.castling.whiteKing = false
     else state.castling.blackKing = false
   }
-}
-
-/** Material and a little center control, from the side to move's view. */
-export function evaluate(state: ChessState): number {
-  const sign = state.turn === 'white' ? 1 : -1
-  let score = 0
-  for (let row = 0; row < 8; row++) {
-    for (let col = 0; col < 8; col++) {
-      const piece = state.board[row]![col]
-      if (!piece) continue
-      const value = VALUE[piece.kind]
-      const center = 3.5 - Math.abs(3.5 - row) + 3.5 - Math.abs(3.5 - col)
-      const bonus = piece.kind === 'pawn' || piece.kind === 'knight' ? center : 0
-      score += (piece.color === state.turn ? 1 : -1) * (value + bonus)
-    }
-  }
-  return score * sign
-}
-
-/**
- * The machine's choice: a three-ply search with alpha-beta pruning. The root
- * move, the answer to it and one reply are enough to avoid hanging a piece
- * without making the faceplate wait. Equal scores are collected so the game
- * does not repeat the same opening every time.
- */
-export function chooseMachineMove(state: ChessState): Move | null {
-  const moves = getAllMoves(state, state.turn)
-  if (!moves.length) return null
-
-  let bestScore = -Infinity
-  let bestMoves: Move[] = []
-  for (const move of moves) {
-    const next = applyMove(state, move)
-    const score = -search(next, 2, -Infinity, Infinity)
-    if (score > bestScore) {
-      bestScore = score
-      bestMoves = [move]
-    } else if (score === bestScore) {
-      bestMoves.push(move)
-    }
-  }
-  return bestMoves[Math.floor(Math.random() * bestMoves.length)] ?? null
-}
-
-function search(state: ChessState, depth: number, alpha: number, beta: number): number {
-  if (depth === 0) return evaluate(state)
-  const moves = getAllMoves(state, state.turn)
-  if (!moves.length) return isCheck(state, state.turn) ? -100000 + depth : 0
-
-  let best = -Infinity
-  for (const move of moves) {
-    const score = -search(applyMove(state, move), depth - 1, -beta, -alpha)
-    if (score > best) best = score
-    if (best > alpha) alpha = best
-    if (alpha >= beta) break
-  }
-  return best
 }
