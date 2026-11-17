@@ -39,6 +39,8 @@ export interface FeedEntry {
   /** The one picture drawn under the text, if the post has one. */
   image?: string
   nsfw?: boolean
+  /** The author turned replies off; the API rejects a reply with 403. */
+  noReply?: boolean
 }
 
 export interface FeedReply {
@@ -78,6 +80,8 @@ export interface PostDraft {
   blog: boolean
   nsfw: boolean
   vent: boolean
+  /** Sent as repliesDisabled. Fixed once published. */
+  noreply: boolean
 }
 
 // --- API records --------------------------------------------------------------
@@ -104,6 +108,7 @@ export interface ApiPost extends Attached {
   repliesCount?: number
   bookmarksCount?: number
   isNSFW?: boolean
+  repliesDisabled?: boolean
   isGuildThread?: boolean
   createdAt?: string
 }
@@ -183,6 +188,7 @@ export function toEntry(post: ApiPost): FeedEntry {
     bookmarks: post.bookmarksCount ?? 0,
     image: src,
     nsfw: post.isNSFW || undefined,
+    noReply: post.repliesDisabled || undefined,
   }
 }
 

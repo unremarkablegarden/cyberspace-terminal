@@ -333,3 +333,8 @@
 - Ctrl-[ as Escape
 - Extra keys kept for hardware keyboards without Escape or arrows
 - `F1` extra keys: auto or always shown, per device
+
+## v0.9.5
+
+- WRITE: `NOREPLY` flag, nobody can reply to the entry
+- Feed: `R` off on entries with replies off, `REPLIES OFF` in the divider
