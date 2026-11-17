@@ -327,3 +327,9 @@
 
 - cIRC, C-Mail: `/coin`
 - C-Mail count: conversations with unread mail, not unread messages
+
+## v0.9.4
+
+- Ctrl-[ as Escape
+- Extra keys kept for hardware keyboards without Escape or arrows
+- `F1` extra keys: auto or always shown, per device

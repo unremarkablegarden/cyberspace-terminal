@@ -111,7 +111,7 @@ function welcome(user: string | null): Span[][] {
 
   // F1 opens the config box from a keyboard the phone does not have. iPad
   // keyboards have no F row or Escape: the chords are in app/src/keys.ts.
-  if (TABLET) lines.push([cmd('Ctrl-Opt-1'), say(' Config')], [cmd('§'), say(' Esc')])
+  if (TABLET) lines.push([cmd('Ctrl-Opt-1'), say(' Config')], [cmd('Ctrl-['), say(' Esc')])
   else if (!MOBILE) lines.push([cmd('F1'), say(' Config')])
   lines.push(
     user

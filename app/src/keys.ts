@@ -62,8 +62,12 @@ export function encodeKeyName(key: string, ctrl = false): string | null {
 
 /**
  * Key aliases for keyboards without the key itself. iPad external keyboards
- * have no Escape and no F row (and Globe is invisible to the DOM), so:
- * § and Cmd+. -> Escape, Ctrl+Opt+digit -> F1..F9, Ctrl+Opt+0 -> F10.
+ * and many Bluetooth and phone keyboards have no Escape and no F row (and
+ * Globe is invisible to the DOM), so: §, Cmd+. and Ctrl+[ -> Escape,
+ * Ctrl+Opt+digit -> F1..F9, Ctrl+Opt+0 -> F10.
+ * Ctrl+[ already encodes as ESC for the pty; the alias is for overlays and
+ * programs that read the key name. It goes by e.code, as layouts that put [
+ * on an Option layer report another e.key.
  * The digit comes from e.code: with Option held e.key is the layout's
  * Option-layer character, not the digit.
  * Returns the canonical event, or the original when nothing applies.
@@ -71,6 +75,9 @@ export function encodeKeyName(key: string, ctrl = false): string | null {
 export function aliasKey(e: KeyboardEvent): KeyboardEvent {
   if (e.key === '§' || (e.key === '.' && e.metaKey && !e.ctrlKey && !e.altKey)) {
     return { ...eventFields(e), key: 'Escape', metaKey: false }
+  }
+  if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && (e.code === 'BracketLeft' || e.key === '[')) {
+    return { ...eventFields(e), key: 'Escape', ctrlKey: false }
   }
   const digit = e.ctrlKey && e.altKey && !e.metaKey && /^Digit[0-9]$/.exec(e.code)?.[0].slice(5)
   if (digit) {

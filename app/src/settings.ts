@@ -12,12 +12,12 @@ import { CRT_CONTROLS } from '@cyberspace/crt/controls'
 import { SAVER_NAMES } from '@cyberspace/crt/saverdefs'
 import type { KeyInput, KnobGroup } from '@cyberspace/tui'
 import { store } from './store'
-import { GRIDS, GRID_SIZE } from './config'
+import { ANDROID_TABLET, GRIDS, GRID_SIZE, MOBILE } from './config'
 import { grid } from './grid'
 import {
   CUSTOM_PHOSPHOR, CUSTOM_PHOSPHOR_DEFAULT, SAVER_MINUTES, USER_PRESET, customPhosphor,
-  phosphorTint, readAudio, saverPrefs, screenParams, setSaverPrefs, userParams, writeAudio,
-  writeCustomPhosphor, writeUserParams, type Hsl,
+  extraKeys, phosphorTint, readAudio, saverPrefs, screenParams, setExtraKeys, setSaverPrefs,
+  userParams, writeAudio, writeCustomPhosphor, writeUserParams, type ExtraKeys, type Hsl,
 } from './prefs'
 import { SYNC_KEY, syncEnabled } from './prefsync'
 
@@ -225,8 +225,15 @@ function settings(screen: CrtScreen, snd: Sound, onFont?: () => void, onGrid?: (
         },
       ],
     },
+    // Per device, and only where the key bar exists (main.ts).
+    ...(MOBILE || ANDROID_TABLET ? [{
+      label: 'EXTRA KEYS',
+      values: ['auto', 'always'],
+      current: () => extraKeys(),
+      select: (v: string) => { setExtraKeys(v as ExtraKeys); return v },
+    }] : []),
     {
-      // Per device. On, the settings above except GRID follow the account; see prefsync.ts.
+      // Per device. On, the settings above except GRID and EXTRA KEYS follow the account; see prefsync.ts.
       label: 'SYNC CONFIG',
       values: ['on', 'off'],
       current: () => syncEnabled() ? 'on' : 'off',
