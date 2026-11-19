@@ -1,6 +1,6 @@
 {
   "name": "@cyberspace/kernel",
-  "version": "0.9.5",
+  "version": "0.9.6",
   "description": "Virtual machine core: VFS, processes, pipes, tty.",
   "type": "module",
   "exports": {

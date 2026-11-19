@@ -338,3 +338,7 @@
 
 - WRITE: `NOREPLY` flag, nobody can reply to the entry
 - Feed: `R` off on entries with replies off, `REPLIES OFF` in the divider
+
+## v0.9.6
+
+- cIRC, C-Mail: `/tarot`, `/spin`
