@@ -1,0 +1,12 @@
+{
+  "name": "cyberspace-chess-partykit",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "partykit dev",
+    "deploy": "partykit deploy"
+  },
+  "devDependencies": {
+    "partykit": "latest"
+  }
+}

@@ -20,7 +20,13 @@ export default defineConfig({
   // https on the LAN: OPFS and the isolation headers need a secure context,
   // and only localhost is exempt. The mkcert root CA must be trusted on the
   // client device.
-  server: { headers: isolation, host: true },
+  server: {
+    headers: isolation,
+    host: true,
+    proxy: {
+      '/party': { target: 'http://127.0.0.1:1999', changeOrigin: true, ws: true },
+    },
+  },
   preview: { headers: { ...isolation, 'Content-Security-Policy': csp } },
   plugins: [
     mkcert(),

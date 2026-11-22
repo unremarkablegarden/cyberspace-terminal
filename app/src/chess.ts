@@ -15,16 +15,23 @@ import type { Sound } from '@cyberspace/crt/audio'
 import { RENDER } from '@cyberspace/crt/config'
 import {
   BG, BOLD, BRIGHT, DIM, MUTED, NORMAL, ScreenStack, SelectPopup, clear, frame,
-  type Grid, type KeyInput, type Rect, type Screen,
+  shadow, type Grid, type KeyInput, type Rect, type Screen,
 } from '@cyberspace/tui'
 import { grid } from './grid'
 import type { Overlay } from './input'
 import {
   applyMove, getMoves, getPiece, isCheck, newChessState,
   resultOf, sameSquare,
-  type Color, type Move, type Piece, type Square,
+  type Color, type GameResult, type Move, type Piece, type Square,
 } from './chess/rules'
 import { StockfishEngine } from './chess/stockfish'
+import {
+  PendingChessMultiplayer,
+  type ChessInvite,
+  type ChessMultiplayerGame,
+  type ChessMultiplayerTransport,
+  type MultiplayerFriend,
+} from './chess/multiplayer'
 import chessLogoUrl from './chess/assets/chess-logo.png?url'
 import bishopSvg from './chess/svg/bishop.svg?raw'
 import blackBishopSvg from './chess/svg/black-bishop.svg?raw'
@@ -70,6 +77,15 @@ export class Chess implements Overlay, Screen {
   private mode: Mode = 'menu'
   private menuIndex = 0
   private playerColor: Color = 'white'
+  private gameMode: 'machine' | 'multiplayer' = 'machine'
+  private multiplayerGame: ChessMultiplayerGame | null = null
+  private stopWatchingMultiplayer: (() => void) | null = null
+  private stopWatchingInvites: (() => void) | null = null
+  private stopWatchingInviteResults: (() => void) | null = null
+  private readonly incomingInviteIds = new Set<string>()
+  private activeInvite: ChessInvite | null = null
+  private activeOpponentName = ''
+  private endgameShown = false
   private state = newChessState()
   private cursor: Square = { row: 6, col: 4 }
   private selected: Square | null = null
@@ -83,7 +99,11 @@ export class Chess implements Overlay, Screen {
   private artLoading = false
   private artLoaded = false
 
-  constructor(private screen: CrtScreen, private snd: Sound) {}
+  constructor(
+    private screen: CrtScreen,
+    private snd: Sound,
+    private multiplayer: ChessMultiplayerTransport = new PendingChessMultiplayer(),
+  ) {}
 
   get open(): boolean {
     return !!this.stack?.active
@@ -102,6 +122,10 @@ export class Chess implements Overlay, Screen {
     this.note = ''
     this.snd.tick()
     this.stack.push(this)
+    this.stopWatchingInvites?.()
+    this.stopWatchingInvites = this.multiplayer.watchInvites(invite => this.showIncomingInvite(invite))
+    this.stopWatchingInviteResults?.()
+    this.stopWatchingInviteResults = this.multiplayer.watchInviteResults(invite => this.handleInviteResult(invite))
   }
 
   /** Keys reach the overlay through Keyboard's route, as the config box and DOOM do. */
@@ -111,7 +135,7 @@ export class Chess implements Overlay, Screen {
 
   silentKey(k: KeyInput): boolean {
     if (k.metaKey || k.ctrlKey || k.altKey) return false
-    return ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Escape', 'n', 'N'].includes(k.key)
+    return ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Escape'].includes(k.key)
   }
 
   onKey(e: KeyInput): boolean {
@@ -144,18 +168,13 @@ export class Chess implements Overlay, Screen {
       this.openColorPicker()
       return true
     }
-    // Keep the reserved second option on the title card.
-    this.snd.beep(220, 0.04)
+    this.openPlayerPicker()
     return true
   }
 
   private boardKey(e: KeyInput): boolean {
     if (e.key === 'Escape') {
-      this.toMenu()
-      return true
-    }
-    if (e.key === 'n' || e.key === 'N') {
-      this.newGame()
+      this.openQuitConfirmation()
       return true
     }
     if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
@@ -232,7 +251,6 @@ export class Chess implements Overlay, Screen {
       title: 'PLAY AS',
       items: COLOR_MENU,
       selected: 0,
-      hint: 'ARROWS MOVE  ENTER SELECT  ESC BACK',
       shadow: true,
       onFeedback: kind => {
         if (kind === 'move') this.snd.tick()
@@ -253,7 +271,142 @@ export class Chess implements Overlay, Screen {
     }))
   }
 
+  private openPlayerPicker(): void {
+    if (!this.stack) return
+    let loading!: ChessCard
+    const back = () => {
+      this.stack?.pop()
+      this.repaint()
+    }
+    loading = new ChessCard(this.snd, 'MULTIPLAYER', 'Loading your friends...', ['Back'], 0, back, back)
+    this.stack.push(loading)
+    void this.multiplayer.listFriends().then(friends => {
+      if (!this.open || this.stack?.top !== loading) return
+      this.stack.pop()
+      const named = friends.filter(friend => friend.username || friend.displayName)
+      if (!named.length) {
+        this.stack.push(new FollowersCard(this.snd, back))
+        return
+      }
+      this.stack.push(new SelectPopup({
+        title: 'Your friends:',
+        items: named.map(friend => friend.displayName ?? friend.username ?? ''),
+        selected: 0,
+        shadow: true,
+        onFeedback: kind => {
+          if (kind === 'move') this.snd.tick()
+          else if (kind === 'edge') this.snd.beep(220, 0.04)
+          else if (kind === 'cancel') this.snd.blip(420, 0.09, 0)
+        },
+        onDone: (_item, index) => {
+          this.stack?.pop()
+          const friend = named[index]
+          if (!friend) {
+            this.repaint()
+            return
+          }
+          this.sendMultiplayerInvite(friend)
+        },
+      }))
+    }).catch(() => {
+      if (!this.open || this.stack?.top !== loading) return
+      this.stack.pop()
+      this.stack.push(new FollowersCard(this.snd, back))
+    })
+  }
+
+  private sendMultiplayerInvite(friend: MultiplayerFriend): void {
+    let card!: ChessCard
+    const cancel = () => {
+      this.stack?.pop()
+      this.repaint()
+    }
+    const closeCard = () => {
+      this.stack?.pop()
+      this.repaint()
+    }
+    card = new ChessCard(this.snd, 'MULTIPLAYER', `Invite ${friend.displayName ?? friend.username ?? 'follower'}?`, ['Send', 'Back'], 0, action => {
+      if (action === 'Back') {
+        cancel()
+        return
+      }
+      void this.multiplayer.sendInvite(friend.userId, 'random').then(invite => this.multiplayer.openGame(invite).then(game => ({ invite, game }))).then(({ invite, game }) => {
+        if (!this.open || this.stack?.top !== card) return
+        this.stack.pop()
+        this.activeInvite = invite
+        this.activeOpponentName = friend.displayName ?? friend.username ?? friend.userId
+        this.startMultiplayerGame(game)
+      }).catch(() => {
+        if (!this.open || this.stack?.top !== card) return
+        this.stack.pop()
+        this.stack.push(new ChessCard(this.snd, 'MULTIPLAYER', 'Could not reach that player. Make sure they are online.', ['Back'], 0, closeCard, closeCard))
+      })
+    }, cancel)
+    this.stack?.push(card)
+  }
+
+  private showIncomingInvite(invite: ChessInvite): void {
+    if (!this.open || this.incomingInviteIds.has(invite.inviteId)) return
+    this.incomingInviteIds.add(invite.inviteId)
+    const from = invite.fromUserId.startsWith('demo:')
+      ? `Demo ${invite.fromUserId.slice(5).replace(/[_-]+/g, ' ')}`
+      : invite.fromUserId
+    let card!: ChessCard
+    const respond = (accept: boolean) => {
+      if (this.stack?.top === card) this.stack.pop()
+      if (accept) this.activeInvite = invite
+      void this.multiplayer.answerInvite(invite.inviteId, accept).then(game => {
+        if (game && this.open) this.startMultiplayerGame(game)
+      }).catch(() => {
+        if (this.open) {
+          const back = () => {
+            this.stack?.pop()
+            this.repaint()
+          }
+          this.stack?.push(new ChessCard(this.snd, 'CHESS INVITE', 'This invite is no longer available.', ['Back'], 0, back, back))
+        }
+      }).finally(() => this.incomingInviteIds.delete(invite.inviteId))
+    }
+    card = new ChessCard(this.snd, 'CHESS INVITE', `${from} wants to play.`, ['Accept', 'Decline'], 0,
+      option => respond(option === 'Accept'),
+      () => respond(false))
+    this.stack?.push(card)
+  }
+
+  private handleInviteResult(invite: ChessInvite): void {
+    if (invite.status !== 'declined' || this.activeInvite?.inviteId !== invite.inviteId || !this.multiplayerGame) return
+    // A declined request ends the inviter's waiting game instead of leaving it stalled.
+    this.closeMultiplayerGame()
+    this.activeInvite = null
+    this.gameMode = 'machine'
+    this.mode = 'menu'
+    this.thinking = false
+    this.clearSelection()
+    const opponent = this.activeOpponentName || invite.toUserId
+    this.activeOpponentName = ''
+    this.repaint()
+    let card!: ChessCard
+    const close = () => {
+      this.stack?.pop()
+      this.repaint()
+    }
+    card = new ChessCard(this.snd, 'INVITE DECLINED', `${opponent} has declined your request to play Chess.`, ['Back'], 0, close, close)
+    this.stack?.push(card)
+  }
+
   private playMove(move: Move): void {
+    if (this.gameMode === 'multiplayer' && this.multiplayerGame) {
+      this.clearSelection()
+      this.thinking = true
+      this.note = 'sending move...'
+      this.repaint()
+      void this.multiplayerGame.submitMove(move).catch(() => {
+        this.thinking = false
+        this.note = 'move rejected'
+        this.repaint()
+      })
+      return
+    }
     this.state = applyMove(this.state, move)
     this.cursor = move.to
     this.clearSelection()
@@ -262,9 +415,11 @@ export class Chess implements Overlay, Screen {
     const result = resultOf(this.state)
     if (result.over) {
       this.note = result.text
+      this.showEndgame(result)
       return
     }
-    if (this.state.turn !== this.playerColor) this.startMachine()
+    if (this.gameMode === 'machine' && this.state.turn !== this.playerColor) this.startMachine()
+    else this.repaint()
   }
 
   private startMachine(): void {
@@ -286,37 +441,78 @@ export class Chess implements Overlay, Screen {
       if (request !== this.machineRequest || !this.open || this.mode !== 'board') return
       this.thinking = false
       if (!move) {
-        this.note = resultOf(this.state).text
+        const result = resultOf(this.state)
+        this.note = result.text
+        if (result.over) this.showEndgame(result)
       } else {
         this.state = applyMove(this.state, move)
         this.cursor = move.to
         this.snd.tick()
         const result = resultOf(this.state)
         this.note = result.over ? result.text : ''
+        if (result.over) this.showEndgame(result)
       }
     } catch {
       if (request !== this.machineRequest) return
       this.thinking = false
-      this.note = 'stockfish unavailable'
+      this.note = 'machine unavailable'
     }
     this.repaint()
   }
 
   private newGame(): void {
+    this.closeMultiplayerGame()
     this.stopMachine()
+    this.gameMode = 'machine'
     this.state = newChessState()
     this.cursor = { row: this.playerColor === 'white' ? 6 : 1, col: 4 }
     this.clearSelection()
     this.thinking = false
     this.note = ''
     this.mode = 'board'
+    this.endgameShown = false
     this.snd.tick()
     if (this.state.turn !== this.playerColor) this.startMachine()
     else this.repaint()
   }
 
-  private toMenu(): void {
+  private startMultiplayerGame(game: ChessMultiplayerGame): void {
     this.stopMachine()
+    this.closeMultiplayerGame()
+    this.multiplayerGame = game
+    this.gameMode = 'multiplayer'
+    this.mode = 'board'
+    this.clearSelection()
+    this.endgameShown = false
+    this.cursor = { row: 6, col: 4 }
+    this.stopWatchingMultiplayer = game.watch(snapshot => {
+      if (this.multiplayerGame !== game) return
+      this.state = snapshot.state
+      this.playerColor = snapshot.playerColor ?? game.playerColor
+      if (snapshot.playerColor === 'black' && this.cursor.row === 6 && this.cursor.col === 4) this.cursor = { row: 1, col: 4 }
+      this.thinking = snapshot.status === 'waiting' || (snapshot.status === 'active' && snapshot.state.turn !== this.playerColor)
+      this.note = snapshot.status === 'waiting'
+        ? 'waiting for opponent...'
+        : snapshot.status === 'active' && snapshot.state.turn !== this.playerColor
+          ? 'opponent is thinking...'
+          : ''
+      const result = resultOf(snapshot.state)
+      if (result.over && !this.endgameShown) {
+        this.note = result.text
+        this.showEndgame(result)
+      }
+      this.repaint()
+    })
+    this.snd.tick()
+    this.repaint()
+  }
+
+  private toMenu(): void {
+    this.closeMultiplayerGame()
+    this.stopMachine()
+    this.activeInvite = null
+    this.activeOpponentName = ''
+    this.gameMode = 'machine'
     this.mode = 'menu'
     this.thinking = false
     this.clearSelection()
@@ -327,6 +523,11 @@ export class Chess implements Overlay, Screen {
   }
 
   private close(): void {
+    this.stopWatchingInvites?.()
+    this.stopWatchingInvites = null
+    this.stopWatchingInviteResults?.()
+    this.stopWatchingInviteResults = null
+    this.closeMultiplayerGame()
     this.stopMachine()
     while (this.stack?.active) this.stack.pop()
     grid.unlock()
@@ -345,6 +546,13 @@ export class Chess implements Overlay, Screen {
     this.engine?.dispose()
     this.engine = null
     this.thinking = false
+  }
+
+  private closeMultiplayerGame(): void {
+    this.stopWatchingMultiplayer?.()
+    this.stopWatchingMultiplayer = null
+    this.multiplayerGame?.close()
+    this.multiplayerGame = null
   }
 
   private repaint(): void {
@@ -372,31 +580,38 @@ export class Chess implements Overlay, Screen {
     const cellH = metrics.font?.cellH ?? 16
     const advance = metrics.advance ?? (metrics.font?.cellW ?? 8) + 1
     const stretch = metrics.stretch ?? 1
-    const targetLogoRows = term.rows >= 40 && term.cols >= 70 ? 14 : term.rows >= 28 ? 11 : term.rows >= 18 ? 8 : 4
-    const optionStep = term.rows < 20 ? 1 : 2
-    const optionRows = (MENU.length - 1) * optionStep + 1
-    const hints = term.rows < 16 ? [] : term.cols >= 38
-      ? ['ARROWS MOVE  ENTER SELECT  ESC CLOSE']
-      : term.cols >= 26 ? ['ARROWS MOVE / ENTER SELECT', 'ESC CLOSE'] : ['ARROWS / ENTER', 'ESC']
-    const hintsY = term.rows - hints.length - 2
-    const maxLogoRows = Math.max(3, hintsY - optionRows - 4)
-    const logoRows = Math.min(targetLogoRows, Math.max(3, term.rows - 10), maxLogoRows)
+    const buttonHeight = 3
+    const buttonGap = 1
+    const optionRows = MENU.length * buttonHeight + (MENU.length - 1) * buttonGap
+    const targetLogoRows = term.rows >= 32 ? 9 : term.rows >= 24 ? 7 : term.rows >= 18 ? 5 : 3
+    const maxLogoRows = Math.max(3, term.rows - optionRows - 12)
+    const logoRows = Math.min(targetLogoRows, maxLogoRows)
     const logoWidth = Math.min(Math.max(3, term.cols - 4), Math.round(logoRows * cellH * stretch / advance))
     const logoHeight = Math.min(logoRows, Math.max(3, Math.round(logoWidth * advance / (cellH * stretch))))
-    const contentHeight = logoHeight + 1 + 1 + 2 + optionRows
-    const logoY = Math.max(0, Math.floor((hintsY - contentHeight) / 2))
+    const contentHeight = logoHeight + optionRows + 5
+    const logoY = Math.max(0, Math.floor((term.rows - contentHeight) / 2))
     this.drawLogo(term, logoY, logoWidth, logoHeight)
     const titleY = logoY + logoHeight + 1
     center(term, titleY, 'CHESS', BOLD | BRIGHT)
-    const optionY = titleY + 3
+    const optionY = titleY + 2
+    const buttonWidth = Math.max(1, Math.min(term.cols - 4, Math.max(24, ...MENU.map(label => label.length + 8))))
     MENU.forEach((label, index) => {
       const selected = index === this.menuIndex
-      const text = ` ${label} `
-      const x = Math.max(0, Math.floor((term.cols - text.length) / 2))
-      term.text(x, optionY + index * optionStep, text, selected ? BOLD | BRIGHT : MUTED, selected ? 1 : 0)
+      const button: Rect = {
+        x: Math.floor((term.cols - buttonWidth) / 2),
+        y: optionY + index * (buttonHeight + buttonGap),
+        w: buttonWidth,
+        h: buttonHeight,
+      }
+      clear(term, button)
+      frame(term, button, selected ? BOLD | BRIGHT : MUTED)
+      if (selected) {
+        for (let x = button.x + 1; x < button.x + button.w - 1; x++) {
+          term.put(x, button.y + 1, ' ', BOLD | BRIGHT, 1)
+        }
+      }
+      term.text(button.x + 2, button.y + 1, label, selected ? BOLD | BRIGHT : MUTED, selected ? 1 : 0)
     })
-
-    hints.forEach((hint, index) => center(term, hintsY + index, hint, MUTED))
   }
 
   private drawLogo(term: Grid, y: number, logoWidth: number, logoHeight: number): void {
@@ -467,8 +682,8 @@ export class Chess implements Overlay, Screen {
       center(term, statusY + 1, 'check', BRIGHT)
     }
     center(term, term.rows - 2, result.over
-      ? 'n new game  ESC menu'
-      : 'ARROWS move  ENTER play  n new  ESC menu', MUTED)
+      ? 'ESC quit'
+      : 'ARROWS move  ENTER play  ESC quit', MUTED)
   }
 
   private drawControls(term: Grid, x: number, y: number, width: number): void {
@@ -476,8 +691,7 @@ export class Chess implements Overlay, Screen {
     const items = [
       ['ARROWS', 'Move cursor'],
       ['ENTER', 'Select / play'],
-      ['N', 'New game'],
-      ['ESC', 'Menu'],
+      ['ESC', 'Quit'],
     ]
     let row = y + 2
     for (const [key, action] of items) {
@@ -495,9 +709,15 @@ export class Chess implements Overlay, Screen {
 
     if (!result.over) {
       const player = this.playerColor.toUpperCase()
-      const machine = this.playerColor === 'white' ? 'BLACK' : 'WHITE'
-      term.text(x, row, `YOU     ${player}`, MUTED)
-      term.text(x, row + 1, `STOCKFISH ${machine}`, MUTED)
+      if (this.gameMode === 'multiplayer') {
+        const opponent = this.playerColor === 'white' ? 'BLACK' : 'WHITE'
+        term.text(x, row, `YOU      ${player}`, MUTED)
+        term.text(x, row + 1, `OPPONENT ${opponent}`, MUTED)
+      } else {
+        term.text(x, row, `YOU     ${player}`, MUTED)
+        const machine = this.playerColor === 'white' ? 'BLACK' : 'WHITE'
+        term.text(x, row + 1, `MACHINE ${machine}`, MUTED)
+      }
       row += 3
     }
     if (!result.over && isCheck(this.state, this.state.turn)) {
@@ -507,6 +727,46 @@ export class Chess implements Overlay, Screen {
 
     term.text(x, row, 'CURSOR', MUTED)
     term.text(x, row + 1, squareName(this.cursor).toUpperCase(), BOLD)
+  }
+
+  private showEndgame(result: GameResult): void {
+    if (this.endgameShown) return
+    this.endgameShown = true
+    const winner = /^(white|black) wins by checkmate$/.exec(result.text)?.[1] as Color | undefined
+    const title = winner ? 'Checkmate!' : 'Game over'
+    const message = winner
+      ? winner === this.playerColor ? 'You won!' : 'You lost!'
+      : 'Draw!'
+    const restart = this.gameMode === 'multiplayer' ? () => this.toMenu() : () => this.newGame()
+    this.repaint()
+    this.stack?.push(new ChessCard(this.snd, title, message, ['Play again', 'Quit'], 0, action => {
+      this.stack?.pop()
+      if (action === 'Play again') restart()
+      else this.toMenu()
+    }, () => this.openQuitConfirmation()))
+  }
+
+  private openQuitConfirmation(): void {
+    if (!this.stack) return
+    const resultCardUnderneath = this.stack.top instanceof ChessCard
+    const resumeMachine = !resultCardUnderneath && this.mode === 'board' && !resultOf(this.state).over && this.state.turn !== this.playerColor
+    if (resumeMachine) this.stopMachine()
+    const resume = () => {
+      if (resumeMachine && this.mode === 'board' && this.stack?.top === this) this.startMachine()
+    }
+    this.stack.push(new ChessCard(this.snd, 'QUIT GAME?', 'Are you sure you want to quit?', ['Yes', 'No'], 1, answer => {
+      this.stack?.pop()
+      if (answer === 'Yes') {
+        if (resultCardUnderneath && this.stack?.top instanceof ChessCard) this.stack.pop()
+        this.toMenu()
+      } else {
+        this.snd.tick()
+        resume()
+      }
+    }, () => {
+      this.stack?.pop()
+      resume()
+    }))
   }
 
   private boardSquare(row: number, col: number): Square {
@@ -544,6 +804,126 @@ export class Chess implements Overlay, Screen {
     }
 
   }
+}
+
+class ChessCard implements Screen {
+  private selected: number
+
+  constructor(
+    private snd: Sound,
+    private title: string,
+    private message: string,
+    private options: string[],
+    selected: number,
+    private choose: (option: string) => void,
+    private cancel: () => void,
+  ) { this.selected = selected }
+
+  draw(term: Grid): void {
+    const width = Math.max(1, Math.min(38, term.cols - 2))
+    const messageLines = wrapText(this.message, Math.max(1, width - 4))
+    const labels = this.options.map(option => `[ ${option} ]`)
+    const horizontal = labels.join('  ').length <= width - 4
+    const height = Math.max(1, Math.min(messageLines.length + (horizontal ? 6 : 5 + this.options.length), term.rows - 2))
+    const panel: Rect = {
+      x: Math.max(0, Math.floor((term.cols - width - 1) / 2)),
+      y: Math.max(0, Math.floor((term.rows - height - 1) / 2)),
+      w: width,
+      h: height,
+    }
+    shadow(term, panel)
+    clear(term, { x: panel.x + 1, y: panel.y + 1, w: panel.w - 2, h: panel.h - 2 })
+    frame(term, panel, NORMAL)
+    term.text(panel.x + 2, panel.y, this.title, BOLD | BRIGHT)
+    messageLines.forEach((line, index) => center(term, panel.y + 2 + index, line, BOLD | BRIGHT))
+
+    const optionsY = panel.y + 3 + messageLines.length
+    if (horizontal) {
+      const row = labels.join('  ')
+      let x = panel.x + Math.max(1, Math.floor((panel.w - row.length) / 2))
+      labels.forEach((label, index) => {
+        term.text(x, optionsY, label, index === this.selected ? BOLD | BRIGHT : MUTED, index === this.selected ? 1 : 0)
+        x += label.length + 2
+      })
+    } else {
+      labels.forEach((label, index) => {
+        term.text(panel.x + 2, optionsY + index, label, index === this.selected ? BOLD | BRIGHT : MUTED, index === this.selected ? 1 : 0)
+      })
+    }
+
+    term.showCursor = false
+    term.dirty = true
+  }
+
+  onKey(e: KeyInput): boolean {
+    if (e.metaKey || e.ctrlKey || e.altKey) return false
+    if (e.key === 'Escape') {
+      this.snd.tick()
+      this.cancel()
+      return true
+    }
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      const forward = e.key === 'ArrowDown' || e.key === 'ArrowRight'
+      this.selected = (this.selected + (forward ? 1 : -1) + this.options.length) % this.options.length
+      this.snd.tick()
+      return true
+    }
+    if (e.key === 'Enter') {
+      this.choose(this.options[this.selected]!)
+      return true
+    }
+    return false
+  }
+}
+
+class FollowersCard implements Screen {
+  constructor(private snd: Sound, private back: () => void) {}
+
+  draw(term: Grid): void {
+    const width = Math.max(1, Math.min(40, term.cols - 2))
+    const height = Math.max(1, Math.min(14, term.rows - 2))
+    const panel: Rect = {
+      x: Math.max(0, Math.floor((term.cols - width - 1) / 2)),
+      y: Math.max(0, Math.floor((term.rows - height - 1) / 2)),
+      w: width,
+      h: height,
+    }
+    shadow(term, panel)
+    clear(term, { x: panel.x + 1, y: panel.y + 1, w: panel.w - 2, h: panel.h - 2 })
+    frame(term, panel, NORMAL)
+    term.text(panel.x + 2, panel.y, 'Your friends:', BOLD | BRIGHT)
+    center(term, panel.y + Math.floor(panel.h / 2), 'NO API YET', MUTED)
+
+    const button = '[ Back ]'
+    term.text(panel.x + Math.floor((panel.w - button.length) / 2), panel.y + panel.h - 3, button, BOLD | BRIGHT, 1)
+    term.showCursor = false
+    term.dirty = true
+  }
+
+  onKey(e: KeyInput): boolean {
+    if (e.metaKey || e.ctrlKey || e.altKey) return false
+    if (e.key === 'Escape' || e.key === 'Enter') {
+      this.snd.tick()
+      this.back()
+      return true
+    }
+    return ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)
+  }
+}
+
+function wrapText(text: string, width: number): string[] {
+  const lines: string[] = []
+  let line = ''
+  for (const word of text.split(/\s+/)) {
+    const next = line ? `${line} ${word}` : word
+    if (next.length <= width) line = next
+    else {
+      if (line) lines.push(line)
+      line = word.slice(0, width)
+    }
+  }
+  if (line) lines.push(line)
+  return lines
 }
 
 type BitmapGrid = Grid & {

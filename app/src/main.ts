@@ -29,6 +29,7 @@ import { Doom } from './doom'
 import { doomsdayProgram } from './doomsday'
 import { JobPalette } from './palette'
 import { Chess } from './chess'
+import { CyberspaceChessMultiplayer, PartyKitChessMultiplayer } from './chess/multiplayer'
 import { Launcher, launchables } from './launcher'
 import { NoticeBar } from './bar'
 import { saverPrefs } from './prefs'
@@ -50,6 +51,15 @@ const api = new ApiClient(API_URL, {
   get: () => localStorage.getItem('csterm.auth'),
   set: v => (v ? localStorage.setItem('csterm.auth', v) : localStorage.removeItem('csterm.auth')),
 })
+const chessDemoIdentity = (() => {
+  const requested = import.meta.env.DEV
+    ? new URLSearchParams(window.location.search).get('chessDemoUser')
+    : null
+  const slug = requested?.toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 32)
+  if (!slug) return null
+  const name = slug.replace(/[_-]+/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase())
+  return { userId: `demo:${slug}`, displayName: `Demo ${name}` }
+})()
 // The home's master key, beside the refresh token: the same trust boundary.
 const homeKey = new HomeKey({
   get: () => localStorage.getItem('csterm.homekey'),
@@ -433,7 +443,13 @@ const program = {
     saver = new Screensaver(s, snd, () => halted || !live)
     doom = new Doom(s, snd, waitForDrain)
     launcher = new Launcher(s, snd)
-    chess = new Chess(s, snd)
+    chess = new Chess(s, snd, new PartyKitChessMultiplayer(new CyberspaceChessMultiplayer(api), {
+      baseUrl: import.meta.env.VITE_CHESS_PARTYKIT_URL ?? (import.meta.env.DEV ? window.location.origin : 'http://localhost:1999'),
+      userId: () => chessDemoIdentity?.userId ?? api.userId,
+      profile: () => chessDemoIdentity ?? (api.userId
+        ? { userId: api.userId, username: api.username ?? undefined, displayName: api.username ?? undefined }
+        : null),
+    }))
     palette = new JobPalette(s, snd, () => machine, {
       badge: name => !inbox ? 0 : name === 'inbox' ? inbox.total : name === 'cmail' ? inbox.mail : 0,
       authed: () => api.authed,

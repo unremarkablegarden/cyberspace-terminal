@@ -1,0 +1,7 @@
+{
+  "name": "cyberspace-chess-demo",
+  "main": "chess.ts",
+  "port": 1999,
+  "compatibilityDate": "2026-11-20",
+  "persist": ".partykit/state"
+}
