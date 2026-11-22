@@ -25,16 +25,27 @@ export interface ChessGameSnapshot {
   state: ChessState
   whiteUserId: string
   blackUserId: string
+  whiteName?: string
+  blackName?: string
   playerColor?: Color
   status: 'waiting' | 'active' | 'finished' | 'abandoned'
   result?: string
 }
+
+export type ChessRoomEvent =
+  | { type: 'left'; userId: string; userName: string }
+  | { type: 'rematch-request'; requestId: string; userId: string; userName: string }
+  | { type: 'rematch-result'; requestId: string; accepted: boolean; userId: string; userName: string }
 
 export interface ChessMultiplayerGame {
   readonly snapshot: ChessGameSnapshot
   readonly playerColor: Color
   submitMove(move: Move): Promise<ChessGameSnapshot>
   watch(listener: (snapshot: ChessGameSnapshot) => void): () => void
+  watchRoomEvents(listener: (event: ChessRoomEvent) => void): () => void
+  requestRematch(): void
+  answerRematch(requestId: string, accept: boolean): void
+  leave(): void
   close(): void
 }
 
@@ -310,6 +321,7 @@ class PartyKitLobbyClient {
 class PartyKitChessGame implements ChessMultiplayerGame {
   private current: ChessGameSnapshot
   private readonly listeners = new Set<(snapshot: ChessGameSnapshot) => void>()
+  private readonly roomListeners = new Set<(event: ChessRoomEvent) => void>()
   private readonly pending: Array<{
     resolve: (snapshot: ChessGameSnapshot) => void
     reject: (error: Error) => void
@@ -321,12 +333,13 @@ class PartyKitChessGame implements ChessMultiplayerGame {
     room: string,
     baseUrl: string,
     private userId: string,
+    private userName: string,
     initial: ChessGameSnapshot,
   ) {
     this.current = initial
     this.socket = new WebSocket(partyUrl(baseUrl, room))
     this.socket.addEventListener('open', () => {
-      this.socket.send(JSON.stringify({ type: 'join', userId }))
+      this.socket.send(JSON.stringify({ type: 'join', userId, userName: this.userName }))
     })
     this.socket.addEventListener('message', event => this.receive(String(event.data)))
     this.socket.addEventListener('error', () => this.fail(new Error('PARTYKIT CONNECTION FAILED')))
@@ -357,6 +370,26 @@ class PartyKitChessGame implements ChessMultiplayerGame {
     return () => this.listeners.delete(listener)
   }
 
+  watchRoomEvents(listener: (event: ChessRoomEvent) => void): () => void {
+    this.roomListeners.add(listener)
+    return () => this.roomListeners.delete(listener)
+  }
+
+  requestRematch(): void {
+    if (this.closed || this.socket.readyState !== WebSocket.OPEN) return
+    this.socket.send(JSON.stringify({ type: 'rematch', action: 'request', requestId: newId('rematch') }))
+  }
+
+  answerRematch(requestId: string, accept: boolean): void {
+    if (this.closed || this.socket.readyState !== WebSocket.OPEN) return
+    this.socket.send(JSON.stringify({ type: 'rematch', action: 'answer', requestId, accept }))
+  }
+
+  leave(): void {
+    if (!this.closed && this.socket.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify({ type: 'leave' }))
+    this.close()
+  }
+
   close(): void {
     this.closed = true
     this.fail(new Error('PARTYKIT GAME CLOSED'))
@@ -373,6 +406,10 @@ class PartyKitChessGame implements ChessMultiplayerGame {
     }
     if (message.type === 'error') {
       this.fail(new Error(message.error ?? 'PARTYKIT MOVE REJECTED'))
+      return
+    }
+    if (message.type === 'left' || message.type === 'rematch-request' || message.type === 'rematch-result') {
+      for (const listener of this.roomListeners) listener(message as ChessRoomEvent)
       return
     }
     if (message.type !== 'state' || !message.snapshot) return
@@ -434,6 +471,7 @@ export class PartyKitChessMultiplayer implements ChessMultiplayerTransport {
   }
 
   async openGame(invite: ChessInvite): Promise<ChessMultiplayerGame> {
+    const profile = this.profile()
     const initial: ChessGameSnapshot = {
       gameId: invite.gameId,
       revision: 0,
@@ -445,7 +483,8 @@ export class PartyKitChessMultiplayer implements ChessMultiplayerTransport {
     return new PartyKitChessGame(
       invite.gameId,
       this.options.baseUrl,
-      this.options.userId() ?? 'guest',
+      profile?.userId ?? 'guest',
+      profile?.displayName ?? profile?.username ?? profile?.userId ?? 'Guest',
       initial,
     )
   }

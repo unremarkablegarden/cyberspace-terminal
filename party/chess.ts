@@ -23,15 +23,17 @@ type ChessInvite = {
 }
 type LobbyUser = { userId: string; username?: string; displayName?: string }
 type LobbyPlayer = { user: LobbyUser; connection: Party.Connection }
-type Player = { userId: string; color: Color }
-type JoinMessage = { type: 'join'; userId: string }
+type Player = { userId: string; userName: string; color: Color }
+type JoinMessage = { type: 'join'; userId: string; userName?: string }
 type MoveMessage = { type: 'move'; revision: number; move: Move }
 type ClientMessage = JoinMessage | MoveMessage
+type RematchRequest = { requestId: string; fromConnectionId: string; toConnectionId: string }
 
 export default class Chess implements Party.Server {
   private state: ChessState = newChessState()
   private revision = 0
   private readonly players = new Map<string, Player>()
+  private readonly rematchRequests = new Map<string, RematchRequest>()
   private readonly lobbyPlayers = new Map<string, LobbyPlayer>()
   private readonly pendingInvites = new Map<string, { fromConnectionId: string; invite: ChessInvite }>()
 
@@ -60,10 +62,15 @@ export default class Chess implements Party.Server {
       return
     }
     if (input.type === 'move') this.move(input as unknown as MoveMessage, sender)
+    if (input.type === 'rematch') this.rematch(input, sender)
+    if (input.type === 'leave') this.leave(sender)
   }
 
   onClose(connection: Party.Connection): void {
+    const player = this.players.get(connection.id)
+    if (player) this.broadcastRoomEvent({ type: 'left', userId: player.userId, userName: player.userName }, connection.id)
     this.players.delete(connection.id)
+    this.clearRematches(connection.id)
     this.lobbyPlayers.delete(connection.id)
     for (const [id, pending] of this.pendingInvites) {
       if (pending.fromConnectionId === connection.id) this.pendingInvites.delete(id)
@@ -191,8 +198,79 @@ export default class Chess implements Party.Server {
     }
     const color: Color = [...this.players.values()].some(player => player.color === 'white') ? 'black' : 'white'
     const userId = input.userId.trim().slice(0, 160) || `guest-${sender.id}`
-    this.players.set(sender.id, { userId, color })
+    const userName = typeof input.userName === 'string' && input.userName.trim()
+      ? input.userName.trim().replace(/\s+/g, ' ').slice(0, 64)
+      : userId
+    this.players.set(sender.id, { userId, userName, color })
     this.broadcastState()
+  }
+
+  private leave(sender: Party.Connection): void {
+    const player = this.players.get(sender.id)
+    if (!player) return
+    this.broadcastRoomEvent({ type: 'left', userId: player.userId, userName: player.userName }, sender.id)
+    this.players.delete(sender.id)
+    this.clearRematches(sender.id)
+    this.broadcastState()
+  }
+
+  private rematch(input: Record<string, unknown>, sender: Party.Connection): void {
+    const player = this.players.get(sender.id)
+    if (!player || this.players.size !== 2 || !resultOf(this.state).over) return
+    const action = input.action
+    const requestId = typeof input.requestId === 'string' ? input.requestId.slice(0, 80) : ''
+    if (!requestId) return
+    if (action === 'request') {
+      const opponent = [...this.players.keys()].find(id => id !== sender.id)
+      if (!opponent) return
+      this.rematchRequests.set(requestId, { requestId, fromConnectionId: sender.id, toConnectionId: opponent })
+      const event = { type: 'rematch-request' as const, requestId, userId: player.userId, userName: player.userName }
+      this.connection(opponent)?.send(JSON.stringify(event))
+      return
+    }
+    if (action !== 'answer') return
+    const pending = this.rematchRequests.get(requestId)
+    if (!pending || pending.toConnectionId !== sender.id) return
+    this.rematchRequests.delete(requestId)
+    const requester = this.players.get(pending.fromConnectionId)
+    if (!requester) return
+    const accepted = input.accept === true
+    this.connection(pending.fromConnectionId)?.send(JSON.stringify({
+      type: 'rematch-result',
+      requestId,
+      accepted,
+      userId: player.userId,
+      userName: player.userName,
+    }))
+    if (accepted) {
+      sender.send(JSON.stringify({
+        type: 'rematch-result',
+        requestId,
+        accepted,
+        userId: requester.userId,
+        userName: requester.userName,
+      }))
+      this.state = newChessState()
+      this.revision = 0
+      this.broadcastState()
+    }
+  }
+
+  private connection(id: string): Party.Connection | undefined {
+    return [...this.room.getConnections()].find(connection => connection.id === id)
+  }
+
+  private broadcastRoomEvent(event: Record<string, unknown>, without?: string): void {
+    const message = JSON.stringify(event)
+    for (const connection of this.room.getConnections()) {
+      if (connection.id !== without) connection.send(message)
+    }
+  }
+
+  private clearRematches(connectionId: string): void {
+    for (const [requestId, request] of this.rematchRequests) {
+      if (request.fromConnectionId === connectionId || request.toConnectionId === connectionId) this.rematchRequests.delete(requestId)
+    }
   }
 
   private move(input: MoveMessage, sender: Party.Connection): void {
@@ -257,6 +335,8 @@ export default class Chess implements Party.Server {
         state: this.state,
         whiteUserId: white?.userId ?? '',
         blackUserId: black?.userId ?? '',
+        whiteName: white?.userName ?? '',
+        blackName: black?.userName ?? '',
         playerColor: player?.color,
         status,
         result: result.over ? result.text : undefined,

@@ -30,6 +30,7 @@ import {
   type ChessInvite,
   type ChessMultiplayerGame,
   type ChessMultiplayerTransport,
+  type ChessRoomEvent,
   type MultiplayerFriend,
 } from './chess/multiplayer'
 import chessLogoUrl from './chess/assets/chess-logo.png?url'
@@ -80,11 +81,15 @@ export class Chess implements Overlay, Screen {
   private gameMode: 'machine' | 'multiplayer' = 'machine'
   private multiplayerGame: ChessMultiplayerGame | null = null
   private stopWatchingMultiplayer: (() => void) | null = null
+  private stopWatchingRoom: (() => void) | null = null
   private stopWatchingInvites: (() => void) | null = null
   private stopWatchingInviteResults: (() => void) | null = null
   private readonly incomingInviteIds = new Set<string>()
   private activeInvite: ChessInvite | null = null
   private activeOpponentName = ''
+  private whitePlayerName = 'White'
+  private blackPlayerName = 'Black'
+  private roomCard: ChessCard | null = null
   private endgameShown = false
   private state = newChessState()
   private cursor: Square = { row: 6, col: 4 }
@@ -394,6 +399,93 @@ export class Chess implements Overlay, Screen {
     this.stack?.push(card)
   }
 
+  private handleRoomEvent(event: ChessRoomEvent): void {
+    if (!this.multiplayerGame) return
+    if (event.type === 'left') {
+      const name = event.userName || event.userId
+      this.closeMultiplayerGame()
+      this.activeInvite = null
+      this.activeOpponentName = ''
+      this.gameMode = 'machine'
+      this.mode = 'menu'
+      this.thinking = false
+      this.clearSelection()
+      while (this.stack?.top && this.stack.top !== this) this.stack.pop()
+      this.repaint()
+      this.showRoomNotice('ROOM CLOSED', `${name} left the room.`)
+      return
+    }
+    if (event.type === 'rematch-request') {
+      this.showRematchRequest(event)
+      return
+    }
+    if (event.accepted) {
+      if (this.roomCard && this.stack?.top === this.roomCard) this.stack.pop()
+      this.roomCard = null
+      this.endgameShown = false
+      this.mode = 'board'
+      this.note = ''
+      this.clearSelection()
+      this.repaint()
+      return
+    }
+    if (this.roomCard && this.stack?.top === this.roomCard) this.stack.pop()
+    this.roomCard = null
+    const name = event.userName || event.userId
+    this.closeMultiplayerGame()
+    this.activeInvite = null
+    this.activeOpponentName = ''
+    this.gameMode = 'machine'
+    this.mode = 'menu'
+    this.thinking = false
+    this.clearSelection()
+    while (this.stack?.top && this.stack.top !== this) this.stack.pop()
+    this.repaint()
+    this.showRoomNotice('REMATCH DECLINED', `${name} declined your rematch request.`)
+  }
+
+  private showRematchRequest(event: Extract<ChessRoomEvent, { type: 'rematch-request' }>): void {
+    if (this.roomCard || !this.multiplayerGame) return
+    let card!: ChessCard
+    const respond = (accept: boolean) => {
+      if (!this.multiplayerGame) return
+      this.multiplayerGame.answerRematch(event.requestId, accept)
+      if (!accept) {
+        if (this.stack?.top === card) this.stack.pop()
+        this.roomCard = null
+      }
+    }
+    card = new ChessCard(this.snd, 'REMATCH REQUEST', `${event.userName} wants a rematch.`, ['Accept', 'Decline'], 0,
+      option => respond(option === 'Accept'),
+      () => respond(false))
+    this.roomCard = card
+    this.stack?.push(card)
+  }
+
+  private requestRematch(): void {
+    if (!this.multiplayerGame || this.roomCard) return
+    this.multiplayerGame.requestRematch()
+    const opponent = this.playerColor === 'white' ? this.blackPlayerName : this.whitePlayerName
+    let card!: ChessCard
+    const cancel = () => {
+      if (this.stack?.top === card) this.stack.pop()
+      this.toMenu()
+    }
+    card = new ChessCard(this.snd, 'REMATCH SENT', `Waiting for ${opponent} to accept.`, ['Cancel'], 0, cancel, cancel)
+    this.roomCard = card
+    this.stack?.push(card)
+  }
+
+  private showRoomNotice(title: string, message: string): void {
+    let card!: ChessCard
+    const close = () => {
+      this.stack?.pop()
+      this.repaint()
+    }
+    card = new ChessCard(this.snd, title, message, ['Back'], 0, close, close)
+    this.stack?.push(card)
+  }
+
   private playMove(move: Move): void {
     if (this.gameMode === 'multiplayer' && this.multiplayerGame) {
       this.clearSelection()
@@ -481,13 +573,18 @@ export class Chess implements Overlay, Screen {
     this.closeMultiplayerGame()
     this.multiplayerGame = game
     this.gameMode = 'multiplayer'
+    this.whitePlayerName = 'White'
+    this.blackPlayerName = 'Black'
     this.mode = 'board'
     this.clearSelection()
     this.endgameShown = false
     this.cursor = { row: 6, col: 4 }
+    this.stopWatchingRoom = game.watchRoomEvents(event => this.handleRoomEvent(event))
     this.stopWatchingMultiplayer = game.watch(snapshot => {
       if (this.multiplayerGame !== game) return
       this.state = snapshot.state
+      this.whitePlayerName = snapshot.whiteName ?? this.whitePlayerName
+      this.blackPlayerName = snapshot.blackName ?? this.blackPlayerName
       this.playerColor = snapshot.playerColor ?? game.playerColor
       if (snapshot.playerColor === 'black' && this.cursor.row === 6 && this.cursor.col === 4) this.cursor = { row: 1, col: 4 }
       this.thinking = snapshot.status === 'waiting' || (snapshot.status === 'active' && snapshot.state.turn !== this.playerColor)
@@ -508,7 +605,7 @@ export class Chess implements Overlay, Screen {
   }
 
   private toMenu(): void {
-    this.closeMultiplayerGame()
+    this.closeMultiplayerGame(true)
     this.stopMachine()
     this.activeInvite = null
     this.activeOpponentName = ''
@@ -548,11 +645,15 @@ export class Chess implements Overlay, Screen {
     this.thinking = false
   }
 
-  private closeMultiplayerGame(): void {
+  private closeMultiplayerGame(notifyLeave = false): void {
     this.stopWatchingMultiplayer?.()
     this.stopWatchingMultiplayer = null
-    this.multiplayerGame?.close()
+    this.stopWatchingRoom?.()
+    this.stopWatchingRoom = null
+    if (notifyLeave) this.multiplayerGame?.leave()
+    else this.multiplayerGame?.close()
     this.multiplayerGame = null
+    this.roomCard = null
   }
 
   private repaint(): void {
@@ -649,7 +750,10 @@ export class Chess implements Overlay, Screen {
     }
     const filesY = board.y + board.h
     const statusY = filesY + 2
-    center(term, wide ? board.y - 1 : 1, 'CHESS', BOLD | BRIGHT)
+    const title = this.gameMode === 'multiplayer'
+      ? `${shortPlayerName(this.whitePlayerName)} x ${shortPlayerName(this.blackPlayerName)}`
+      : 'CHESS'
+    center(term, wide ? board.y - 1 : 1, title, BOLD | BRIGHT)
 
     clear(term, board)
     frame(term, board, NORMAL)
@@ -710,9 +814,8 @@ export class Chess implements Overlay, Screen {
     if (!result.over) {
       const player = this.playerColor.toUpperCase()
       if (this.gameMode === 'multiplayer') {
-        const opponent = this.playerColor === 'white' ? 'BLACK' : 'WHITE'
-        term.text(x, row, `YOU      ${player}`, MUTED)
-        term.text(x, row + 1, `OPPONENT ${opponent}`, MUTED)
+        term.text(x, row, `${shortPlayerName(this.whitePlayerName)} WHITE`.slice(0, width), MUTED)
+        term.text(x, row + 1, `${shortPlayerName(this.blackPlayerName)} BLACK`.slice(0, width), MUTED)
       } else {
         term.text(x, row, `YOU     ${player}`, MUTED)
         const machine = this.playerColor === 'white' ? 'BLACK' : 'WHITE'
@@ -733,11 +836,12 @@ export class Chess implements Overlay, Screen {
     if (this.endgameShown) return
     this.endgameShown = true
     const winner = /^(white|black) wins by checkmate$/.exec(result.text)?.[1] as Color | undefined
-    const title = winner ? 'Checkmate!' : 'Game over'
+    const title = winner ? 'CHECKMATE' : 'GAME OVER'
+    const winnerName = winner === 'white' ? this.whitePlayerName : winner === 'black' ? this.blackPlayerName : ''
     const message = winner
-      ? winner === this.playerColor ? 'You won!' : 'You lost!'
-      : 'Draw!'
-    const restart = this.gameMode === 'multiplayer' ? () => this.toMenu() : () => this.newGame()
+      ? `${winnerName} wins by checkmate. ${winner === this.playerColor ? 'You won!' : 'You lost!'}`
+      : 'Draw game.'
+    const restart = this.gameMode === 'multiplayer' ? () => this.requestRematch() : () => this.newGame()
     this.repaint()
     this.stack?.push(new ChessCard(this.snd, title, message, ['Play again', 'Quit'], 0, action => {
       this.stack?.pop()
@@ -1068,6 +1172,10 @@ function rasterSvg(
 
 function squareName(square: Square): string {
   return `${'abcdefgh'[square.col]}${8 - square.row}`
+}
+
+function shortPlayerName(name: string): string {
+  return name.trim().replace(/\s+/g, ' ').slice(0, 12) || 'Player'
 }
 
 function writeLines(term: Grid, x: number, y: number, width: number, text: string, attr: number): number {
