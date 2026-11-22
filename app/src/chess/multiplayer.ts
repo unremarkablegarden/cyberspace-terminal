@@ -462,7 +462,12 @@ export class PartyKitChessMultiplayer implements ChessMultiplayerTransport {
     const allowed = new Map(friends.map(friend => [friend.userId, friend]))
     return online.flatMap(peer => {
       const friend = allowed.get(peer.userId)
-      return friend ? [{ ...peer, ...friend }] : []
+      return friend ? [{
+        ...peer,
+        ...friend,
+        username: friend.username ?? peer.username,
+        displayName: friend.displayName ?? peer.displayName,
+      }] : []
     })
   }
 

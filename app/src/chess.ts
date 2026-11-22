@@ -588,10 +588,11 @@ export class Chess implements Overlay, Screen {
       this.playerColor = snapshot.playerColor ?? game.playerColor
       if (snapshot.playerColor === 'black' && this.cursor.row === 6 && this.cursor.col === 4) this.cursor = { row: 1, col: 4 }
       this.thinking = snapshot.status === 'waiting' || (snapshot.status === 'active' && snapshot.state.turn !== this.playerColor)
+      const opponentName = this.playerColor === 'white' ? this.blackPlayerName : this.whitePlayerName
       this.note = snapshot.status === 'waiting'
-        ? 'waiting for opponent...'
+        ? `waiting for ${shortPlayerName(opponentName)}...`
         : snapshot.status === 'active' && snapshot.state.turn !== this.playerColor
-          ? 'opponent is thinking...'
+          ? `${shortPlayerName(opponentName)} is thinking...`
           : ''
       const result = resultOf(snapshot.state)
       if (result.over && !this.endgameShown) {
