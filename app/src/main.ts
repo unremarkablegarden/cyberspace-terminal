@@ -207,8 +207,14 @@ function announce(n: Notice): void {
 
 /** The inbox chord: the bar's target while it is up, else the inbox itself. */
 function openInbox(): void {
-  if (!machine || !live || halted || !api.authed) return
+  if (!machine || !live || halted) return
   const item = bar.take()
+  if (item?.line === 'chess') {
+    item.onOpen?.()
+    snd.tick()
+    return
+  }
+  if (!api.authed) return
   item?.onOpen?.()
   snd.tick()
   void machine.jobs.switchTo({ launch: item?.line ?? 'inbox' })
@@ -449,7 +455,16 @@ const program = {
       profile: () => chessDemoIdentity ?? (api.userId
         ? { userId: api.userId, username: api.username ?? undefined, displayName: api.username ?? undefined }
         : null),
-    }))
+    }), invite => {
+      const from = invite.fromUserId.startsWith('demo:')
+        ? `Demo ${invite.fromUserId.slice(5).replace(/[_-]+/g, ' ')}`
+        : invite.fromUserId
+      bar.show({
+        text: `${from} wants to play Chess`,
+        line: 'chess',
+        onOpen: () => chess?.openInvite(invite),
+      })
+    })
     palette = new JobPalette(s, snd, () => machine, {
       badge: name => !inbox ? 0 : name === 'inbox' ? inbox.total : name === 'cmail' ? inbox.mail : 0,
       authed: () => api.authed,

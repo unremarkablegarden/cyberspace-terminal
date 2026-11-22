@@ -82,9 +82,8 @@ export class Chess implements Overlay, Screen {
   private multiplayerGame: ChessMultiplayerGame | null = null
   private stopWatchingMultiplayer: (() => void) | null = null
   private stopWatchingRoom: (() => void) | null = null
-  private stopWatchingInvites: (() => void) | null = null
-  private stopWatchingInviteResults: (() => void) | null = null
   private readonly incomingInviteIds = new Set<string>()
+  private readonly pendingInvites = new Map<string, ChessInvite>()
   private activeInvite: ChessInvite | null = null
   private activeOpponentName = ''
   private whitePlayerName = 'White'
@@ -108,7 +107,11 @@ export class Chess implements Overlay, Screen {
     private screen: CrtScreen,
     private snd: Sound,
     private multiplayer: ChessMultiplayerTransport = new PendingChessMultiplayer(),
-  ) {}
+    private onInviteNotice?: (invite: ChessInvite) => void,
+  ) {
+    this.multiplayer.watchInvites(invite => this.receiveInvite(invite))
+    this.multiplayer.watchInviteResults(invite => this.handleInviteResult(invite))
+  }
 
   get open(): boolean {
     return !!this.stack?.active
@@ -127,10 +130,11 @@ export class Chess implements Overlay, Screen {
     this.note = ''
     this.snd.tick()
     this.stack.push(this)
-    this.stopWatchingInvites?.()
-    this.stopWatchingInvites = this.multiplayer.watchInvites(invite => this.showIncomingInvite(invite))
-    this.stopWatchingInviteResults?.()
-    this.stopWatchingInviteResults = this.multiplayer.watchInviteResults(invite => this.handleInviteResult(invite))
+    const pending = this.pendingInvites.values().next().value as ChessInvite | undefined
+    if (pending) {
+      this.pendingInvites.delete(pending.inviteId)
+      this.showIncomingInvite(pending)
+    }
   }
 
   /** Keys reach the overlay through Keyboard's route, as the config box and DOOM do. */
@@ -141,6 +145,16 @@ export class Chess implements Overlay, Screen {
   silentKey(k: KeyInput): boolean {
     if (k.metaKey || k.ctrlKey || k.altKey) return false
     return ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Escape'].includes(k.key)
+  }
+
+  openInvite(invite: ChessInvite): void {
+    if (!this.open) this.start()
+    if (!this.open) {
+      this.pendingInvites.set(invite.inviteId, invite)
+      return
+    }
+    this.pendingInvites.delete(invite.inviteId)
+    this.showIncomingInvite(invite)
   }
 
   onKey(e: KeyInput): boolean {
@@ -350,16 +364,27 @@ export class Chess implements Overlay, Screen {
     this.stack?.push(card)
   }
 
+  private receiveInvite(invite: ChessInvite): void {
+    if (this.pendingInvites.has(invite.inviteId) || this.incomingInviteIds.has(invite.inviteId)) return
+    if (this.open) {
+      this.showIncomingInvite(invite)
+      return
+    }
+    this.pendingInvites.set(invite.inviteId, invite)
+    this.onInviteNotice?.(invite)
+  }
+
   private showIncomingInvite(invite: ChessInvite): void {
     if (!this.open || this.incomingInviteIds.has(invite.inviteId)) return
     this.incomingInviteIds.add(invite.inviteId)
-    const from = invite.fromUserId.startsWith('demo:')
-      ? `Demo ${invite.fromUserId.slice(5).replace(/[_-]+/g, ' ')}`
-      : invite.fromUserId
+    const from = inviteFromName(invite)
     let card!: ChessCard
     const respond = (accept: boolean) => {
       if (this.stack?.top === card) this.stack.pop()
-      if (accept) this.activeInvite = invite
+      if (accept) {
+        this.activeInvite = invite
+        this.activeOpponentName = from
+      }
       void this.multiplayer.answerInvite(invite.inviteId, accept).then(game => {
         if (game && this.open) this.startMultiplayerGame(game)
       }).catch(() => {
@@ -420,7 +445,7 @@ export class Chess implements Overlay, Screen {
       return
     }
     if (event.accepted) {
-      if (this.roomCard && this.stack?.top === this.roomCard) this.stack.pop()
+      while (this.stack?.top && this.stack.top !== this) this.stack.pop()
       this.roomCard = null
       this.endgameShown = false
       this.mode = 'board'
@@ -588,7 +613,7 @@ export class Chess implements Overlay, Screen {
       this.playerColor = snapshot.playerColor ?? game.playerColor
       if (snapshot.playerColor === 'black' && this.cursor.row === 6 && this.cursor.col === 4) this.cursor = { row: 1, col: 4 }
       this.thinking = snapshot.status === 'waiting' || (snapshot.status === 'active' && snapshot.state.turn !== this.playerColor)
-      const opponentName = this.playerColor === 'white' ? this.blackPlayerName : this.whitePlayerName
+      const opponentName = this.activeOpponentName || (this.playerColor === 'white' ? this.blackPlayerName : this.whitePlayerName)
       this.note = snapshot.status === 'waiting'
         ? `waiting for ${shortPlayerName(opponentName)}...`
         : snapshot.status === 'active' && snapshot.state.turn !== this.playerColor
@@ -621,10 +646,6 @@ export class Chess implements Overlay, Screen {
   }
 
   private close(): void {
-    this.stopWatchingInvites?.()
-    this.stopWatchingInvites = null
-    this.stopWatchingInviteResults?.()
-    this.stopWatchingInviteResults = null
     this.closeMultiplayerGame()
     this.stopMachine()
     while (this.stack?.active) this.stack.pop()
@@ -1177,6 +1198,12 @@ function squareName(square: Square): string {
 
 function shortPlayerName(name: string): string {
   return name.trim().replace(/\s+/g, ' ').slice(0, 12) || 'Player'
+}
+
+function inviteFromName(invite: ChessInvite): string {
+  return invite.fromUserId.startsWith('demo:')
+    ? `Demo ${invite.fromUserId.slice(5).replace(/[_-]+/g, ' ')}`
+    : invite.fromUserId
 }
 
 function writeLines(term: Grid, x: number, y: number, width: number, text: string, attr: number): number {
