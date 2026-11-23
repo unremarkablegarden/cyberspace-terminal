@@ -30,7 +30,7 @@ export const COMMANDS: SlashCommand[] = [
   { name: 'coin', usage: '/coin', summary: 'flip a coin', surfaces: BOTH },
   { name: 'spin', usage: '/spin', summary: 'spin the bottle', surfaces: BOTH },
   { name: 'fortune', usage: '/fortune', summary: 'open a fortune cookie', surfaces: BOTH },
-  { name: '8ball', usage: '/8ball <question>', summary: 'ask the magic 8-ball', surfaces: BOTH },
+  { name: '8ball', usage: '/8ball [question]', summary: 'ask the magic 8-ball', surfaces: BOTH },
   { name: 'tarot', usage: '/tarot [question]', summary: 'pull a tarot card', surfaces: BOTH },
   { name: 'blink', usage: '/blink <message>', summary: 'say it in blinking text', surfaces: BOTH },
   { name: 'help', usage: '/help', summary: 'this box', surfaces: BOTH },
