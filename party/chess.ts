@@ -10,6 +10,20 @@ import {
   type Move,
 } from '../app/src/chess/rules'
 
+/*
+ * I used PartyKit here to get a working multiplayer room for the chess demo.
+ * I haven't seen how you wire multiplayer into the graffiti and grid services,
+ * so I left this as a standalone boilerplate instead of guessing at that part.
+ *
+ * The lobby handles online users and invites. Once an invite is accepted, both
+ * clients join a room that owns the board, validates moves, and sends the same
+ * state to both players.
+ *
+ * You can replace the lobby with the real follower and invite API, then keep
+ * this room protocol or move it into your own realtime layer. The demo accepts
+ * the browser supplied identity only for local testing; production should
+ * verify the session on the server.
+ */
 const LOBBY_ROOM = 'chess-demo-lobby'
 
 type ChessInvite = {
@@ -79,6 +93,11 @@ export default class Chess implements Party.Server {
     else this.broadcastState()
   }
 
+  /*
+   * This lobby is my local stand in for the friends and invite API. It only
+   * handles presence, invite delivery, and the accept or decline response.
+   * These handlers are the part to replace once your real API endpoints exist.
+   */
   private lobbyMessage(input: Record<string, unknown>, sender: Party.Connection): void {
     if (input.type === 'lobby:join') {
       const user = input.user as LobbyUser | undefined
@@ -187,6 +206,10 @@ export default class Chess implements Party.Server {
     }))
   }
 
+  /*
+   * After an invite is accepted, both clients connect to this room. I assign the
+   * colors here and include the player names in each snapshot for the board UI.
+   */
   private join(input: JoinMessage, sender: Party.Connection): void {
     if (this.players.has(sender.id)) {
       this.sendState(sender)
@@ -214,6 +237,10 @@ export default class Chess implements Party.Server {
     this.broadcastState()
   }
 
+  /*
+   * Rematches use the same room after a finished game. I reset the board only
+   * after the other player accepts, so declining keeps the finished result intact.
+   */
   private rematch(input: Record<string, unknown>, sender: Party.Connection): void {
     const player = this.players.get(sender.id)
     if (!player || this.players.size !== 2 || !resultOf(this.state).over) return
@@ -273,6 +300,11 @@ export default class Chess implements Party.Server {
     }
   }
 
+  /*
+   * The browser sends a move request, but the room decides whether it is legal.
+   * The revision check stops an older client from applying a move over a newer
+   * board. That server side validation should stay in the production version.
+   */
   private move(input: MoveMessage, sender: Party.Connection): void {
     const player = this.players.get(sender.id)
     if (!player) {

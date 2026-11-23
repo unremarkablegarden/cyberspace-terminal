@@ -49,6 +49,17 @@ export interface ChessMultiplayerGame {
   close(): void
 }
 
+/*
+ * I kept this interface separate from the chess UI so the local PartyKit
+ * transport I used for testing can be replaced by the Cyberspace API. You can
+ * implement these methods with the Cyberspace follower, invite, and realtime
+ * game APIs without rewriting the board screens.
+ *
+ * I had an idea for the invite flow: when someone clicks invite, show their
+ * current following list by name and let them send an invite to one of those
+ * users. The other user gets a notification and can accept or decline it. If
+ * they accept, Chess opens directly and the game starts :>
+ */
 export interface ChessMultiplayerTransport {
   listFriends(): Promise<MultiplayerFriend[]>
   sendInvite(userId: string, color: Color | 'random'): Promise<ChessInvite>
@@ -167,6 +178,10 @@ type LobbyMessage = {
   error?: string
 }
 
+/*
+ * This client talks to the local PartyKit lobby. It is the piece to replace if
+ * your API already provides presence and invite delivery.
+ */
 class PartyKitLobbyClient {
   private socket: WebSocket | null = null
   private connecting: Promise<void> | null = null
@@ -318,6 +333,10 @@ class PartyKitLobbyClient {
   }
 }
 
+/*
+ * This represents one realtime game connection. The room sends authoritative
+ * snapshots, while the browser sends requests and renders the state it receives.
+ */
 class PartyKitChessGame implements ChessMultiplayerGame {
   private current: ChessGameSnapshot
   private readonly listeners = new Set<(snapshot: ChessGameSnapshot) => void>()
