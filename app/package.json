@@ -1,6 +1,6 @@
 {
   "name": "app",
-  "version": "0.9.6",
+  "version": "0.9.7",
   "private": true,
   "type": "module",
   "scripts": {
@@ -19,7 +19,8 @@
     "@xterm/addon-serialize": "^0.14.0",
     "@xterm/headless": "^5.5.0",
     "@zenfs/core": "^2.6.3",
-    "@zenfs/dom": "^1.2.10"
+    "@zenfs/dom": "^1.2.10",
+    "js-chess-engine": "^2.4.6"
   },
   "devDependencies": {
     "typescript": "^5.9.3",

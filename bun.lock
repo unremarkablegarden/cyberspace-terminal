@@ -7,7 +7,7 @@
     },
     "app": {
       "name": "app",
-      "version": "0.7.1",
+      "version": "0.9.6",
       "dependencies": {
         "@cyberspace/apps": "workspace:*",
         "@cyberspace/compat": "workspace:*",
@@ -20,6 +20,7 @@
         "@xterm/headless": "^5.5.0",
         "@zenfs/core": "^2.6.3",
         "@zenfs/dom": "^1.2.10",
+        "js-chess-engine": "^2.4.6",
       },
       "devDependencies": {
         "typescript": "^5.9.3",
@@ -31,7 +32,7 @@
     },
     "apps/cyberspace": {
       "name": "@cyberspace/apps",
-      "version": "0.7.1",
+      "version": "0.9.6",
       "dependencies": {
         "@cyberspace/compat": "workspace:*",
         "@cyberspace/kernel": "workspace:*",
@@ -41,7 +42,7 @@
     },
     "packages/compat": {
       "name": "@cyberspace/compat",
-      "version": "0.7.1",
+      "version": "0.9.6",
       "dependencies": {
         "@cyberspace/coreutils": "workspace:*",
         "@cyberspace/crt": "workspace:*",
@@ -54,7 +55,7 @@
     },
     "packages/coreutils": {
       "name": "@cyberspace/coreutils",
-      "version": "0.7.1",
+      "version": "0.9.6",
       "dependencies": {
         "@cyberspace/kernel": "workspace:*",
         "@cyberspace/shell": "workspace:*",
@@ -63,14 +64,14 @@
     },
     "packages/crt": {
       "name": "@cyberspace/crt",
-      "version": "0.7.1",
+      "version": "0.9.6",
       "dependencies": {
         "@cyberspace/tui": "workspace:*",
       },
     },
     "packages/kernel": {
       "name": "@cyberspace/kernel",
-      "version": "0.7.1",
+      "version": "0.9.6",
       "dependencies": {
         "@bjorn3/browser_wasi_shim": "^0.4.2",
         "@zenfs/core": "^2.6.3",
@@ -78,14 +79,14 @@
     },
     "packages/shell": {
       "name": "@cyberspace/shell",
-      "version": "0.7.1",
+      "version": "0.9.6",
       "dependencies": {
         "@cyberspace/kernel": "workspace:*",
       },
     },
     "packages/tui": {
       "name": "@cyberspace/tui",
-      "version": "0.7.1",
+      "version": "0.9.6",
     },
   },
   "packages": {
@@ -672,6 +673,8 @@
     "jackspeak": ["jackspeak@4.2.3", "", { "dependencies": { "@isaacs/cliui": "^9.0.0" } }, "sha512-ykkVRwrYvFm1nb2AJfKKYPr0emF6IiXDYUaFx4Zn9ZuIH7MrzEZ3sD5RlqGXNRpHtvUHJyOnCEFxOlNDtGo7wg=="],
 
     "jake": ["jake@10.9.4", "", { "dependencies": { "async": "^3.2.6", "filelist": "^1.0.4", "picocolors": "^1.1.1" }, "bin": { "jake": "bin/cli.js" } }, "sha512-wpHYzhxiVQL+IV05BLE2Xn34zW1S223hvjtqk0+gsPrwd/8JNLXJgZZM/iPFsYc1xyphF+6M6EvdE5E9MBGkDA=="],
+
+    "js-chess-engine": ["js-chess-engine@2.4.6", "", {}, "sha512-OKvWKICifXLjUilGzT5RstUv9iGpk04PjGpTyVT0lMlxX2HptoXZ2Q9hNicidnYjFcR7FHpnXFVwreDSF6a5Ng=="],
 
     "js-tokens": ["js-tokens@4.0.0", "", {}, "sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ=="],
 

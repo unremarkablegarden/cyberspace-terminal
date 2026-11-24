@@ -382,6 +382,30 @@ function insufficientMaterial(state: ChessState): boolean {
   return minors.length <= 1
 }
 
+/**
+ * Whether `color` keeps enough material to mate in some sequence.
+ * Approximate: a lone king, or a king and one bishop or knight, cannot; anything more can.
+ */
+export function hasMatingMaterial(state: ChessState, color: Color): boolean {
+  let minors = 0
+  for (const row of state.board) {
+    for (const piece of row) {
+      if (!piece || piece.color !== color || piece.kind === 'king') continue
+      if (piece.kind === 'knight' || piece.kind === 'bishop') minors++
+      else return true
+    }
+  }
+  return minors >= 2
+}
+
+/** The result when `flagged` runs out of time: a loss, or a draw when the opponent cannot mate. */
+export function timeoutResult(state: ChessState, flagged: Color): GameResult {
+  const winner = other(flagged)
+  return hasMatingMaterial(state, winner)
+    ? { over: true, text: `${winner} wins on time` }
+    : { over: true, text: 'draw by timeout vs insufficient material' }
+}
+
 /** The status line, and whether the game has stopped. */
 export function resultOf(state: ChessState): GameResult {
   if (checkmate(state)) return { over: true, text: `${other(state.turn)} wins by checkmate` }

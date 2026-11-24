@@ -1,6 +1,5 @@
 node_modules/
 dist/
-party/.partykit/
 .trash/
 .DS_Store
 .vercel/

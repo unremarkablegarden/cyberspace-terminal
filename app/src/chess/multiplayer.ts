@@ -1,10 +1,29 @@
-import type { ApiClient } from '@cyberspace/apps'
 import { newChessState, type ChessState, type Color, type Move } from './rules'
 
 export interface MultiplayerFriend {
   userId: string
   username?: string
   displayName?: string
+  /** Lobby only: in a game or not. */
+  status?: 'idle' | 'playing'
+}
+
+export interface ChatLine {
+  userId: string
+  userName: string
+  text: string
+  /** ms since the epoch, server clock. */
+  at: number
+}
+
+export interface LobbyView {
+  /** Everyone else in the lobby. */
+  users: MultiplayerFriend[]
+  chat: ChatLine[]
+  /** Empty while connected, else why not: `Connecting...`, a sign-in or connection error. */
+  status: string
+  /** This player's uid, when signed in. */
+  me?: string
 }
 
 export type ChessInviteStatus = 'pending' | 'accepted' | 'declined' | 'expired'
@@ -13,9 +32,13 @@ export interface ChessInvite {
   inviteId: string
   gameId: string
   fromUserId: string
+  /** Sender's username, set by the server. */
+  fromName?: string
   toUserId: string
   status: ChessInviteStatus
   requestedColor?: Color
+  /** ms per side, 0 untimed. See chess/clock.ts. */
+  timeMs?: number
   createdAt?: string
 }
 
@@ -30,12 +53,16 @@ export interface ChessGameSnapshot {
   playerColor?: Color
   status: 'waiting' | 'active' | 'finished' | 'abandoned'
   result?: string
+  /** Remaining ms per side as of when the server sent the snapshot. Absent in untimed games. */
+  clock?: { white: number; black: number; running: Color | null }
 }
 
 export type ChessRoomEvent =
   | { type: 'left'; userId: string; userName: string }
   | { type: 'rematch-request'; requestId: string; userId: string; userName: string }
   | { type: 'rematch-result'; requestId: string; accepted: boolean; userId: string; userName: string }
+  | { type: 'chat'; line: ChatLine }
+  | { type: 'notice'; text: string }
 
 export interface ChessMultiplayerGame {
   readonly snapshot: ChessGameSnapshot
@@ -44,29 +71,30 @@ export interface ChessMultiplayerGame {
   watch(listener: (snapshot: ChessGameSnapshot) => void): () => void
   watchRoomEvents(listener: (event: ChessRoomEvent) => void): () => void
   requestRematch(): void
+  sendChat(text: string): void
   answerRematch(requestId: string, accept: boolean): void
   leave(): void
   close(): void
 }
 
-/*
- * I kept this interface separate from the chess UI so the local PartyKit
- * transport I used for testing can be replaced by the Cyberspace API. You can
- * implement these methods with the Cyberspace follower, invite, and realtime
- * game APIs without rewriting the board screens.
- *
- * I had an idea for the invite flow: when someone clicks invite, show their
- * current following list by name and let them send an invite to one of those
- * users. The other user gets a notification and can accept or decline it. If
- * they accept, Chess opens directly and the game starts :>
- */
+// Online play behind one interface, so the board screens do not depend on the transport.
+// Friends come from the API (followers). Presence, invites and games go through the `chess` party of the world Worker.
 export interface ChessMultiplayerTransport {
   listFriends(): Promise<MultiplayerFriend[]>
-  sendInvite(userId: string, color: Color | 'random'): Promise<ChessInvite>
+  sendInvite(userId: string, color: Color | 'random', timeMs: number): Promise<ChessInvite>
   openGame(invite: ChessInvite): Promise<ChessMultiplayerGame>
   watchInvites(listener: (invite: ChessInvite) => void): () => void
   watchInviteResults(listener: (invite: ChessInvite) => void): () => void
   answerInvite(inviteId: string, accept: boolean): Promise<ChessMultiplayerGame | null>
+  /** Joins the lobby so invites can arrive. Called when Chess opens. */
+  online?(): void
+  /** Lobby players and chat, current value first and then on every change. */
+  watchLobby?(listener: (view: LobbyView) => void): () => void
+  sendLobbyChat?(text: string): void
+  /** Marks this player as in a game in the lobby list. */
+  setPlaying?(playing: boolean): void
+  /** False when no account is logged in. */
+  signedIn?(): boolean
 }
 
 export class MultiplayerApiPendingError extends Error {
@@ -81,7 +109,7 @@ export class PendingChessMultiplayer implements ChessMultiplayerTransport {
     return []
   }
 
-  async sendInvite(_userId: string, _color: Color | 'random'): Promise<ChessInvite> {
+  async sendInvite(_userId: string, _color: Color | 'random', _timeMs: number): Promise<ChessInvite> {
     throw new MultiplayerApiPendingError()
   }
 
@@ -102,66 +130,24 @@ export class PendingChessMultiplayer implements ChessMultiplayerTransport {
   }
 }
 
-interface FollowRow {
-  followerId?: string
-  username?: string
-  displayName?: string
-}
-
-export class CyberspaceChessMultiplayer implements ChessMultiplayerTransport {
-  constructor(private api: ApiClient) {}
-
-  async listFriends(): Promise<MultiplayerFriend[]> {
-    if (!this.api.authed || !this.api.userId) return []
-    const friends: MultiplayerFriend[] = []
-    let cursor: string | null = null
-    do {
-      const query: string = `/v1/follows?type=followers&limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`
-      const page: { rows: FollowRow[]; cursor: string | null } = await this.api.page<FollowRow>(query)
-      for (const row of page.rows) {
-        if (!row.followerId || row.followerId === this.api.userId) continue
-        friends.push({
-          userId: row.followerId,
-          username: row.username,
-          displayName: row.displayName,
-        })
-      }
-      cursor = page.cursor
-    } while (cursor)
-    return friends
-  }
-
-  async sendInvite(_userId: string, _color: Color | 'random'): Promise<ChessInvite> {
-    throw new MultiplayerApiPendingError()
-  }
-
-  async openGame(_invite: ChessInvite): Promise<ChessMultiplayerGame> {
-    throw new MultiplayerApiPendingError()
-  }
-
-  watchInvites(_listener: (invite: ChessInvite) => void): () => void {
-    return () => {}
-  }
-
-  watchInviteResults(_listener: (invite: ChessInvite) => void): () => void {
-    return () => {}
-  }
-
-  async answerInvite(_inviteId: string, _accept: boolean): Promise<ChessMultiplayerGame | null> {
-    throw new MultiplayerApiPendingError()
-  }
-}
-
-function partyUrl(base: string, room: string): string {
+/** The `chess` party of the world Worker. The room checks the Firebase token and takes the uid from it. */
+async function partyUrl(base: string, room: string, auth: PartyAuth): Promise<string> {
+  const token = await auth.token()
+  if (!token) throw new Error('Session expired, log in again')
   const url = new URL(base, window.location.href)
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
-  const local = url.hostname === 'localhost' || url.hostname === '127.0.0.1'
-  const route = local ? `/party/${encodeURIComponent(room)}` : `/parties/main/${encodeURIComponent(room)}`
-  url.pathname = `${url.pathname.replace(/\/$/, '')}${route}`
+  url.pathname = `${url.pathname.replace(/\/$/, '')}/parties/chess/${encodeURIComponent(room)}`
+  url.searchParams.set('token', token)
+  url.searchParams.set('username', auth.username() ?? '')
   return url.toString()
 }
 
-const LOBBY_ROOM = 'chess-demo-lobby'
+interface PartyAuth {
+  token(): Promise<string | null>
+  username(): string | null
+}
+
+const LOBBY_ROOM = 'lobby'
 
 function newId(prefix: string): string {
   const value = typeof crypto.randomUUID === 'function'
@@ -174,18 +160,21 @@ type LobbyMessage = {
   type?: string
   requestId?: string
   users?: MultiplayerFriend[]
+  chat?: ChatLine[]
+  line?: ChatLine
   invite?: ChessInvite
   error?: string
 }
 
-/*
- * This client talks to the local PartyKit lobby. It is the piece to replace if
- * your API already provides presence and invite delivery.
- */
+/** Presence, chat and invite delivery. Connects on first use, not at boot. */
 class PartyKitLobbyClient {
   private socket: WebSocket | null = null
   private connecting: Promise<void> | null = null
   private users: MultiplayerFriend[] = []
+  private chat: ChatLine[] = []
+  private playing = false
+  private failure = ''
+  private readonly lobbyListeners = new Set<(view: LobbyView) => void>()
   private readonly incomingInvites = new Map<string, ChessInvite>()
   private readonly inviteListeners = new Set<(invite: ChessInvite) => void>()
   private readonly resultListeners = new Set<(invite: ChessInvite) => void>()
@@ -197,8 +186,49 @@ class PartyKitLobbyClient {
 
   constructor(
     private baseUrl: string,
+    private auth: PartyAuth,
     private profile: () => MultiplayerFriend | null,
   ) {}
+
+  online(): void {
+    this.failure = ''
+    this.emit()
+    void this.connect().catch((e: unknown) => {
+      this.failure = e instanceof Error ? e.message : String(e)
+      this.emit()
+    })
+  }
+
+  watchLobby(listener: (view: LobbyView) => void): () => void {
+    this.lobbyListeners.add(listener)
+    listener(this.view())
+    return () => this.lobbyListeners.delete(listener)
+  }
+
+  sendChat(text: string): void {
+    if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify({ type: 'lobby:chat', text }))
+  }
+
+  setPlaying(playing: boolean): void {
+    this.playing = playing
+    if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify({ type: 'lobby:status', playing }))
+  }
+
+  /** Whether the lobby socket is open. */
+  get connected(): boolean {
+    return this.socket?.readyState === WebSocket.OPEN
+  }
+
+  private view(): LobbyView {
+    const me = this.profile()?.userId
+    const status = this.connected ? '' : this.failure || (this.profile() ? 'Connecting...' : 'Log in first')
+    return { users: this.connected ? this.users.filter(user => user.userId !== me) : [], chat: this.chat, status, me }
+  }
+
+  private emit(): void {
+    const view = this.view()
+    for (const listener of this.lobbyListeners) listener(view)
+  }
 
   async listUsers(): Promise<MultiplayerFriend[]> {
     await this.connect()
@@ -210,19 +240,17 @@ class PartyKitLobbyClient {
 
   watchInvites(listener: (invite: ChessInvite) => void): () => void {
     this.inviteListeners.add(listener)
-    void this.connect().catch(() => {})
     return () => this.inviteListeners.delete(listener)
   }
 
   watchInviteResults(listener: (invite: ChessInvite) => void): () => void {
     this.resultListeners.add(listener)
-    void this.connect().catch(() => {})
     return () => this.resultListeners.delete(listener)
   }
 
-  async sendInvite(toUserId: string, color: Color | 'random'): Promise<ChessInvite> {
+  async sendInvite(toUserId: string, color: Color | 'random', timeMs: number): Promise<ChessInvite> {
     const profile = this.profile()
-    if (!profile) throw new Error('SIGN IN OR USE A DEMO IDENTITY')
+    if (!profile) throw new Error('Log in first')
     await this.connect()
     const invite: ChessInvite = {
       inviteId: newId('invite'),
@@ -231,6 +259,7 @@ class PartyKitLobbyClient {
       toUserId,
       status: 'pending',
       requestedColor: color === 'random' ? undefined : color,
+      timeMs,
       createdAt: new Date().toISOString(),
     }
     const response = await this.request({ type: 'lobby:invite', invite })
@@ -250,10 +279,10 @@ class PartyKitLobbyClient {
     if (this.socket?.readyState === WebSocket.OPEN) return Promise.resolve()
     if (this.connecting) return this.connecting
     const profile = this.profile()
-    if (!profile) return Promise.reject(new Error('NO MULTIPLAYER IDENTITY'))
+    if (!profile) return Promise.reject(new Error('Log in first'))
 
-    this.connecting = new Promise<void>((resolve, reject) => {
-      const socket = new WebSocket(partyUrl(this.baseUrl, LOBBY_ROOM))
+    this.connecting = partyUrl(this.baseUrl, LOBBY_ROOM, this.auth).then(address => new Promise<void>((resolve, reject) => {
+      const socket = new WebSocket(address)
       this.socket = socket
       let settled = false
       const fail = (error: Error) => {
@@ -274,6 +303,10 @@ class PartyKitLobbyClient {
         }
         if (message.type === 'lobby:joined') {
           this.users = message.users ?? []
+          this.chat = message.chat ?? []
+          // A reconnect during a game restores the status the server lost with the old socket.
+          if (this.playing) socket.send(JSON.stringify({ type: 'lobby:status', playing: true }))
+          this.emit()
           if (!settled) {
             settled = true
             resolve()
@@ -282,6 +315,12 @@ class PartyKitLobbyClient {
         }
         if (message.type === 'lobby:presence') {
           this.users = message.users ?? this.users
+          this.emit()
+          return
+        }
+        if (message.type === 'lobby:chat' && message.line) {
+          this.chat = [...this.chat, message.line].slice(-50)
+          this.emit()
           return
         }
         if (message.type === 'lobby:incoming' && message.invite) {
@@ -302,18 +341,21 @@ class PartyKitLobbyClient {
           else pending.resolve(message)
         }
       })
-      socket.addEventListener('error', () => fail(new Error('PARTYKIT LOBBY CONNECTION FAILED')))
+      socket.addEventListener('error', () => fail(new Error('Lobby: connection failed')))
       socket.addEventListener('close', () => {
-        fail(new Error('PARTYKIT LOBBY CONNECTION CLOSED'))
+        fail(new Error('Lobby: connection closed'))
         if (this.socket === socket) this.socket = null
         this.connecting = null
+        this.emit()
+        // Reconnect while the lobby screen is watching, for a server restart or a dropped network.
+        if (this.lobbyListeners.size) setTimeout(() => { if (this.lobbyListeners.size && !this.socket) this.online() }, 2000)
         for (const [id, pending] of this.requests) {
           clearTimeout(pending.timer)
-          pending.reject(new Error('PARTYKIT LOBBY CONNECTION CLOSED'))
+          pending.reject(new Error('Lobby: connection closed'))
           this.requests.delete(id)
         }
       })
-    }).finally(() => {
+    })).finally(() => {
       if (this.socket?.readyState !== WebSocket.OPEN) this.connecting = null
     })
     return this.connecting
@@ -348,21 +390,15 @@ class PartyKitChessGame implements ChessMultiplayerGame {
   private socket: WebSocket
   private closed = false
 
-  constructor(
-    room: string,
-    baseUrl: string,
-    private userId: string,
-    private userName: string,
-    initial: ChessGameSnapshot,
-  ) {
+  constructor(address: string, initial: ChessGameSnapshot, timeMs: number) {
     this.current = initial
-    this.socket = new WebSocket(partyUrl(baseUrl, room))
+    this.socket = new WebSocket(address)
     this.socket.addEventListener('open', () => {
-      this.socket.send(JSON.stringify({ type: 'join', userId, userName: this.userName }))
+      this.socket.send(JSON.stringify({ type: 'join', timeMs }))
     })
     this.socket.addEventListener('message', event => this.receive(String(event.data)))
-    this.socket.addEventListener('error', () => this.fail(new Error('PARTYKIT CONNECTION FAILED')))
-    this.socket.addEventListener('close', () => this.fail(new Error('PARTYKIT CONNECTION CLOSED')))
+    this.socket.addEventListener('error', () => this.fail(new Error('Game: connection failed')))
+    this.socket.addEventListener('close', () => this.fail(new Error('Game: connection closed')))
   }
 
   get snapshot(): ChessGameSnapshot {
@@ -375,7 +411,7 @@ class PartyKitChessGame implements ChessMultiplayerGame {
 
   submitMove(move: Move): Promise<ChessGameSnapshot> {
     if (this.closed || this.socket.readyState !== WebSocket.OPEN) {
-      return Promise.reject(new Error('PARTYKIT CONNECTION NOT READY'))
+      return Promise.reject(new Error('Game: not connected'))
     }
     return new Promise((resolve, reject) => {
       this.pending.push({ resolve, reject })
@@ -392,6 +428,11 @@ class PartyKitChessGame implements ChessMultiplayerGame {
   watchRoomEvents(listener: (event: ChessRoomEvent) => void): () => void {
     this.roomListeners.add(listener)
     return () => this.roomListeners.delete(listener)
+  }
+
+  sendChat(text: string): void {
+    if (this.closed || this.socket.readyState !== WebSocket.OPEN) return
+    this.socket.send(JSON.stringify({ type: 'chat', text }))
   }
 
   requestRematch(): void {
@@ -411,7 +452,7 @@ class PartyKitChessGame implements ChessMultiplayerGame {
 
   close(): void {
     this.closed = true
-    this.fail(new Error('PARTYKIT GAME CLOSED'))
+    this.fail(new Error('Game: closed'))
     this.socket.close()
     this.listeners.clear()
   }
@@ -424,10 +465,10 @@ class PartyKitChessGame implements ChessMultiplayerGame {
       return
     }
     if (message.type === 'error') {
-      this.fail(new Error(message.error ?? 'PARTYKIT MOVE REJECTED'))
+      this.fail(new Error(message.error ?? 'Move rejected'))
       return
     }
-    if (message.type === 'left' || message.type === 'rematch-request' || message.type === 'rematch-result') {
+    if (message.type === 'left' || message.type === 'rematch-request' || message.type === 'rematch-result' || message.type === 'chat' || message.type === 'notice') {
       for (const listener of this.roomListeners) listener(message as ChessRoomEvent)
       return
     }
@@ -447,55 +488,57 @@ class PartyKitChessGame implements ChessMultiplayerGame {
 
 export interface PartyKitChessMultiplayerOptions {
   baseUrl: string
-  userId: () => string | null
-  profile?: () => MultiplayerFriend | null
+  /** Firebase ID token, the same one the API takes as Bearer. */
+  token: () => Promise<string | null>
+  profile: () => MultiplayerFriend | null
 }
 
 export class PartyKitChessMultiplayer implements ChessMultiplayerTransport {
   private lobby: PartyKitLobbyClient
 
-  constructor(
-    private friends: ChessMultiplayerTransport,
-    private options: PartyKitChessMultiplayerOptions,
-  ) {
-    this.lobby = new PartyKitLobbyClient(options.baseUrl, () => this.profile())
+  constructor(private options: PartyKitChessMultiplayerOptions) {
+    this.lobby = new PartyKitLobbyClient(options.baseUrl, this.auth, () => this.profile())
+  }
+
+  private get auth(): PartyAuth {
+    return { token: this.options.token, username: () => this.profile()?.username ?? null }
   }
 
   private profile(): MultiplayerFriend | null {
-    return this.options.profile?.() ?? (this.options.userId()
-      ? { userId: this.options.userId()!, displayName: 'Cyberspace user' }
-      : null)
+    return this.options.profile()
   }
 
+  online(): void {
+    this.lobby.online()
+  }
+
+  signedIn(): boolean {
+    return !!this.profile()
+  }
+
+  /** Everyone in the lobby, not only followers. */
   async listFriends(): Promise<MultiplayerFriend[]> {
-    const profile = this.profile()
-    if (!profile) return []
-    const online = await this.lobby.listUsers()
-    if (profile.userId.startsWith('demo:')) return online
-    let friends: MultiplayerFriend[] = []
-    try {
-      friends = await this.friends.listFriends()
-    } catch {
-      friends = []
-    }
-    const allowed = new Map(friends.map(friend => [friend.userId, friend]))
-    return online.flatMap(peer => {
-      const friend = allowed.get(peer.userId)
-      return friend ? [{
-        ...peer,
-        ...friend,
-        username: friend.username ?? peer.username,
-        displayName: friend.displayName ?? peer.displayName,
-      }] : []
-    })
+    if (!this.profile()) throw new Error('Log in first')
+    return this.lobby.listUsers()
   }
 
-  async sendInvite(userId: string, color: Color | 'random'): Promise<ChessInvite> {
-    return this.lobby.sendInvite(userId, color)
+  watchLobby(listener: (view: LobbyView) => void): () => void {
+    return this.lobby.watchLobby(listener)
+  }
+
+  sendLobbyChat(text: string): void {
+    this.lobby.sendChat(text)
+  }
+
+  setPlaying(playing: boolean): void {
+    this.lobby.setPlaying(playing)
+  }
+
+  async sendInvite(userId: string, color: Color | 'random', timeMs: number): Promise<ChessInvite> {
+    return this.lobby.sendInvite(userId, color, timeMs)
   }
 
   async openGame(invite: ChessInvite): Promise<ChessMultiplayerGame> {
-    const profile = this.profile()
     const initial: ChessGameSnapshot = {
       gameId: invite.gameId,
       revision: 0,
@@ -504,13 +547,7 @@ export class PartyKitChessMultiplayer implements ChessMultiplayerTransport {
       blackUserId: '',
       status: 'waiting',
     }
-    return new PartyKitChessGame(
-      invite.gameId,
-      this.options.baseUrl,
-      profile?.userId ?? 'guest',
-      profile?.displayName ?? profile?.username ?? profile?.userId ?? 'Guest',
-      initial,
-    )
+    return new PartyKitChessGame(await partyUrl(this.options.baseUrl, invite.gameId, this.auth), initial, invite.timeMs ?? 0)
   }
 
   watchInvites(listener: (invite: ChessInvite) => void): () => void {

@@ -24,7 +24,8 @@ export default defineConfig({
     headers: isolation,
     host: true,
     proxy: {
-      '/party': { target: 'http://127.0.0.1:1999', changeOrigin: true, ws: true },
+      // World Worker (../nuxt/partykit/world, `bun run dev`) for the chess party.
+      '/parties': { target: 'http://127.0.0.1:1999', changeOrigin: true, ws: true },
     },
   },
   preview: { headers: { ...isolation, 'Content-Security-Policy': csp } },

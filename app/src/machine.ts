@@ -36,6 +36,8 @@ export interface HostPrograms {
   screensaver: Program
   /** Writes the CRT framebuffer directly and needs key releases, so it lives on the faceplate. */
   doom: Program
+  /** Chess, drawn on the CRT grid. Exits when the game screen closes. */
+  chess: Program
   /** Opens the F1 config box, which draws on the CRT grid. */
   config: Program
   /** The program list, drawn on the CRT grid like the CMD-K switcher. */
@@ -81,6 +83,7 @@ function registerPrograms(kernel: Kernel, { api, homeKey, snd, host, pictures, f
   kernel.register('reset', host.reset)
   kernel.register('screensaver', host.screensaver)
   kernel.register('doom', host.doom)
+  kernel.register('chess', host.chess)
   kernel.register('config', host.config)
   kernel.register('launch', host.launch)
   // Registered after coreutils so the network whoami, which reports the logged-in

@@ -29,7 +29,7 @@ import { Doom } from './doom'
 import { doomsdayProgram } from './doomsday'
 import { JobPalette } from './palette'
 import { Chess } from './chess'
-import { CyberspaceChessMultiplayer, PartyKitChessMultiplayer } from './chess/multiplayer'
+import { PartyKitChessMultiplayer } from './chess/multiplayer'
 import { Launcher, launchables } from './launcher'
 import { NoticeBar } from './bar'
 import { saverPrefs } from './prefs'
@@ -51,15 +51,6 @@ const api = new ApiClient(API_URL, {
   get: () => localStorage.getItem('csterm.auth'),
   set: v => (v ? localStorage.setItem('csterm.auth', v) : localStorage.removeItem('csterm.auth')),
 })
-const chessDemoIdentity = (() => {
-  const requested = import.meta.env.DEV
-    ? new URLSearchParams(window.location.search).get('chessDemoUser')
-    : null
-  const slug = requested?.toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 32)
-  if (!slug) return null
-  const name = slug.replace(/[_-]+/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase())
-  return { userId: `demo:${slug}`, displayName: `Demo ${name}` }
-})()
 // The home's master key, beside the refresh token: the same trust boundary.
 const homeKey = new HomeKey({
   get: () => localStorage.getItem('csterm.homekey'),
@@ -337,6 +328,14 @@ async function launchProgram(p: Proc): Promise<number> {
 }
 
 /** screensaver(1): the picker. Keys reach it through the overlay route, not the pty. */
+async function chessProgram(p: Proc): Promise<number> {
+  if (!p.tty) { p.err('chess: not a tty\n'); return 1 }
+  if (!chess || chess.open || grid.locked) { p.err('chess: screen busy\n'); return 1 }
+  await waitForDrain()
+  await chess.play()
+  return 0
+}
+
 async function screensaverProgram(p: Proc): Promise<number> {
   if (!p.tty) { p.err('screensaver: not a tty\n'); return 1 }
   await waitForDrain()
@@ -449,16 +448,15 @@ const program = {
     saver = new Screensaver(s, snd, () => halted || !live)
     doom = new Doom(s, snd, waitForDrain)
     launcher = new Launcher(s, snd)
-    chess = new Chess(s, snd, new PartyKitChessMultiplayer(new CyberspaceChessMultiplayer(api), {
-      baseUrl: import.meta.env.VITE_CHESS_PARTYKIT_URL ?? (import.meta.env.DEV ? window.location.origin : 'http://localhost:1999'),
-      userId: () => chessDemoIdentity?.userId ?? api.userId,
-      profile: () => chessDemoIdentity ?? (api.userId
+    chess = new Chess(s, snd, new PartyKitChessMultiplayer({
+      // Dev goes through the Vite proxy to `wrangler dev` of the world Worker on port 1999.
+      baseUrl: import.meta.env.DEV ? window.location.origin : 'https://world.cyberspace.online',
+      token: () => api.token(),
+      profile: () => (api.userId
         ? { userId: api.userId, username: api.username ?? undefined, displayName: api.username ?? undefined }
         : null),
     }), invite => {
-      const from = invite.fromUserId.startsWith('demo:')
-        ? `Demo ${invite.fromUserId.slice(5).replace(/[_-]+/g, ' ')}`
-        : invite.fromUserId
+      const from = invite.fromName || invite.fromUserId
       bar.show({
         text: `${from} wants to play Chess`,
         line: 'chess',
@@ -494,7 +492,7 @@ const program = {
       snd,
       host: {
         shutdown: shutdownProgram, reboot: rebootProgram, reset: resetProgram, screensaver: screensaverProgram,
-        doom: p => doom!.run(p), config: configProgram, launch: launchProgram,
+        doom: p => doom!.run(p), chess: chessProgram, config: configProgram, launch: launchProgram,
         doomsday: doomsdayProgram({ screen: s, snd, tx, drained: waitForDrain, reboot: coldReboot }),
       },
       // Image decoding is faceplate-only, and the metrics depend on the font

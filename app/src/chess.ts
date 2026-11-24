@@ -7,30 +7,33 @@
 // The player is white and the machine is black. Arrow keys move a cursor over
 // the board, Enter picks up a piece, and the squares the piece can reach are
 // marked. Enter on a marked square plays the move. The rules live in
-// chess/rules.ts and the Stockfish bridge in chess/stockfish.ts; this file
+// chess/rules.ts and the machine player in chess/engine.ts; this file
 // turns keys into moves and moves into cells.
 
 import type { CrtScreen } from '@cyberspace/crt'
 import type { Sound } from '@cyberspace/crt/audio'
 import { RENDER } from '@cyberspace/crt/config'
 import {
-  BG, BOLD, BRIGHT, DIM, MUTED, NORMAL, ScreenStack, SelectPopup, clear, frame,
-  shadow, type Grid, type KeyInput, type Rect, type Screen,
+  BG, BOLD, BRIGHT, DIM, FAINT, MUTED, NORMAL, InputLine, ScreenStack, SelectPopup, clear, drawLog, frame,
+  cells, hangingWrap, shadow, type Grid, type KeyInput, type LogLine, type Rect, type Screen, type Span,
 } from '@cyberspace/tui'
 import { grid } from './grid'
 import type { Overlay } from './input'
 import {
   applyMove, getMoves, getPiece, isCheck, newChessState,
-  resultOf, sameSquare,
+  resultOf, sameSquare, timeoutResult,
   type Color, type GameResult, type Move, type Piece, type Square,
 } from './chess/rules'
-import { StockfishEngine } from './chess/stockfish'
+import { TIME_CONTROLS, formatClock, remaining, switchClock, timeLabel, type Clock } from './chess/clock'
+import { ChessEngine } from './chess/engine'
 import {
   PendingChessMultiplayer,
   type ChessInvite,
   type ChessMultiplayerGame,
   type ChessMultiplayerTransport,
+  type ChatLine,
   type ChessRoomEvent,
+  type LobbyView,
   type MultiplayerFriend,
 } from './chess/multiplayer'
 import chessLogoUrl from './chess/assets/chess-logo.png?url'
@@ -47,11 +50,17 @@ import pawnSvg from './chess/svg/pawn.svg?raw'
 import queenSvg from './chess/svg/queen.svg?raw'
 import rookSvg from './chess/svg/rook.svg?raw'
 
-type Mode = 'menu' | 'board'
+type Mode = 'menu' | 'lobby' | 'board'
 
 const MENU = ['Play with Machine', 'Play with someone']
 const COLOR_MENU = ['Random', 'White', 'Black']
+/** Index + 1 is the js-chess-engine level. */
+const LEVEL_MENU = ['Easy', 'Medium', 'Hard', 'Expert', 'Master']
 const MACHINE_DELAY = 350
+/** Characters per chat line, about five rows of the side panel. The chess room cuts at the same length. */
+const CHAT_MAX = 120
+/** Chat lines kept for a game. The lobby keeps its own 50 on the server. */
+const GAME_CHAT = 50
 type PieceArt = `${Piece['color']}-${Piece['kind']}`
 type ArtName = 'logo' | PieceArt
 type PieceStyle = 'solid' | 'outline'
@@ -78,6 +87,8 @@ export class Chess implements Overlay, Screen {
   private mode: Mode = 'menu'
   private menuIndex = 0
   private playerColor: Color = 'white'
+  /** js-chess-engine level, 1 to 5. Kept for the session so the picker reopens on the last choice. */
+  private level = 3
   private gameMode: 'machine' | 'multiplayer' = 'machine'
   private multiplayerGame: ChessMultiplayerGame | null = null
   private stopWatchingMultiplayer: (() => void) | null = null
@@ -94,12 +105,34 @@ export class Chess implements Overlay, Screen {
   private cursor: Square = { row: 6, col: 4 }
   private selected: Square | null = null
   private moves: Move[] = []
+  /** Where the machine's last move landed, filled FAINT. Cleared by the player's next move. */
+  private lastMachineMove: Square | null = null
   private thinking = false
-  private engine: StockfishEngine | null = null
+  private engine: ChessEngine | null = null
   private machineRequest = 0
   private timer: ReturnType<typeof setTimeout> | null = null
+  /** Time control for the next game, ms per side. Kept for the session. */
+  private timeMs = 0
+  private clock: Clock | null = null
+  /** A result the board cannot show: a loss on time. Null while the position decides. */
+  private override: GameResult | null = null
+  private ticker: ReturnType<typeof setInterval> | null = null
+  /** Clock text at the last paint, so the ticker paints only when a digit changes. */
+  private clockShown = ''
+  /** Where the last board draw put the clock text, so the ticker can rewrite those cells alone. */
+  private clockSlots: { x: number; y: number; w: number; text: () => string; attr: () => number }[] = []
+  private waitingCard: ChessCard | null = null
   private note = ''
   private art: Partial<Record<ArtName, ImageBitmap>> = {}
+  private lobby: LobbyView = { users: [], chat: [], status: '' }
+  private lobbyIndex = 0
+  private stopWatchingLobby: (() => void) | null = null
+  private gameChat: ChatLine[] = []
+  /** Set by draw: the chat line is on screen and InputLine.draw has placed term.cx/cy on its caret. */
+  private inputShown = false
+  /** False while a card or popup is stacked above. */
+  private active = true
+  private readonly chatInput = new InputLine({ prompt: '> ', maxLength: CHAT_MAX, placeholder: 'chat', onReject: () => this.snd.beep(220, 0.04) })
   private artLoading = false
   private artLoaded = false
 
@@ -111,6 +144,16 @@ export class Chess implements Overlay, Screen {
   ) {
     this.multiplayer.watchInvites(invite => this.receiveInvite(invite))
     this.multiplayer.watchInviteResults(invite => this.handleInviteResult(invite))
+  }
+
+  /** Resolves the pending play() when the game screen closes. */
+  private onClosed: (() => void) | null = null
+
+  /** chess(1): opens the title card and resolves when Chess closes. */
+  play(): Promise<void> {
+    this.start()
+    if (!this.open) return Promise.resolve()
+    return new Promise(resolve => { this.onClosed = resolve })
   }
 
   get open(): boolean {
@@ -130,6 +173,8 @@ export class Chess implements Overlay, Screen {
     this.note = ''
     this.snd.tick()
     this.stack.push(this)
+    this.ticker ??= setInterval(() => this.tickClock(), 50)
+    this.multiplayer.online?.()
     const pending = this.pendingInvites.values().next().value as ChessInvite | undefined
     if (pending) {
       this.pendingInvites.delete(pending.inviteId)
@@ -160,15 +205,31 @@ export class Chess implements Overlay, Screen {
   onKey(e: KeyInput): boolean {
     if (e.metaKey || e.ctrlKey || e.altKey) return false
     if (this.mode === 'menu') return this.menuKey(e)
+    if (this.mode === 'lobby') return this.lobbyKey(e)
     return this.boardKey(e)
   }
 
   draw(term: Grid): void {
     clear(term, { x: 0, y: 0, w: term.cols, h: term.rows })
-    if (this.mode !== 'board') this.drawMenu(term)
-    else this.drawBoard(term)
-    term.showCursor = false
+    this.inputShown = false
+    if (this.mode === 'lobby') this.drawLobby(term)
+    else if (this.mode !== 'board') this.drawMenu(term)
+    else {
+      this.drawBoard(term)
+      this.writeClocks(term)
+    }
+    this.syncCursor()
     term.dirty = true
+  }
+
+  setActive(active: boolean): void {
+    this.active = active
+    this.syncCursor()
+  }
+
+  /** The CRT's blinking block cursor shows on the chat line only. The screen loop copies RENDER.cursor to term.showCursor every frame. */
+  private syncCursor(): void {
+    RENDER.cursor = this.open && this.active && this.inputShown
   }
 
   private menuKey(e: KeyInput): boolean {
@@ -187,14 +248,84 @@ export class Chess implements Overlay, Screen {
       this.openColorPicker()
       return true
     }
-    this.openPlayerPicker()
+    if (this.multiplayer.signedIn?.() === false) {
+      const back = () => {
+        this.stack?.pop()
+        this.repaint()
+      }
+      this.stack?.push(new ChessCard(this.snd, 'MULTIPLAYER', 'Log in first', ['Back'], 0, back, back))
+      return true
+    }
+    this.enterLobby()
     return true
   }
 
-  private boardKey(e: KeyInput): boolean {
+  private lobbyKey(e: KeyInput): boolean {
     if (e.key === 'Escape') {
+      if (this.chatInput.value) this.chatInput.clear()
+      else this.leaveLobby()
+      this.repaint()
+      return true
+    }
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      const count = this.lobby.users.length
+      if (!count) {
+        this.snd.beep(220, 0.04)
+        return true
+      }
+      const next = this.lobbyIndex + (e.key === 'ArrowUp' ? -1 : 1)
+      if (next < 0 || next >= count) this.snd.beep(220, 0.04)
+      else {
+        this.lobbyIndex = next
+        this.snd.tick()
+      }
+      this.repaint()
+      return true
+    }
+    if (e.key === 'Enter') {
+      const text = this.chatInput.value.trim()
+      if (text && this.lobby.status) {
+        this.snd.beep(220, 0.04)
+        return true
+      }
+      if (text) {
+        this.multiplayer.sendLobbyChat?.(text)
+        this.chatInput.clear()
+        this.repaint()
+        return true
+      }
+      const user = this.lobby.users[this.lobbyIndex]
+      if (!user) this.snd.beep(220, 0.04)
+      else this.openTimePicker('TIME', ms => this.sendMultiplayerInvite(user, ms), () => this.repaint())
+      return true
+    }
+    const handled = this.chatInput.onKey(e)
+    if (handled) this.repaint()
+    return handled
+  }
+
+  private boardKey(e: KeyInput): boolean {
+    const chatting = this.gameMode === 'multiplayer'
+    if (e.key === 'Escape') {
+      if (chatting && this.chatInput.value) {
+        this.chatInput.clear()
+        this.repaint()
+        return true
+      }
       this.openQuitConfirmation()
       return true
+    }
+    if (chatting && e.key === 'Enter' && this.chatInput.value.trim()) {
+      this.multiplayerGame?.sendChat(this.chatInput.value.trim())
+      this.chatInput.clear()
+      this.repaint()
+      return true
+    }
+    // Arrows stay with the board cursor; the chat line takes text and Backspace.
+    if (chatting && (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Delete')) {
+      const handled = this.chatInput.onKey(e)
+      if (handled) this.repaint()
+      return handled
     }
     if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       this.moveCursor(e.key)
@@ -224,7 +355,7 @@ export class Chess implements Overlay, Screen {
   }
 
   private chooseSquare(): void {
-    if (this.thinking || resultOf(this.state).over) {
+    if (this.thinking || this.result().over) {
       this.snd.beep(220, 0.04)
       return
     }
@@ -264,6 +395,82 @@ export class Chess implements Overlay, Screen {
     this.moves = []
   }
 
+  private result(): GameResult {
+    return this.override ?? resultOf(this.state)
+  }
+
+  /** Runs every 50 ms while Chess is open: flags a machine game, rewrites the clock cells when a digit changes. */
+  private tickClock(): void {
+    if (this.mode !== 'board' || !this.clock?.running) return
+    const running = this.clock.running
+    // Online, the server flags and sends the result; the client only shows 0.0.
+    if (this.gameMode === 'machine' && remaining(this.clock, running) <= 0) {
+      this.clock = switchClock(this.clock, null)
+      this.override = timeoutResult(this.state, running)
+      this.stopMachine()
+      this.note = this.override.text
+      this.snd.beep(330, 0.2)
+      this.showEndgame(this.override)
+      return
+    }
+    if (this.clockText() !== this.clockShown) this.paintClocks()
+  }
+
+  /** Rewrites only the clock cells. A full repaint redraws every piece and is too slow at 10 per second. */
+  private paintClocks(): void {
+    if (!this.open || this.stack?.top !== this || this.mode !== 'board') return
+    const term = this.screen.term as unknown as Grid
+    this.writeClocks(term)
+    term.dirty = true
+  }
+
+  private writeClocks(term: Grid): void {
+    for (const slot of this.clockSlots) {
+      for (let i = 0; i < slot.w; i++) term.put(slot.x + i, slot.y, ' ')
+      term.text(slot.x, slot.y, slot.text().slice(0, slot.w), slot.attr())
+    }
+    this.clockShown = this.clockText()
+  }
+
+  private clockText(): string {
+    if (!this.clock) return ''
+    return `${formatClock(remaining(this.clock, 'white'))} ${formatClock(remaining(this.clock, 'black'))}`
+  }
+
+  /** After a move in a machine game: stop the mover, start the side to move, or stop both at the end. */
+  private passClock(): void {
+    if (this.clock) this.clock = switchClock(this.clock, this.result().over ? null : this.state.turn)
+  }
+
+  private openTimePicker(title: string, onPick: (ms: number) => void, onCancel: () => void): void {
+    if (!this.stack) return
+    this.stack.push(new SelectPopup({
+      title,
+      items: TIME_CONTROLS.map(t => t.label),
+      selected: Math.max(0, TIME_CONTROLS.findIndex(t => t.ms === this.timeMs)),
+      shadow: true,
+      onFeedback: kind => {
+        if (kind === 'move') this.snd.tick()
+        else if (kind === 'edge') this.snd.beep(220, 0.04)
+        else if (kind === 'cancel') this.snd.blip(420, 0.09, 0)
+      },
+      onDone: (item, index) => {
+        this.stack?.pop()
+        if (item === null) {
+          onCancel()
+          return
+        }
+        this.timeMs = TIME_CONTROLS[index]!.ms
+        onPick(this.timeMs)
+      },
+    }))
+  }
+
+  private dismissWaiting(): void {
+    if (this.waitingCard && this.stack?.top === this.waitingCard) this.stack.pop()
+    this.waitingCard = null
+  }
+
   private openColorPicker(): void {
     if (!this.stack) return
     this.stack.push(new SelectPopup({
@@ -285,56 +492,58 @@ export class Chess implements Overlay, Screen {
         this.playerColor = index === 0
           ? (Math.random() < 0.5 ? 'white' : 'black')
           : index === 1 ? 'white' : 'black'
-        this.newGame()
+        this.openLevelPicker()
       },
     }))
   }
 
-  private openPlayerPicker(): void {
+  private openLevelPicker(): void {
     if (!this.stack) return
-    let loading!: ChessCard
-    const back = () => {
-      this.stack?.pop()
-      this.repaint()
-    }
-    loading = new ChessCard(this.snd, 'MULTIPLAYER', 'Loading your friends...', ['Back'], 0, back, back)
-    this.stack.push(loading)
-    void this.multiplayer.listFriends().then(friends => {
-      if (!this.open || this.stack?.top !== loading) return
-      this.stack.pop()
-      const named = friends.filter(friend => friend.username || friend.displayName)
-      if (!named.length) {
-        this.stack.push(new FollowersCard(this.snd, back))
-        return
-      }
-      this.stack.push(new SelectPopup({
-        title: 'Your friends:',
-        items: named.map(friend => friend.displayName ?? friend.username ?? ''),
-        selected: 0,
-        shadow: true,
-        onFeedback: kind => {
-          if (kind === 'move') this.snd.tick()
-          else if (kind === 'edge') this.snd.beep(220, 0.04)
-          else if (kind === 'cancel') this.snd.blip(420, 0.09, 0)
-        },
-        onDone: (_item, index) => {
-          this.stack?.pop()
-          const friend = named[index]
-          if (!friend) {
-            this.repaint()
-            return
-          }
-          this.sendMultiplayerInvite(friend)
-        },
-      }))
-    }).catch(() => {
-      if (!this.open || this.stack?.top !== loading) return
-      this.stack.pop()
-      this.stack.push(new FollowersCard(this.snd, back))
-    })
+    this.stack.push(new SelectPopup({
+      title: 'DIFFICULTY',
+      items: LEVEL_MENU,
+      selected: this.level - 1,
+      shadow: true,
+      onFeedback: kind => {
+        if (kind === 'move') this.snd.tick()
+        else if (kind === 'edge') this.snd.beep(220, 0.04)
+        else if (kind === 'cancel') this.snd.blip(420, 0.09, 0)
+      },
+      onDone: (item, index) => {
+        this.stack?.pop()
+        if (item === null) {
+          this.openColorPicker()
+          return
+        }
+        this.level = index + 1
+        this.openTimePicker('TIME', () => this.newGame(), () => this.openLevelPicker())
+      },
+    }))
   }
 
-  private sendMultiplayerInvite(friend: MultiplayerFriend): void {
+  private enterLobby(): void {
+    this.mode = 'lobby'
+    this.chatInput.clear()
+    this.multiplayer.online?.()
+    this.stopWatchingLobby?.()
+    this.stopWatchingLobby = this.multiplayer.watchLobby?.(view => {
+      this.lobby = view
+      this.lobbyIndex = Math.max(0, Math.min(this.lobbyIndex, view.users.length - 1))
+      this.repaint()
+    }) ?? null
+    this.snd.tick()
+    this.repaint()
+  }
+
+  private leaveLobby(): void {
+    this.stopWatchingLobby?.()
+    this.stopWatchingLobby = null
+    this.chatInput.clear()
+    this.mode = 'menu'
+    this.snd.blip(420, 0.09, 0)
+  }
+
+  private sendMultiplayerInvite(friend: MultiplayerFriend, timeMs: number): void {
     let card!: ChessCard
     const cancel = () => {
       this.stack?.pop()
@@ -344,21 +553,30 @@ export class Chess implements Overlay, Screen {
       this.stack?.pop()
       this.repaint()
     }
-    card = new ChessCard(this.snd, 'MULTIPLAYER', `Invite ${friend.displayName ?? friend.username ?? 'follower'}?`, ['Send', 'Back'], 0, action => {
+    const name = friend.displayName ?? friend.username ?? friend.userId
+    card = new ChessCard(this.snd, 'CHALLENGE', `Challenge ${name}? ${timeLabel(timeMs)}`, ['Send', 'Back'], 0, action => {
       if (action === 'Back') {
         cancel()
         return
       }
-      void this.multiplayer.sendInvite(friend.userId, 'random').then(invite => this.multiplayer.openGame(invite).then(game => ({ invite, game }))).then(({ invite, game }) => {
+      void this.multiplayer.sendInvite(friend.userId, 'random', timeMs).then(invite => this.multiplayer.openGame(invite).then(game => ({ invite, game }))).then(({ invite, game }) => {
         if (!this.open || this.stack?.top !== card) return
         this.stack.pop()
         this.activeInvite = invite
-        this.activeOpponentName = friend.displayName ?? friend.username ?? friend.userId
+        this.activeOpponentName = name
         this.startMultiplayerGame(game)
+        // Until the other player joins: dismissed by the first active snapshot, a decline, or Cancel.
+        const cancel = () => {
+          this.waitingCard = null
+          this.stack?.pop()
+          this.toMenu()
+        }
+        this.waitingCard = new ChessCard(this.snd, 'CHALLENGE', `Waiting for ${name} to accept`, ['Cancel'], 0, cancel, cancel)
+        this.stack.push(this.waitingCard)
       }).catch(() => {
         if (!this.open || this.stack?.top !== card) return
         this.stack.pop()
-        this.stack.push(new ChessCard(this.snd, 'MULTIPLAYER', 'Could not reach that player. Make sure they are online.', ['Back'], 0, closeCard, closeCard))
+        this.stack.push(new ChessCard(this.snd, 'MULTIPLAYER', 'Player offline', ['Back'], 0, closeCard, closeCard))
       })
     }, cancel)
     this.stack?.push(card)
@@ -393,11 +611,11 @@ export class Chess implements Overlay, Screen {
             this.stack?.pop()
             this.repaint()
           }
-          this.stack?.push(new ChessCard(this.snd, 'CHESS INVITE', 'This invite is no longer available.', ['Back'], 0, back, back))
+          this.stack?.push(new ChessCard(this.snd, 'CHESS INVITE', 'Invite expired', ['Back'], 0, back, back))
         }
       }).finally(() => this.incomingInviteIds.delete(invite.inviteId))
     }
-    card = new ChessCard(this.snd, 'CHESS INVITE', `${from} wants to play.`, ['Accept', 'Decline'], 0,
+    card = new ChessCard(this.snd, 'CHALLENGE', `${from} wants to play. ${timeLabel(invite.timeMs ?? 0)}`, ['Accept', 'Decline'], 0,
       option => respond(option === 'Accept'),
       () => respond(false))
     this.stack?.push(card)
@@ -405,11 +623,12 @@ export class Chess implements Overlay, Screen {
 
   private handleInviteResult(invite: ChessInvite): void {
     if (invite.status !== 'declined' || this.activeInvite?.inviteId !== invite.inviteId || !this.multiplayerGame) return
+    this.dismissWaiting()
     // A declined request ends the inviter's waiting game instead of leaving it stalled.
     this.closeMultiplayerGame()
     this.activeInvite = null
     this.gameMode = 'machine'
-    this.mode = 'menu'
+    this.enterLobby()
     this.thinking = false
     this.clearSelection()
     const opponent = this.activeOpponentName || invite.toUserId
@@ -420,24 +639,31 @@ export class Chess implements Overlay, Screen {
       this.stack?.pop()
       this.repaint()
     }
-    card = new ChessCard(this.snd, 'INVITE DECLINED', `${opponent} has declined your request to play Chess.`, ['Back'], 0, close, close)
+    card = new ChessCard(this.snd, 'INVITE DECLINED', `${opponent} declined`, ['Back'], 0, close, close)
     this.stack?.push(card)
   }
 
   private handleRoomEvent(event: ChessRoomEvent): void {
     if (!this.multiplayerGame) return
+    if (event.type === 'chat' || event.type === 'notice') {
+      const line = event.type === 'chat' ? event.line : { userId: '', userName: '', text: event.text, at: Date.now() }
+      this.gameChat = [...this.gameChat, line].slice(-GAME_CHAT)
+      if (event.type === 'chat') this.snd.blip(1800, 0.02, 0)
+      this.repaint()
+      return
+    }
     if (event.type === 'left') {
       const name = event.userName || event.userId
       this.closeMultiplayerGame()
       this.activeInvite = null
       this.activeOpponentName = ''
       this.gameMode = 'machine'
-      this.mode = 'menu'
+      this.enterLobby()
       this.thinking = false
       this.clearSelection()
       while (this.stack?.top && this.stack.top !== this) this.stack.pop()
       this.repaint()
-      this.showRoomNotice('ROOM CLOSED', `${name} left the room.`)
+      this.showRoomNotice('ROOM CLOSED', `${name} left`)
       return
     }
     if (event.type === 'rematch-request') {
@@ -461,12 +687,12 @@ export class Chess implements Overlay, Screen {
     this.activeInvite = null
     this.activeOpponentName = ''
     this.gameMode = 'machine'
-    this.mode = 'menu'
+    this.enterLobby()
     this.thinking = false
     this.clearSelection()
     while (this.stack?.top && this.stack.top !== this) this.stack.pop()
     this.repaint()
-    this.showRoomNotice('REMATCH DECLINED', `${name} declined your rematch request.`)
+    this.showRoomNotice('REMATCH DECLINED', `${name} declined the rematch`)
   }
 
   private showRematchRequest(event: Extract<ChessRoomEvent, { type: 'rematch-request' }>): void {
@@ -512,6 +738,7 @@ export class Chess implements Overlay, Screen {
   }
 
   private playMove(move: Move): void {
+    this.ownMoveSound()
     if (this.gameMode === 'multiplayer' && this.multiplayerGame) {
       this.clearSelection()
       this.thinking = true
@@ -526,10 +753,11 @@ export class Chess implements Overlay, Screen {
     }
     this.state = applyMove(this.state, move)
     this.cursor = move.to
+    this.lastMachineMove = null
     this.clearSelection()
-    this.snd.tick()
+    this.passClock()
 
-    const result = resultOf(this.state)
+    const result = this.result()
     if (result.over) {
       this.note = result.text
       this.showEndgame(result)
@@ -553,19 +781,21 @@ export class Chess implements Overlay, Screen {
 
   private async playMachine(request: number): Promise<void> {
     try {
-      this.engine ??= new StockfishEngine()
-      const move = await this.engine.chooseMove(this.state)
+      this.engine ??= new ChessEngine()
+      const move = await this.engine.chooseMove(this.state, this.level)
       if (request !== this.machineRequest || !this.open || this.mode !== 'board') return
       this.thinking = false
       if (!move) {
-        const result = resultOf(this.state)
+        const result = this.result()
         this.note = result.text
         if (result.over) this.showEndgame(result)
       } else {
         this.state = applyMove(this.state, move)
-        this.cursor = move.to
-        this.snd.tick()
-        const result = resultOf(this.state)
+        // The cursor stays where the player left it.
+        this.lastMachineMove = move.to
+        this.theirMoveSound()
+        this.passClock()
+        const result = this.result()
         this.note = result.over ? result.text : ''
         if (result.over) this.showEndgame(result)
       }
@@ -582,6 +812,9 @@ export class Chess implements Overlay, Screen {
     this.stopMachine()
     this.gameMode = 'machine'
     this.state = newChessState()
+    this.override = null
+    this.lastMachineMove = null
+    this.clock = this.timeMs ? { white: this.timeMs, black: this.timeMs, running: 'white', at: performance.now() } : null
     this.cursor = { row: this.playerColor === 'white' ? 6 : 1, col: 4 }
     this.clearSelection()
     this.thinking = false
@@ -598,6 +831,8 @@ export class Chess implements Overlay, Screen {
     this.closeMultiplayerGame()
     this.multiplayerGame = game
     this.gameMode = 'multiplayer'
+    this.clock = null
+    this.override = null
     this.whitePlayerName = 'White'
     this.blackPlayerName = 'Black'
     this.mode = 'board'
@@ -605,9 +840,20 @@ export class Chess implements Overlay, Screen {
     this.endgameShown = false
     this.cursor = { row: 6, col: 4 }
     this.stopWatchingRoom = game.watchRoomEvents(event => this.handleRoomEvent(event))
+    let revision = game.snapshot.revision
+    this.gameChat = []
+    this.chatInput.clear()
+    this.multiplayer.setPlaying?.(true)
     this.stopWatchingMultiplayer = game.watch(snapshot => {
       if (this.multiplayerGame !== game) return
+      // A new revision with the turn back on this side is the opponent's move.
+      if (snapshot.revision > revision && snapshot.state.turn === (snapshot.playerColor ?? game.playerColor)) this.theirMoveSound()
+      revision = snapshot.revision
       this.state = snapshot.state
+      this.clock = snapshot.clock ? { ...snapshot.clock, at: performance.now() } : null
+      // The server's result covers a loss on time, which the position alone cannot show.
+      this.override = snapshot.status === 'finished' && snapshot.result ? { over: true, text: snapshot.result } : null
+      if (snapshot.status !== 'waiting') this.dismissWaiting()
       this.whitePlayerName = snapshot.whiteName ?? this.whitePlayerName
       this.blackPlayerName = snapshot.blackName ?? this.blackPlayerName
       this.playerColor = snapshot.playerColor ?? game.playerColor
@@ -619,7 +865,7 @@ export class Chess implements Overlay, Screen {
         : snapshot.status === 'active' && snapshot.state.turn !== this.playerColor
           ? `${shortPlayerName(opponentName)} is thinking...`
           : ''
-      const result = resultOf(snapshot.state)
+      const result = this.result()
       if (result.over && !this.endgameShown) {
         this.note = result.text
         this.showEndgame(result)
@@ -630,7 +876,19 @@ export class Chess implements Overlay, Screen {
     this.repaint()
   }
 
+  // Square-wave beeps, not blips: blip shares the cursor tick's voice at 0.04 gain and is dropped within BLIP_MS of another blip.
+  /** 880 Hz, 60 ms. The cursor tick is a 2500 Hz blip. */
+  private ownMoveSound(): void {
+    this.snd.beep(880, 0.06)
+  }
+
+  /** 440 Hz, 90 ms: an octave below the operator's own move and longer. */
+  private theirMoveSound(): void {
+    this.snd.beep(440, 0.09)
+  }
+
   private toMenu(): void {
+    const wasOnline = this.gameMode === 'multiplayer'
     this.closeMultiplayerGame(true)
     this.stopMachine()
     this.activeInvite = null
@@ -642,16 +900,23 @@ export class Chess implements Overlay, Screen {
     this.note = ''
     this.menuIndex = 0
     this.snd.blip(420, 0.09, 0)
+    if (wasOnline) this.enterLobby()
     this.repaint()
   }
 
   private close(): void {
+    if (this.ticker) clearInterval(this.ticker)
+    this.ticker = null
+    this.stopWatchingLobby?.()
+    this.stopWatchingLobby = null
     this.closeMultiplayerGame()
     this.stopMachine()
     while (this.stack?.active) this.stack.pop()
     grid.unlock()
     RENDER.cursor = this.cursorWas
     this.snd.blip(420, 0.09, 0)
+    this.onClosed?.()
+    this.onClosed = null
   }
 
   private stopTimer(): void {
@@ -668,6 +933,7 @@ export class Chess implements Overlay, Screen {
   }
 
   private closeMultiplayerGame(notifyLeave = false): void {
+    if (this.multiplayerGame) this.multiplayer.setPlaying?.(false)
     this.stopWatchingMultiplayer?.()
     this.stopWatchingMultiplayer = null
     this.stopWatchingRoom?.()
@@ -730,11 +996,59 @@ export class Chess implements Overlay, Screen {
       frame(term, button, selected ? BOLD | BRIGHT : MUTED)
       if (selected) {
         for (let x = button.x + 1; x < button.x + button.w - 1; x++) {
-          term.put(x, button.y + 1, ' ', BOLD | BRIGHT, 1)
+          term.put(x, button.y + 1, ' ', DIM | BOLD, 1)
         }
       }
-      term.text(button.x + 2, button.y + 1, label, selected ? BOLD | BRIGHT : MUTED, selected ? 1 : 0)
+      term.text(button.x + 2, button.y + 1, label, selected ? DIM | BOLD : MUTED, selected ? 1 : 0)
     })
+    footer(term, [cap(ARROWS, 'Select'), cap('↵', 'Choose'), cap('ESC', 'Exit')])
+  }
+
+  private drawLobby(term: Grid): void {
+    center(term, 1, 'CHESS LOBBY', BOLD | BRIGHT)
+    const top = 3
+    const inputY = term.rows - 4
+    const narrow = term.cols < 60
+    const listW = narrow ? term.cols - 4 : Math.min(28, Math.floor(term.cols / 3))
+    const listH = narrow ? Math.min(6, Math.max(1, this.lobby.users.length)) : inputY - top - 1
+    const list: Rect = { x: 2, y: top + 2, w: listW, h: listH }
+    const chatX = narrow ? 2 : list.x + list.w + 3
+    const chatTop = narrow ? list.y + list.h + 1 : top
+    const chat: Rect = { x: chatX, y: chatTop + 2, w: term.cols - chatX - 2, h: Math.max(1, inputY - chatTop - 3) }
+
+    term.text(2, top, 'PLAYERS', BOLD | BRIGHT)
+    if (this.lobby.status) term.text(list.x, list.y, this.lobby.status.slice(0, list.w), MUTED)
+    else if (!this.lobby.users.length) term.text(list.x, list.y, 'Nobody else here'.slice(0, list.w), MUTED)
+    const first = Math.max(0, Math.min(this.lobbyIndex - list.h + 1, this.lobby.users.length - list.h))
+    this.lobby.users.slice(first, first + list.h).forEach((user, i) => {
+      const on = first + i === this.lobbyIndex
+      const tag = user.status === 'playing' ? 'playing' : ''
+      const name = (user.displayName ?? user.username ?? user.userId).slice(0, Math.max(1, list.w - tag.length - 2))
+      const row = ` ${name}`.padEnd(list.w - tag.length - 1) + tag + ' '
+      // DIM inverse with BOLD text, as SelectPopup marks its selected row.
+      term.text(list.x, list.y + i, row.slice(0, list.w), on ? DIM | BOLD : tag ? MUTED : NORMAL, on ? 1 : 0)
+    })
+
+    term.text(chatX, chatTop, 'CHAT', BOLD | BRIGHT)
+    drawLog(term, chat, chatLog(this.lobby.chat, this.lobby.me, chat.w))
+    this.chatInput.draw(term, { x: chatX, y: inputY, w: chat.w, h: 1 })
+    this.inputShown = true
+    footer(term, this.chatInput.value
+      ? [cap('↵', 'Send'), cap('ESC', 'Clear')]
+      : [cap(ARROWS, 'Select'), cap('↵', 'Challenge'), cap('ESC', 'Back')])
+  }
+
+  /** In-game chat: log above the input line, both inside `r`. With one row, only the input line. */
+  private drawGameChat(term: Grid, r: Rect): void {
+    if (r.h < 1 || r.w < 8) return
+    this.inputShown = true
+    if (r.h === 1) {
+      this.chatInput.draw(term, r)
+      return
+    }
+    const me = this.playerColor === 'white' ? this.multiplayerGame?.snapshot.whiteUserId : this.multiplayerGame?.snapshot.blackUserId
+    drawLog(term, { ...r, h: r.h - 1 }, chatLog(this.gameChat, me, r.w))
+    this.chatInput.draw(term, { x: r.x, y: r.y + r.h - 1, w: r.w, h: 1 })
   }
 
   private drawLogo(term: Grid, y: number, logoWidth: number, logoHeight: number): void {
@@ -773,7 +1087,7 @@ export class Chess implements Overlay, Screen {
     const filesY = board.y + board.h
     const statusY = filesY + 2
     const title = this.gameMode === 'multiplayer'
-      ? `${shortPlayerName(this.whitePlayerName)} x ${shortPlayerName(this.blackPlayerName)}`
+      ? `${shortPlayerName(this.whitePlayerName)} vs. ${shortPlayerName(this.blackPlayerName)}`
       : 'CHESS'
     center(term, wide ? board.y - 1 : 1, title, BOLD | BRIGHT)
 
@@ -792,76 +1106,85 @@ export class Chess implements Overlay, Screen {
     }
     for (let col = 0; col < 8; col++) {
       const centerX = innerX + col * squareW + Math.floor((squareW - 1) / 2)
-      term.put(centerX, filesY, 'abcdefgh'[this.playerColor === 'white' ? col : 7 - col]!, MUTED)
+      term.put(centerX, filesY, 'ABCDEFGH'[this.playerColor === 'white' ? col : 7 - col]!, MUTED)
     }
 
-    const result = resultOf(this.state)
+    const result = this.result()
+    this.clockSlots = []
     if (wide) {
-      this.drawControls(term, margin, board.y + 1, panelW)
       this.drawStatus(term, board.x + board.w + gap, board.y + 1, panelW, result)
+      // Online, the left panel is chat and the controls move to one hint row: beside a 2-row board the controls leave no room for chat.
+      if (this.gameMode === 'multiplayer') {
+        term.text(margin, board.y + 1, 'CHAT', BOLD | BRIGHT)
+        this.drawGameChat(term, { x: margin, y: board.y + 3, w: panelW, h: board.h - 3 })
+      }
+      this.drawBoardFooter(term, result.over)
       return
     }
 
+    if (this.clock) {
+      const line = () => this.clock
+        ? `WHITE ${formatClock(remaining(this.clock, 'white')).padStart(5)}   BLACK ${formatClock(remaining(this.clock, 'black')).padStart(5)}`
+        : ''
+      const w = line().length
+      this.clockSlots.push({ x: Math.max(0, Math.floor((term.cols - w) / 2)), y: 2, w, text: line, attr: () => BOLD })
+    }
     const turn = result.over ? result.text : this.note || `${this.state.turn} to move`
-    center(term, statusY, turn, this.thinking ? MUTED : BOLD)
+    center(term, statusY, `${turn}  (you are ${this.playerColor})`, this.thinking ? MUTED : BOLD)
     if (!result.over && isCheck(this.state, this.state.turn)) {
       center(term, statusY + 1, 'check', BRIGHT)
     }
-    center(term, term.rows - 2, result.over
-      ? 'ESC quit'
-      : 'ARROWS move  ENTER play  ESC quit', MUTED)
+    // Between the status rows and the hint row, input on the last of them.
+    if (this.gameMode === 'multiplayer') {
+      this.drawGameChat(term, { x: 2, y: statusY + 2, w: term.cols - 4, h: term.rows - 3 - (statusY + 2) + 1 })
+    }
+    this.drawBoardFooter(term, result.over)
   }
 
-  private drawControls(term: Grid, x: number, y: number, width: number): void {
-    term.text(x, y, 'CONTROLS', BOLD | BRIGHT)
-    const items = [
-      ['ARROWS', 'Move cursor'],
-      ['ENTER', 'Select / play'],
-      ['ESC', 'Quit'],
-    ]
-    let row = y + 2
-    for (const [key, action] of items) {
-      if (key.length <= width) term.text(x, row, key, BOLD)
-      if (action.length <= width) term.text(x, row + 1, action, MUTED)
-      row += 3
-    }
+  private drawBoardFooter(term: Grid, over: boolean): void {
+    if (this.chatInput.value) footer(term, [cap('↵', 'Send'), cap('ESC', 'Clear')])
+    else if (over) footer(term, [cap('ESC', 'Quit')])
+    else footer(term, [cap(ARROWS, 'Move'), cap('↵', 'Play'), cap('ESC', 'Quit')])
   }
 
   private drawStatus(term: Grid, x: number, y: number, width: number, result: ReturnType<typeof resultOf>): void {
-    term.text(x, y, 'STATUS', BOLD | BRIGHT)
-    let row = y + 2
+    term.text(x, y, 'STATUS', MUTED)
+    let row = y + 1
     const status = result.over ? result.text : this.note || `${this.state.turn} to move`
     row = writeLines(term, x, row, width, status.toUpperCase(), result.over ? BRIGHT : BOLD) + 1
 
-    if (!result.over) {
-      const player = this.playerColor.toUpperCase()
-      if (this.gameMode === 'multiplayer') {
-        term.text(x, row, `${shortPlayerName(this.whitePlayerName)} WHITE`.slice(0, width), MUTED)
-        term.text(x, row + 1, `${shortPlayerName(this.blackPlayerName)} BLACK`.slice(0, width), MUTED)
-      } else {
-        term.text(x, row, `YOU     ${player}`, MUTED)
-        const machine = this.playerColor === 'white' ? 'BLACK' : 'WHITE'
-        term.text(x, row + 1, `MACHINE ${machine}`, MUTED)
-      }
-      row += 3
-    }
     if (!result.over && isCheck(this.state, this.state.turn)) {
       term.text(x, row, 'CHECK', BRIGHT)
+      row += 2
+    }
+    if (this.clock) {
+      term.text(x, row, 'CLOCK', MUTED)
+      for (const color of ['white', 'black'] as const) {
+        row++
+        this.clockSlots.push({
+          x, y: row, w: Math.min(width, 12),
+          text: () => this.clock ? `${color.toUpperCase().padEnd(6)}${formatClock(remaining(this.clock, color)).padStart(6)}` : '',
+          attr: () => this.clock?.running === color ? BOLD | BRIGHT : MUTED,
+        })
+      }
       row += 2
     }
 
     term.text(x, row, 'CURSOR', MUTED)
     term.text(x, row + 1, squareName(this.cursor).toUpperCase(), BOLD)
+    term.text(x, row + 3, `You are ${this.playerColor}`.slice(0, width), MUTED)
   }
 
   private showEndgame(result: GameResult): void {
     if (this.endgameShown) return
     this.endgameShown = true
-    const winner = /^(white|black) wins by checkmate$/.exec(result.text)?.[1] as Color | undefined
-    const title = winner ? 'CHECKMATE' : 'GAME OVER'
+    const match = /^(white|black) wins (by checkmate|on time)$/.exec(result.text)
+    const winner = match?.[1] as Color | undefined
+    const onTime = match?.[2] === 'on time'
+    const title = !winner ? 'GAME OVER' : onTime ? 'TIME' : 'CHECKMATE'
     const winnerName = winner === 'white' ? this.whitePlayerName : winner === 'black' ? this.blackPlayerName : ''
     const message = winner
-      ? `${winnerName} wins by checkmate. ${winner === this.playerColor ? 'You won!' : 'You lost!'}`
+      ? `${winnerName} wins ${match![2]}. ${winner === this.playerColor ? 'You won!' : 'You lost!'}`
       : 'Draw game.'
     const restart = this.gameMode === 'multiplayer' ? () => this.requestRematch() : () => this.newGame()
     this.repaint()
@@ -875,7 +1198,7 @@ export class Chess implements Overlay, Screen {
   private openQuitConfirmation(): void {
     if (!this.stack) return
     const resultCardUnderneath = this.stack.top instanceof ChessCard
-    const resumeMachine = !resultCardUnderneath && this.mode === 'board' && !resultOf(this.state).over && this.state.turn !== this.playerColor
+    const resumeMachine = !resultCardUnderneath && this.mode === 'board' && !this.result().over && this.state.turn !== this.playerColor
     if (resumeMachine) this.stopMachine()
     const resume = () => {
       if (resumeMachine && this.mode === 'board' && this.stack?.top === this) this.startMachine()
@@ -906,27 +1229,32 @@ export class Chess implements Overlay, Screen {
     const selected = !!this.selected && sameSquare(this.selected, square)
     const target = this.moves.find(move => sameSquare(move.to, square))
     const cursor = sameSquare(this.cursor, square)
+    const machineMoved = !!this.lastMachineMove && sameSquare(this.lastMachineMove, square)
     const check = piece?.kind === 'king' && piece.color === this.state.turn && isCheck(this.state, this.state.turn)
 
     const dark = (square.row + square.col) % 2 === 1
-    const focus = selected || cursor || check
     const squareAttr = dark ? BG : NORMAL
-    const highlight = focus ? BOLD | BRIGHT
-      : target ? ((square.row + square.col) % 2 ? DIM : MUTED)
+    // The picked-up piece and a king in check are full bright; the roaming cursor is DIM until Enter picks a piece.
+    const highlight = selected || check ? BOLD | BRIGHT
+      : cursor ? DIM | BOLD
+      : target ? FAINT
+      : machineMoved ? FAINT
       : null
+    // The machine's last piece keeps its normal look on a FAINT field, through the glyph's faint plane rather than inverse.
+    const faintField = machineMoved && highlight === FAINT && !target
+    const marked = highlight !== null && !faintField
     for (let dy = 0; dy < height; dy++) {
       for (let dx = 0; dx < width; dx++) {
-        term.put(x + dx, y + dy, ' ', highlight ?? squareAttr, highlight === null ? 0 : 1)
+        term.put(x + dx, y + dy, ' ', marked ? highlight : squareAttr, marked ? 1 : 0)
       }
     }
-    if (piece) {
-      const image = this.art[`${piece.color}-${piece.kind}`]
-      if (image) {
-        const pieceAttr = highlight ?? (piece.color === 'white' ? BOLD | BRIGHT : DIM)
-        const style = piece.color === 'white' ? 'solid' : 'outline'
-        drawSvg(term, image, x, y, width, height,
-          pieceAttr | (dark ? BG : 0), highlight === null ? 0 : 1, style)
-      }
+    const image = piece ? this.art[`${piece.color}-${piece.kind}`] : undefined
+    if (piece && image) {
+      // On the FAINT field a DIM black piece has too little contrast, so it is drawn bright; the outline style still tells the colours apart.
+      const pieceAttr = marked ? highlight : faintField || piece.color === 'white' ? BOLD | BRIGHT : DIM
+      const style = piece.color === 'white' ? 'solid' : 'outline'
+      drawSvg(term, image, x, y, width, height,
+        pieceAttr | (dark ? BG : 0), marked ? 1 : 0, style, faintField)
     }
 
   }
@@ -947,7 +1275,8 @@ class ChessCard implements Screen {
 
   draw(term: Grid): void {
     const width = Math.max(1, Math.min(38, term.cols - 2))
-    const messageLines = wrapText(this.message, Math.max(1, width - 4))
+    // Border plus two blank columns each side.
+    const messageLines = wrapText(this.message, Math.max(1, width - 6))
     const labels = this.options.map(option => `[ ${option} ]`)
     const horizontal = labels.join('  ').length <= width - 4
     const height = Math.max(1, Math.min(messageLines.length + (horizontal ? 6 : 5 + this.options.length), term.rows - 2))
@@ -961,19 +1290,20 @@ class ChessCard implements Screen {
     clear(term, { x: panel.x + 1, y: panel.y + 1, w: panel.w - 2, h: panel.h - 2 })
     frame(term, panel, NORMAL)
     term.text(panel.x + 2, panel.y, this.title, BOLD | BRIGHT)
-    messageLines.forEach((line, index) => center(term, panel.y + 2 + index, line, BOLD | BRIGHT))
+    // Centred in the panel, not the screen: the panel sits half a column left of screen centre.
+    messageLines.forEach((line, index) => term.text(panel.x + Math.floor((panel.w - line.length) / 2), panel.y + 2 + index, line, BOLD | BRIGHT))
 
     const optionsY = panel.y + 3 + messageLines.length
     if (horizontal) {
       const row = labels.join('  ')
       let x = panel.x + Math.max(1, Math.floor((panel.w - row.length) / 2))
       labels.forEach((label, index) => {
-        term.text(x, optionsY, label, index === this.selected ? BOLD | BRIGHT : MUTED, index === this.selected ? 1 : 0)
+        term.text(x, optionsY, label, index === this.selected ? DIM | BOLD : MUTED, index === this.selected ? 1 : 0)
         x += label.length + 2
       })
     } else {
       labels.forEach((label, index) => {
-        term.text(panel.x + 2, optionsY + index, label, index === this.selected ? BOLD | BRIGHT : MUTED, index === this.selected ? 1 : 0)
+        term.text(panel.x + 2, optionsY + index, label, index === this.selected ? DIM | BOLD : MUTED, index === this.selected ? 1 : 0)
       })
     }
 
@@ -999,41 +1329,6 @@ class ChessCard implements Screen {
       return true
     }
     return false
-  }
-}
-
-class FollowersCard implements Screen {
-  constructor(private snd: Sound, private back: () => void) {}
-
-  draw(term: Grid): void {
-    const width = Math.max(1, Math.min(40, term.cols - 2))
-    const height = Math.max(1, Math.min(14, term.rows - 2))
-    const panel: Rect = {
-      x: Math.max(0, Math.floor((term.cols - width - 1) / 2)),
-      y: Math.max(0, Math.floor((term.rows - height - 1) / 2)),
-      w: width,
-      h: height,
-    }
-    shadow(term, panel)
-    clear(term, { x: panel.x + 1, y: panel.y + 1, w: panel.w - 2, h: panel.h - 2 })
-    frame(term, panel, NORMAL)
-    term.text(panel.x + 2, panel.y, 'Your friends:', BOLD | BRIGHT)
-    center(term, panel.y + Math.floor(panel.h / 2), 'NO API YET', MUTED)
-
-    const button = '[ Back ]'
-    term.text(panel.x + Math.floor((panel.w - button.length) / 2), panel.y + panel.h - 3, button, BOLD | BRIGHT, 1)
-    term.showCursor = false
-    term.dirty = true
-  }
-
-  onKey(e: KeyInput): boolean {
-    if (e.metaKey || e.ctrlKey || e.altKey) return false
-    if (e.key === 'Escape' || e.key === 'Enter') {
-      this.snd.tick()
-      this.back()
-      return true
-    }
-    return ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)
   }
 }
 
@@ -1099,7 +1394,7 @@ function loadArt(name: ArtName): Promise<ImageBitmap | undefined> {
 
 function drawSvg(
   term: Grid, image: ImageBitmap, x: number, y: number, cols: number, rows: number,
-  attr: number, inverse = 0, style: PieceStyle = 'solid',
+  attr: number, inverse = 0, style: PieceStyle = 'solid', faintField = false,
 ): void {
   const surface = term as BitmapGrid
   const font = surface.font
@@ -1121,10 +1416,17 @@ function drawSvg(
     cache.set(key, sprite)
   }
 
+  // Three planes per cell (main, faint, ground; see CellGrid.putGlyph): every pixel the piece leaves unlit shows at FAINT.
+  const full = (1 << font.cellW) - 1
   for (let cy = 0; cy < sprite.rows; cy++) {
     for (let cx = 0; cx < sprite.cols; cx++) {
       const bits = sprite.cells[cy * sprite.cols + cx]
-      if (bits) putGlyph.call(surface, x + cx, y + cy, bits, attr, inverse)
+      if (faintField) {
+        const planes = new Uint16Array(font.cellH * 3)
+        if (bits) planes.set(bits)
+        planes.fill(full, font.cellH, font.cellH * 2)
+        putGlyph.call(surface, x + cx, y + cy, planes, attr, 0)
+      } else if (bits) putGlyph.call(surface, x + cx, y + cy, bits, attr, inverse)
     }
   }
 }
@@ -1201,9 +1503,23 @@ function shortPlayerName(name: string): string {
 }
 
 function inviteFromName(invite: ChessInvite): string {
-  return invite.fromUserId.startsWith('demo:')
-    ? `Demo ${invite.fromUserId.slice(5).replace(/[_-]+/g, ' ')}`
-    : invite.fromUserId
+  return invite.fromName || invite.fromUserId
+}
+
+/**
+ * Chat as log lines wrapped to `width`: the name on its own row (BOLD for this player), the text under it.
+ * Consecutive lines from one sender share the name row. Server notices are MUTED with no name.
+ */
+function chatLog(lines: ChatLine[], me: string | undefined, width: number): LogLine[] {
+  const out: LogLine[] = []
+  let last = ''
+  for (const line of lines) {
+    if (line.userId && line.userId !== last) out.push({ text: line.userName.slice(0, width), attr: line.userId === me ? BOLD | BRIGHT : BOLD })
+    last = line.userId
+    // Cut again on display: the room enforces CHAT_MAX, but a line from an older room or a modified client may not.
+    for (const text of hangingWrap('', line.text.slice(0, CHAT_MAX), width)) out.push({ text, attr: line.userId ? NORMAL : MUTED })
+  }
+  return out
 }
 
 function writeLines(term: Grid, x: number, y: number, width: number, text: string, attr: number): number {
@@ -1227,4 +1543,25 @@ function center(term: Grid, y: number, text: string, attr = NORMAL): void {
   if (y < 0 || y >= term.rows) return
   const x = Math.max(0, Math.floor((term.cols - text.length) / 2))
   term.text(x, y, text, attr)
+}
+
+/** Arrow keycap, as cIRC and feed print it. */
+const ARROWS = '⬆⬇'
+
+/** A key hint group: the key as an inverse DIM keycap, then its word. The style cIRC, feed and browse use on their frames. */
+function cap(key: string, word: string): Span[] {
+  return [{ text: ` ${key} `, inverse: true, attr: DIM }, { text: ` ${word} ` }]
+}
+
+/** Key hints on the bottom row, right-aligned. Groups are dropped from the left until the row fits, as cIRC does. */
+function footer(term: Grid, groups: Span[][]): void {
+  const kept = groups.slice()
+  const width = () => kept.flat().reduce((n, span) => n + cells(span.text), 0)
+  while (kept.length > 1 && width() > term.cols - 2) kept.shift()
+  let x = Math.max(0, term.cols - 1 - width())
+  const y = term.rows - 1
+  for (const span of kept.flat()) {
+    term.text(x, y, span.text, span.attr ?? NORMAL, span.inverse ? 1 : 0)
+    x += cells(span.text)
+  }
 }

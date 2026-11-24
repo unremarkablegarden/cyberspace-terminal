@@ -26,6 +26,7 @@ const PROGRAMS: Launchable[] = [
   { line: 'edit', summary: 'text editor' },
   { line: 'vim', summary: 'text editor' },
   { line: 'doom', summary: 'DOOM (shareware)' },
+  { line: 'chess', summary: 'against the machine or a follower' },
   { line: 'tree', summary: 'the current directory as a tree' },
   { line: 'fortune', summary: 'a fortune cookie' },
   { line: 'changelog', summary: 'release notes' },
