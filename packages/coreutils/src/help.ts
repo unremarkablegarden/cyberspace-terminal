@@ -50,7 +50,7 @@ export const help: Program = async p => {
     'Keys:', '  [UP/DOWN] recall', '  [TAB] complete', '  [CTRL-SHIFT-UP/DOWN] scroll line',
     ...(mac
       ? ['  [SHIFT-FN-UP/DOWN] scroll page', '  [F1] or [CTRL-OPT-1] config', '  [CMD-K] switch job', '  [CMD-I] inbox', '  [CMD-.] escape']
-      : ['  [SHIFT-PGUP/PGDN] scroll page', '  [F1] config', '  [CTRL-K] switch job', '  [CTRL-I] inbox']),
+      : ['  [SHIFT-PGUP/PGDN] scroll page', '  [F1] config', '  [CTRL-K] switch job', '  [CTRL-I] inbox', '  [CTRL-[] escape']),
   ]
   // The key combinations app/src/keys.ts encodes. Off a Mac, ^C stays SIGINT, so copy and cut take Shift.
   const select = [

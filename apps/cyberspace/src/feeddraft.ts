@@ -73,6 +73,7 @@ function read(raw: string | null, user: string, now: number): Blob {
           blog: d.blog === true,
           nsfw: d.nsfw === true,
           vent: d.vent === true,
+          noreply: d.noreply === true,
         },
       }
     }

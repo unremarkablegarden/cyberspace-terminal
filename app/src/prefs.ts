@@ -115,3 +115,24 @@ export function phosphorTint(): string | [number, number, number] {
   const name = store.get('phosphor', 'matrix')
   return name === CUSTOM_PHOSPHOR ? hslToRgb(customPhosphor()) : name
 }
+
+/**
+ * The phone key bar. `auto` hides it while a full hardware keyboard is in use
+ * (keybar.ts), `always` keeps it: some Bluetooth keyboards send arrows but no
+ * Escape, Ctrl or Alt the page can read. Per device, so not synced.
+ */
+export type ExtraKeys = 'auto' | 'always'
+
+const extraKeysListeners: (() => void)[] = []
+
+export const extraKeys = (): ExtraKeys => store.get('extrakeys', 'auto') === 'always' ? 'always' : 'auto'
+
+export function setExtraKeys(v: ExtraKeys): void {
+  store.set('extrakeys', v)
+  for (const f of extraKeysListeners) f()
+}
+
+/** Runs `f` after each change of the setting. */
+export function onExtraKeys(f: () => void): void {
+  extraKeysListeners.push(f)
+}

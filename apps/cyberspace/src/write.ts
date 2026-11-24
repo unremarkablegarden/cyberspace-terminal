@@ -47,13 +47,14 @@ type Field = 'title' | 'body' | 'topics' | 'flags'
 /** Tab order, which is also the drawing order top to bottom. */
 const FIELDS: Field[] = ['title', 'body', 'topics', 'flags']
 
-const FLAGS = ['blog', 'nsfw', 'vent'] as const
+const FLAGS = ['blog', 'nsfw', 'vent', 'noreply'] as const
 type Flag = (typeof FLAGS)[number]
 
 const FLAG_HELP: Record<Flag, string> = {
   blog: 'visible outside Cyberspace, and on your blog',
   nsfw: 'not safe for work; tag it',
   vent: 'adds the "vent" topic, which people can mute',
+  noreply: 'nobody can reply; fixed once posted',
 }
 
 /** Columns the label gutter takes on the two one-line fields. */
@@ -252,6 +253,7 @@ export class WriteScreen implements Screen {
       blog: this.draft.blog,
       nsfw: this.draft.nsfw,
       vent: this.draft.vent,
+      noreply: this.draft.noreply,
     }
     this.opts.onDraft(this.draft)
   }
@@ -278,7 +280,8 @@ export class WriteScreen implements Screen {
     const out: string[] = []
     if (withFlags) {
       out.push(`Blog ${this.draft.blog ? 'on' : 'off'}, NSFW ${this.draft.nsfw ? 'on' : 'off'}`
-        + (this.draft.vent ? ', vent' : ''))
+        + (this.draft.vent ? ', vent' : '')
+        + (this.draft.noreply ? ', no replies' : ''))
     } else if (this.draft.vent) {
       out.push('vent')
     }
@@ -325,7 +328,7 @@ export class WriteScreen implements Screen {
     this.title.clear()
     this.topics.clear()
     this.body.set('')
-    this.draft = { title: '', body: '', topics: '', blog: this.draft.blog, nsfw: false, vent: false }
+    this.draft = { title: '', body: '', topics: '', blog: this.draft.blog, nsfw: false, vent: false, noreply: false }
     this.opts.onDraft(this.draft)
   }
 
@@ -347,6 +350,7 @@ export class WriteScreen implements Screen {
           topics,
           isNSFW: this.draft.nsfw,
           isPublic: this.draft.blog,
+          ...(this.draft.noreply && { repliesDisabled: true }),
         })
       } else {
         await this.host.api.post('/v1/notes', { content: this.draft.body, topics })
@@ -453,7 +457,7 @@ export class WriteScreen implements Screen {
     return tags.map((t, n) => trim(t, width[n]!)).join(' ')
   }
 
-  /** The three flag caps on the left, the topics on the right. */
+  /** The flag caps on the left, the topics on the right. */
   private drawFlags(term: Grid): void {
     const r = this.flagRect
     const gap = this.narrow ? 1 : 3

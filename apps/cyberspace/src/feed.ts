@@ -117,7 +117,7 @@ interface FeedState {
   screens: FeedSnapshot[]
 }
 
-const EMPTY_DRAFT: PostDraft = { title: '', body: '', topics: '', blog: false, nsfw: false, vent: false }
+const EMPTY_DRAFT: PostDraft = { title: '', body: '', topics: '', blog: false, nsfw: false, vent: false, noreply: false }
 
 const wrap = (text: string, width: number): string[] => hangingWrap('', text, width)
 
@@ -1017,7 +1017,7 @@ class FeedScreen implements Screen {
     const head = replies === null
       ? '── LOADING REPLIES '
       : replies.length === 0
-        ? '── NO REPLIES '
+        ? (this.entries[this.sel]?.noReply ? '── REPLIES OFF ' : '── NO REPLIES ')
         : `── ${replies.length} ${replies.length === 1 ? 'REPLY' : 'REPLIES'} `
     return (head + '─'.repeat(Math.max(0, width - head.length))).slice(0, width)
   }
@@ -1341,7 +1341,7 @@ class FeedScreen implements Screen {
     // A key is advertised only when it would do something.
     const groups: Span[][] = [
       ...(this.links().length ? [HINT_LINKS] : []),
-      ...(this.entries.length ? [HINT_REPLY] : []),
+      ...(this.entries[this.sel] && !this.entries[this.sel]!.noReply ? [HINT_REPLY] : []),
       ...(this.selectedAuthor() ? [HINT_BIO] : []),
       ...(this.userTarget() ? [HINT_USER] : []),
       HINT_FIND,
@@ -1399,6 +1399,12 @@ class FeedScreen implements Screen {
     const entry = this.entries[this.sel]
     if (!entry || this.posting) {
       if (!entry) this.snd.beep(220, 0.12)
+      return
+    }
+    if (entry.noReply) {
+      this.snd.beep(220, 0.12)
+      this.status = 'REPLIES OFF'
+      this.redraw()
       return
     }
     const card = this.open ? this.cards[this.readSel] : undefined

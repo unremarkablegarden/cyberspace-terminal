@@ -6,7 +6,7 @@
 
 import { PHOSPHORS } from '@cyberspace/crt/config'
 import { ANDROID_TABLET } from './config'
-import { phosphorTint } from './prefs'
+import { extraKeys, onExtraKeys, phosphorTint } from './prefs'
 import { store } from './store'
 import type { Keyboard } from './input'
 
@@ -69,6 +69,9 @@ const BIG_SHRINK = 24
  */
 const SOFT_KBD_MIN = 100
 
+/** Keys a keyboard needs before the bar hides for it: the ones the bar supplies. */
+const FULL_KEYS = new Set(['Escape', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'])
+
 /** Beam levels for cap text and cap borders, as fractions of the phosphor colour. */
 const CAP_FG = 0.78
 const CAP_EDGE = 0.45
@@ -77,21 +80,32 @@ export class KeyBar {
   private armed = false
   /** Two rows with the arrows as an inverted T, used when the screen has room for it. */
   private big = false
+  /** A full hardware keyboard is in use, and no soft keyboard is open. */
+  private hw = false
 
   constructor(private el: HTMLElement, private keyboard: Keyboard, private clip: Clipboard) {
     this.render()
     this.tint()
-    // A hardware keyboard hides the bar. A keydown while no soft keyboard is
-    // open can only come from one; e.code cannot tell them apart, since Android
-    // reports an empty code for injected keys as well as soft ones. Capture
-    // phase, because the soft-keyboard field stops propagation. The choice is
-    // stored, so a deck with a keyboard boots without the bar; the soft
-    // keyboard opening shows it again.
-    // An Android tablet shows the bar only while the soft keyboard is open: the
-    // screen has room for the canvas either way, and a deck usually has a keyboard.
+    // A full hardware keyboard hides the bar. A keydown while no soft keyboard
+    // is open can only come from a hardware one; e.code cannot tell them apart,
+    // since Android reports an empty code for injected keys as well as soft
+    // ones. Only Escape or an arrow counts: phone keyboards and many tablet
+    // keyboards have neither, and the bar is their only way to send them.
+    // Capture phase, because the soft-keyboard field stops propagation. The
+    // choice is stored, so a deck with a keyboard boots without the bar; the
+    // soft keyboard opening shows it again.
+    // An Android tablet with a full keyboard shows the bar only while the soft
+    // keyboard is open.
     let soft = false
-    this.hardware(ANDROID_TABLET || store.get('hwkbd', '') === '1')
-    window.addEventListener('keydown', () => { if (!soft) this.hardware(true) }, true)
+    let full = store.get('hwkbd', '') === '1'
+    this.hw = full
+    this.showBar()
+    onExtraKeys(() => this.showBar())
+    window.addEventListener('keydown', e => {
+      if (soft || !FULL_KEYS.has(e.key)) return
+      full = true
+      this.hardware(true)
+    }, true)
     const vv = window.visualViewport
     if (vv) {
       // iOS pans the visual viewport instead of resizing it in some states;
@@ -101,7 +115,7 @@ export class KeyBar {
         document.documentElement.style.setProperty('--kbd', `${kbd}px`)
         soft = kbd > SOFT_KBD_MIN
         if (soft) this.hardware(false)
-        else if (ANDROID_TABLET) this.hardware(true)
+        else if (ANDROID_TABLET && full) this.hardware(true)
         // The big layout only when the 4:3 canvas at full width, less
         // BIG_SHRINK, still fits above it.
         const screen = this.el.parentElement!
@@ -118,10 +132,16 @@ export class KeyBar {
   }
 
   private hardware(on: boolean): void {
-    if (document.documentElement.classList.contains('hwkbd') === on) return
-    document.documentElement.classList.toggle('hwkbd', on)
+    if (this.hw === on) return
+    this.hw = on
     if (on) store.set('hwkbd', '1')
     else store.remove('hwkbd')
+    this.showBar()
+  }
+
+  /** The bar is hidden for a full hardware keyboard, unless F1 EXTRA KEYS is `always`. */
+  private showBar(): void {
+    document.documentElement.classList.toggle('hwkbd', this.hw && extraKeys() !== 'always')
   }
 
   /** The armed ^, taken by the next typed character. Disarms. */
