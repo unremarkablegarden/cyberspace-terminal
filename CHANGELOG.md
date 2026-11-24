@@ -345,7 +345,7 @@
 
 ## v0.9.7
 
-- `chess`, also in the `CMD-K` switcher under Games (by @arcxl_ and @genghis_khan)
+- `chess` (by @arcxl_ and @genghis_khan)
     - Against the machine, five difficulty levels
     - Online: lobby with chat, challenge, rematch, chat during a game
     - Clocks: 1, 3, 5, 10 or 20 min a side, loss on time

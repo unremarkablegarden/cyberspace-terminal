@@ -467,7 +467,6 @@ const program = {
       badge: name => !inbox ? 0 : name === 'inbox' ? inbox.total : name === 'cmail' ? inbox.mail : 0,
       authed: () => api.authed,
       config: () => config?.toggle(),
-      game: name => { if (name === 'chess') chess?.start() },
     })
     // The idle timer. Coarse on purpose: the timeout is in minutes.
     setInterval(() => {
