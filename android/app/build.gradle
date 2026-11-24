@@ -57,8 +57,8 @@ android {
         applicationId "online.cyberspace.terminal"
         minSdkVersion 24
         targetSdkVersion 36
-        versionCode 4
-        versionName "0.9.6"
+        versionCode 5
+        versionName "0.9.7"
 
         // The name for the application
         resValue "string", "appName", twaManifest.name
