@@ -170,6 +170,8 @@ let saver: Screensaver | null = null
 let doom: Doom | null = null
 let palette: JobPalette | null = null
 let chess: Chess | null = null
+/** Whether the notice bar was painted over Chess on the last frame. */
+let barOverChess = false
 let launcher: Launcher | null = null
 /** The notification service, once the kernel has made it. */
 let inbox: InboxService | null = null
@@ -221,7 +223,8 @@ const keyboard = new Keyboard({
   config: () => config,
   palette: () => palette,
   inbox: openInbox,
-  overlay: () => (chess?.open ? chess : config?.open ? config : doom?.open ? doom : saver?.open ? saver : palette?.open ? palette : launcher?.open ? launcher : null),
+  // The config box and the switcher first: they open over Chess.
+  overlay: () => (config?.open ? config : palette?.open ? palette : chess?.open ? chess : doom?.open ? doom : saver?.open ? saver : launcher?.open ? launcher : null),
   activity: () => { lastActive = Date.now() },
   skipBoot: () => {
     if (!bootAbort) return false
@@ -332,7 +335,14 @@ async function chessProgram(p: Proc): Promise<number> {
   if (!p.tty) { p.err('chess: not a tty\n'); return 1 }
   if (!chess || chess.open || grid.locked) { p.err('chess: screen busy\n'); return 1 }
   await waitForDrain()
-  await chess.play()
+  const game = chess
+  // The switcher stops the job: Chess hides and keeps its games. A kill closes it.
+  p.onStop = () => game.suspend()
+  p.onCont = () => game.resume()
+  const kill = () => game.close()
+  p.signal.addEventListener('abort', kill, { once: true })
+  await game.play()
+  p.signal.removeEventListener('abort', kill)
   return 0
 }
 
@@ -449,8 +459,8 @@ const program = {
     doom = new Doom(s, snd, waitForDrain)
     launcher = new Launcher(s, snd)
     chess = new Chess(s, snd, new PartyKitChessMultiplayer({
-      // Dev goes through the Vite proxy to `wrangler dev` of the world Worker on port 1999.
-      baseUrl: import.meta.env.DEV ? window.location.origin : 'https://world.cyberspace.online',
+      // Dev uses the live world Worker too, so local and deployed terminals share one lobby.
+      baseUrl: 'https://world.cyberspace.online',
       token: () => api.token(),
       profile: () => (api.userId
         ? { userId: api.userId, username: api.username ?? undefined, displayName: api.username ?? undefined }
@@ -462,6 +472,10 @@ const program = {
         line: 'chess',
         onOpen: () => chess?.openInvite(invite),
       })
+    }, {
+      covered: () => !!config?.open || !!palette?.open,
+      foreground: () => void machine?.jobs.switchTo({ launch: 'chess' }),
+      background: () => void machine?.jobs.switchTo('shell'),
     })
     palette = new JobPalette(s, snd, () => machine, {
       badge: name => !inbox ? 0 : name === 'inbox' ? inbox.total : name === 'cmail' ? inbox.mail : 0,
@@ -606,12 +620,18 @@ const program = {
       scroll.clamp()
       syncTerm(xt, s.term, scroll.back)
       if (live && scroll.back === 0) bar.paint(s.term, performance.now())
+      barOverChess = false
       // The render loop writes showCursor from RENDER.cursor every frame, so
       // this assignment is what lets a full-screen program hide the caret. It is
       // also hidden while scrolled back, where it would not mark the input point.
       s.term.showCursor = RENDER.cursor && tty.caret && scroll.back === 0
       // Overrides this frame's blink phase; the loop resumes its own afterwards.
       if (performance.now() - keyAt < RENDER.blinkMs) s.term.cursorVisible = true
+    } else if (live && chess?.open && !config?.open && !palette?.open) {
+      // The bar paints over row 0 of Chess every frame. Chess repaints the row when the bar goes down.
+      const up = bar.paint(s.term, performance.now())
+      if (barOverChess && !up) chess.redraw()
+      barOverChess = up
     }
   },
 

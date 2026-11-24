@@ -13,7 +13,7 @@
 
 import { dec, type Proc, type Program } from '@cyberspace/kernel'
 import {
-  Surface, ScreenStack, InputLine, Reveal, drawLog, drawList, parseKeys,
+  Surface, ScreenStack, InputLine, Reveal, Spinner, drawLog, drawList, parseKeys,
   frame, hline, vline, label, cells, clear, ground, plain,
   ConfirmPopup, EditorPopup, SelectPopup, TextPopup, YES_NO,
   NORMAL, BRIGHT, BOLD, DIM,
@@ -279,6 +279,7 @@ export function circProgram(
 
     // One bleep per batch of revealed lines, matching the shell's type-out.
     const print = new Reveal({ onTick: () => paint(), onBlip: () => snd.blip(BLIP_HZ) })
+    const spinner = new Spinner({ onTick: () => paint() })
 
     // The roster reveals a name at a time, like the backlog. Silent while the
     // log is still revealing, since the two run together on entry and two
@@ -539,6 +540,8 @@ export function circProgram(
       // A modal holds the grid while open; painting beneath would erase it.
       if (stack.active) return
       blink.sync(wire.blinking)
+      if (!primed || status === 'LOADING') spinner.start()
+      else spinner.stop()
       s.clear()
 
       frame(s, outer)
@@ -592,8 +595,9 @@ export function circProgram(
       // Placeholder while the pane is empty. Cleared by the first feed(), which
       // sets primed.
       if (!primed) {
-        s.text(logRect.x + Math.floor((logRect.w - 7) / 2),
-          logRect.y + Math.floor(logRect.h / 2), 'LOADING', DIM)
+        const wait = spinner.text('LOADING')
+        s.text(logRect.x + Math.floor((logRect.w - cells(wait)) / 2),
+          logRect.y + Math.floor(logRect.h / 2), wait, DIM)
       }
 
       drawSuggest()
@@ -610,7 +614,8 @@ export function circProgram(
 
       // Redraw the status rule, then the current activity on its right.
       hline(s, splitY, 1, cols - 2)
-      if (status) s.text(cols - 4 - cells(status), splitY, ` ${status} `, BRIGHT)
+      const note = status === 'LOADING' ? spinner.text(status) : status
+      if (note) s.text(cols - 4 - cells(note), splitY, ` ${note} `, BRIGHT)
 
       input.draw(s, inputRect)
       // Hidden while the pane holds the selection: the line is not taking keys.
@@ -1233,6 +1238,7 @@ export function circProgram(
 
     // Stopped: out of the room as far as the server knows, the log kept.
     p.onStop = () => {
+      spinner.stop()
       closeStream()
       if (heartbeat) { clearInterval(heartbeat); heartbeat = null }
       if (room) void api.delete(`/v1/circ/${room.id}/presence`).catch(() => {})
@@ -1286,6 +1292,7 @@ export function circProgram(
       print.stop()
       roll.stop()
       blink.stop()
+      spinner.stop()
       unwatchPics?.()
       pics?.release()
       await leaveRoom()

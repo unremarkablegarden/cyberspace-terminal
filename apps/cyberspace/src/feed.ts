@@ -16,7 +16,7 @@
 
 import { dec, type Proc, type Program } from '@cyberspace/kernel'
 import {
-  Surface, ScreenStack, Reveal, parseKeys, frame, hline, label, clear, cells, hangingWrap,
+  Surface, ScreenStack, Reveal, Spinner, parseKeys, frame, hline, label, clear, cells, hangingWrap,
   ConfirmPopup, EditorPopup, PromptPopup, SelectPopup, TextPopup, RULE, YES_NO,
   NORMAL, BRIGHT, BOLD, DIM, BG,
   type Grid, type KeyInput, type Rect, type Screen, type Span, type TextLine,
@@ -404,6 +404,8 @@ class FeedScreen implements Screen {
 
   /** The screenful landing a row at a time. */
   private print: Reveal
+  /** Turns before every LOADING this screen shows. Started and stopped by drawChromeLabels, which every paint runs. */
+  private spinner: Spinner
   private active = true
   private closed = false
 
@@ -433,6 +435,7 @@ class FeedScreen implements Screen {
       onTick: () => this.redraw(),
       onBlip: () => this.env.host.snd.blip(),
     })
+    this.spinner = new Spinner({ onTick: () => this.redraw() })
   }
 
   private get host(): FeedHost { return this.env.host }
@@ -475,10 +478,13 @@ class FeedScreen implements Screen {
   pause(): void {
     if (this.poll) clearInterval(this.poll)
     this.poll = null
+    this.spinner.stop()
   }
 
   resume(): void {
     this.listen()
+    // Restarts the spinner if a load is still out.
+    this.redraw()
   }
 
   private async checkNew(): Promise<void> {
@@ -1015,7 +1021,7 @@ class FeedScreen implements Screen {
   private dividerText(width: number): string {
     const replies = this.openReplies
     const head = replies === null
-      ? '── LOADING REPLIES '
+      ? `── ${this.spinner.text('LOADING REPLIES')} `
       : replies.length === 0
         ? (this.entries[this.sel]?.noReply ? '── REPLIES OFF ' : '── NO REPLIES ')
         : `── ${replies.length} ${replies.length === 1 ? 'REPLY' : 'REPLIES'} `
@@ -1096,7 +1102,10 @@ class FeedScreen implements Screen {
 
   setActive(active: boolean): void {
     this.active = active
-    if (!active) this.print.stop()
+    if (!active) {
+      this.print.stop()
+      this.spinner.stop()
+    }
   }
 
   /** Repaint this screen when it is the one on top. */
@@ -1117,7 +1126,7 @@ class FeedScreen implements Screen {
 
     if (this.failed) { this.centred(term, this.only ? 'NO SUCH ENTRY' : 'FEED UNAVAILABLE'); return }
     if (!this.entries.length) {
-      this.centred(term, this.loaded ? 'NO ENTRIES' : 'LOADING')
+      this.centred(term, this.loaded ? 'NO ENTRIES' : this.spinner.text('LOADING'))
       return
     }
     if (this.open) this.drawOpen(term)
@@ -1310,7 +1319,21 @@ class FeedScreen implements Screen {
     hline(term, term.rows - 1, -1, term.cols)
   }
 
+  /** The list, the open entry's replies or the status rule waiting on a request. */
+  private get waiting(): boolean {
+    return (!this.entries.length && !this.loaded && !this.failed)
+      || (this.open && this.openReplies === null)
+      || this.status.startsWith('LOADING')
+  }
+
+  /** The status as drawn: a LOADING status with the spinner before it. */
+  private get statusText(): string {
+    return this.status.startsWith('LOADING') ? this.spinner.text(this.status) : this.status
+  }
+
   private drawChromeLabels(term: Grid): void {
+    if (this.waiting) this.spinner.start()
+    else this.spinner.stop()
     // The main list's masthead is an inverse field on the right; a member's list
     // names its member plain on the left, badges opposite.
     const masthead = !this.author
@@ -1336,7 +1359,7 @@ class FeedScreen implements Screen {
         { text: ` ${b} `, inverse: true, attr: DIM },
       ]), { align: 'right' })
     }
-    if (this.status) label(term, this.outer, this.status, { edge: 'bottom' })
+    if (this.status) label(term, this.outer, this.statusText, { edge: 'bottom' })
 
     // A key is advertised only when it would do something.
     const groups: Span[][] = [
@@ -1351,7 +1374,7 @@ class FeedScreen implements Screen {
     // The row is shared with the status on the left. Whole groups go from the
     // front (the situational keys) until the rest fits; the movement keys stay.
     const width = (g: Span[][]): number => g.flat().reduce((n, s) => n + cells(s.text), 2)
-    const budget = term.cols - 2 - (this.status ? cells(this.status) + 4 : 0)
+    const budget = term.cols - 2 - (this.status ? cells(this.statusText) + 4 : 0)
     while (groups.length > 1 && width(groups) > budget) groups.shift()
     label(term, this.outer, groups.flat(), { edge: 'bottom', align: 'right', max: budget })
   }
@@ -1699,6 +1722,7 @@ class FeedScreen implements Screen {
     if (this.closed) return
     this.closed = true
     this.print.stop()
+    this.spinner.stop()
     if (this.poll) clearInterval(this.poll)
     this.poll = null
     if (this.copied) clearTimeout(this.copied)

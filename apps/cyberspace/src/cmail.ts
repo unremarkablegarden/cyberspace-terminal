@@ -17,7 +17,7 @@
 
 import { dec, type Proc, type Program } from '@cyberspace/kernel'
 import {
-  Surface, ScreenStack, InputLine, Reveal, drawLog, parseKeys,
+  Surface, ScreenStack, InputLine, Reveal, Spinner, drawLog, parseKeys,
   frame, hline, label, cells, plain,
   ConfirmPopup, PromptPopup, TextPopup, YES_NO,
   NORMAL, BRIGHT, BOLD, DIM,
@@ -188,14 +188,16 @@ export function cmailProgram(
 
     // --- the mailbox ---------------------------------------------------------
 
-    const indexSplitY = rows - 2
-    const listRect: Rect = { x: 2, y: 1, w: cols - 4, h: indexSplitY - 1 }
+    // No rule above the footer: the list runs to the bottom frame, and the status sits in it on the left.
+    const listRect: Rect = { x: 2, y: 1, w: cols - 4, h: rows - 2 }
 
     let convs: Conversation[] = []
     let cursor = 0
     let loading = true
     let indexStatus = ''
     const reveal = new Reveal({ onTick: () => drawIndex(), onBlip: () => snd.blip(BLIP_HZ) })
+    // One for both screens. Each draw starts or stops it for its own wait, and only the screen in front draws.
+    const spinner = new Spinner({ onTick: () => { if (mode === 'index') drawIndex(); else drawThread() } })
 
     /** Width of the name column: the pane less the mark, clock and preview. */
     const nameWidth = (): number => {
@@ -205,9 +207,10 @@ export function cmailProgram(
 
     function drawIndex(): void {
       if (!running || mode !== 'index' || stack.active) return
+      if (loading) spinner.start()
+      else spinner.stop()
       s.clear()
       frame(s, outer)
-      hline(s, indexSplitY, 0, cols - 1)
 
       // BOLD rather than BRIGHT|BOLD: full brightness is reserved for the
       // correspondent's name beside it.
@@ -217,8 +220,9 @@ export function cmailProgram(
       if (unread) label(s, outer, `UNREAD (${unread})`)
 
       if (loading) {
-        s.text(listRect.x + Math.floor((listRect.w - 7) / 2),
-          listRect.y + Math.floor(listRect.h / 2), 'LOADING', DIM)
+        const wait = spinner.text('LOADING')
+        s.text(listRect.x + Math.floor((listRect.w - cells(wait)) / 2),
+          listRect.y + Math.floor(listRect.h / 2), wait, DIM)
       } else if (!convs.length) {
         s.text(listRect.x, listRect.y, 'No mail. Press N to write to somebody.', DIM)
       } else {
@@ -248,10 +252,7 @@ export function cmailProgram(
         }
       }
 
-      hline(s, indexSplitY, 1, cols - 2)
-      if (indexStatus) {
-        s.text(cols - 4 - cells(indexStatus), indexSplitY, ` ${indexStatus} `, BRIGHT)
-      }
+      if (indexStatus) label(s, outer, indexStatus, { edge: 'bottom', attr: BRIGHT })
 
       // Nothing on this screen takes input, so the caret is hidden.
       s.showCursor = false
@@ -491,7 +492,7 @@ export function cmailProgram(
         // An action has no side; it is drawn alone from the margin.
         if (it.m.action) {
           flush()
-          out.push(...entryLines(it.m, logRect.w, { reveal: it.reveal, blinkOn: blink.on }))
+          out.push(...entryLines(it.m, logRect.w, { reveal: it.reveal, blinkOn: blink.on, code: true }))
           continue
         }
         const isMine = (it.m.username ?? '').toLowerCase() === me
@@ -510,6 +511,8 @@ export function cmailProgram(
       p.setState({ v: STATE_VERSION, draft: input.value })
       if (mode !== 'thread' || stack.active) return
       blink.sync(wire.blinking)
+      if (!primed) spinner.start()
+      else spinner.stop()
       s.clear()
       frame(s, outer)
       hline(s, threadSplitY, 0, cols - 1)
@@ -546,8 +549,9 @@ export function cmailProgram(
       // Placeholder until the thread arrives, as in circ. Cleared by the first
       // feed(), which sets primed.
       if (!primed) {
-        s.text(logRect.x + Math.floor((logRect.w - 7) / 2),
-          logRect.y + Math.floor(logRect.h / 2), 'LOADING', DIM)
+        const wait = spinner.text('LOADING')
+        s.text(logRect.x + Math.floor((logRect.w - cells(wait)) / 2),
+          logRect.y + Math.floor(logRect.h / 2), wait, DIM)
       }
 
       hline(s, threadSplitY, 1, cols - 2)
@@ -876,6 +880,7 @@ export function cmailProgram(
     s.invalidate()
 
     p.onStop = () => {
+      spinner.stop()
       stopStream?.()
       stopStream = null
       if (readTimer) { clearTimeout(readTimer); readTimer = null }
@@ -933,6 +938,7 @@ export function cmailProgram(
     } finally {
       running = false
       reveal.stop()
+      spinner.stop()
       wire.close()
       unwatchPics?.()
       pics?.release()

@@ -18,7 +18,7 @@
 
 import { dec, type Proc, type Program } from '@cyberspace/kernel'
 import {
-  Surface, ScreenStack, PromptPopup, TextPopup, ConfirmPopup, YES_NO, RULE, PixelCanvas, rotate, project,
+  Surface, ScreenStack, Spinner, PromptPopup, TextPopup, ConfirmPopup, YES_NO, RULE, PixelCanvas, rotate, project,
   frame, label, cells, wrap, parseKeys, keyHint,
   NORMAL, BRIGHT, BOLD, DIM, FAINT,
   type CellMetrics, type P3, type View, type Span, type TextLine, type Rect, type PixelFont,
@@ -474,6 +474,9 @@ export function globeProgram(api: ApiClient, deps: GlobeDeps, snd: ChatSound = S
       } satisfies GlobeState)
     }
 
+    // tick() paints every TICK_MS, which picks up each frame, so the spinner asks for no paint of its own.
+    const spinner = new Spinner({ onTick: () => {} })
+
     const paint = (): void => {
       if (stack.active) return
       draw()
@@ -667,7 +670,9 @@ export function globeProgram(api: ApiClient, deps: GlobeDeps, snd: ChatSound = S
       ], { align: 'right' })
 
       const pin = pins[sel]
-      const left = status || (pin
+      if (status === 'LOADING') spinner.start()
+      else spinner.stop()
+      const left = (status === 'LOADING' ? spinner.text(status) : status) || (pin
         ? `@${pin.username}  ${pin.lat.toFixed(1)},${pin.lon.toFixed(1)}${pin.name ? '  ' + pin.name : ''}`
         : '')
       // On the last row inside the frame, over the picture, so the footer keeps
@@ -1060,7 +1065,10 @@ export function globeProgram(api: ApiClient, deps: GlobeDeps, snd: ChatSound = S
     p.setResume(want ? `globe @${want}` : 'globe')
 
     let timer = setInterval(tick, TICK_MS)
-    p.onStop = () => clearInterval(timer)
+    p.onStop = () => {
+      clearInterval(timer)
+      spinner.stop()
+    }
     p.onCont = () => {
       timer = setInterval(tick, TICK_MS)
       s.invalidate()
@@ -1125,6 +1133,7 @@ export function globeProgram(api: ApiClient, deps: GlobeDeps, snd: ChatSound = S
     } finally {
       running = false
       clearInterval(timer)
+      spinner.stop()
       pixels?.release()
       p.out('\x1b[?1049l\x1b[?25h')
       tty.setCooked()

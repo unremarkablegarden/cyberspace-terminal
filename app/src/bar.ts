@@ -64,8 +64,11 @@ export class NoticeBar {
     this.dropped = 0
   }
 
-  /** Advance the queue and draw. Call after syncTerm, on frames where the pty owns the grid. */
-  paint(term: Grid, now: number): void {
+  /**
+   * Advance the queue and draw. Call after syncTerm, on frames where the pty owns the grid, or over an overlay that yields.
+   * True while a notice is up.
+   */
+  paint(term: Grid, now: number): boolean {
     if (this.current && now >= this.until) this.current = null
     if (!this.current) {
       if (this.dropped) {
@@ -74,7 +77,7 @@ export class NoticeBar {
       } else {
         this.current = this.queue.shift() ?? null
       }
-      if (!this.current) return
+      if (!this.current) return false
       this.until = now + SHOW_MS
       this.tone()
     }
@@ -88,5 +91,6 @@ export class NoticeBar {
       // DIM on an inverse cell dims the ground, which sets the key hint apart.
       term.put(x, 0, ch ? ch.codePointAt(0)! : 32, x >= at ? DIM : ch ? BOLD : NORMAL, 1)
     }
+    return true
   }
 }

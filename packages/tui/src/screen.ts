@@ -60,6 +60,11 @@ const paste = (into: Plane | undefined, from: Plane | undefined): void => {
 export class ScreenStack {
   private stack: Screen[] = []
   private saved: Snapshot[] = []
+  /**
+   * While true, push, pop and key keep the stack but leave the grid alone, for an owner whose screen another view has taken.
+   * show() repaints every screen.
+   */
+  private hidden = false
 
   constructor(private term: StackSurface) {}
 
@@ -83,13 +88,13 @@ export class ScreenStack {
       showCursor: this.term.showCursor,
     })
     this.stack.push(screen)
-    screen.draw?.(this.term as unknown as Grid)
+    if (!this.hidden) screen.draw?.(this.term as unknown as Grid)
   }
 
   pop(): void {
     const screen = this.stack.pop()
     const snap = this.saved.pop()
-    if (snap) {
+    if (snap && !this.hidden) {
       paste(this.term.chars, snap.chars)
       paste(this.term.attrs, snap.attrs)
       paste(this.term.inv ?? this.term.inverse, snap.inv)
@@ -100,7 +105,7 @@ export class ScreenStack {
     }
     screen?.dispose?.()
     this.top?.setActive?.(true)
-    this.top?.draw?.(this.term as unknown as Grid)
+    if (!this.hidden) this.top?.draw?.(this.term as unknown as Grid)
   }
 
   /** Send a key to the top screen. False when nothing is stacked. */
@@ -109,7 +114,21 @@ export class ScreenStack {
     if (!top) return false
     const handled = top.onKey(e)
     // Every consumed key repaints, and a key may also have popped the top screen.
-    if (handled) this.top?.draw?.(this.term as unknown as Grid)
+    if (handled && !this.hidden) this.top?.draw?.(this.term as unknown as Grid)
     return handled
+  }
+
+  /** Stop drawing. The grid belongs to someone else until show(). */
+  hide(): void {
+    this.hidden = true
+  }
+
+  /**
+   * Draw again, every screen from the bottom up, since the grid under each has changed.
+   * The snapshots stay as they were: a later pop pastes an old frame, and the screen below repaints over it.
+   */
+  show(): void {
+    this.hidden = false
+    for (const screen of this.stack) screen.draw?.(this.term as unknown as Grid)
   }
 }

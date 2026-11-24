@@ -6,6 +6,8 @@ export interface MultiplayerFriend {
   displayName?: string
   /** Lobby only: in a game or not. */
   status?: 'idle' | 'playing'
+  /** Lobby only: the game room while playing, for watching. */
+  gameId?: string
 }
 
 export interface ChatLine {
@@ -22,6 +24,8 @@ export interface LobbyView {
   chat: ChatLine[]
   /** Empty while connected, else why not: `Connecting...`, a sign-in or connection error. */
   status: string
+  /** True while the socket is opening, so the status is a wait rather than an error. */
+  connecting?: boolean
   /** This player's uid, when signed in. */
   me?: string
 }
@@ -46,6 +50,8 @@ export interface ChessGameSnapshot {
   gameId: string
   revision: number
   state: ChessState
+  /** Moves so far in UCI (`e2e4`, `e7e8q`). See chess/san.ts replay(). */
+  moves?: string[]
   whiteUserId: string
   blackUserId: string
   whiteName?: string
@@ -53,6 +59,8 @@ export interface ChessGameSnapshot {
   playerColor?: Color
   status: 'waiting' | 'active' | 'finished' | 'abandoned'
   result?: string
+  /** Connections watching the game. */
+  watchers?: number
   /** Remaining ms per side as of when the server sent the snapshot. Absent in untimed games. */
   clock?: { white: number; black: number; running: Color | null }
 }
@@ -91,8 +99,10 @@ export interface ChessMultiplayerTransport {
   /** Lobby players and chat, current value first and then on every change. */
   watchLobby?(listener: (view: LobbyView) => void): () => void
   sendLobbyChat?(text: string): void
-  /** Marks this player as in a game in the lobby list. */
-  setPlaying?(playing: boolean): void
+  /** Marks this player as in game `gameId` in the lobby list, or as idle with null. */
+  setPlaying?(gameId: string | null): void
+  /** Opens a game as a watcher: snapshots and chat arrive, moves and chat are refused by the room. */
+  watchGame?(gameId: string): Promise<ChessMultiplayerGame>
   /** False when no account is logged in. */
   signedIn?(): boolean
 }
@@ -172,7 +182,8 @@ class PartyKitLobbyClient {
   private connecting: Promise<void> | null = null
   private users: MultiplayerFriend[] = []
   private chat: ChatLine[] = []
-  private playing = false
+  /** The game room this player is in, or null. Sent again after a reconnect. */
+  private playing: string | null = null
   private failure = ''
   private readonly lobbyListeners = new Set<(view: LobbyView) => void>()
   private readonly incomingInvites = new Map<string, ChessInvite>()
@@ -209,9 +220,13 @@ class PartyKitLobbyClient {
     if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify({ type: 'lobby:chat', text }))
   }
 
-  setPlaying(playing: boolean): void {
-    this.playing = playing
-    if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify({ type: 'lobby:status', playing }))
+  setPlaying(gameId: string | null): void {
+    this.playing = gameId
+    if (this.socket?.readyState === WebSocket.OPEN) this.sendStatus(this.socket)
+  }
+
+  private sendStatus(socket: WebSocket): void {
+    socket.send(JSON.stringify({ type: 'lobby:status', playing: !!this.playing, gameId: this.playing ?? undefined }))
   }
 
   /** Whether the lobby socket is open. */
@@ -221,8 +236,9 @@ class PartyKitLobbyClient {
 
   private view(): LobbyView {
     const me = this.profile()?.userId
-    const status = this.connected ? '' : this.failure || (this.profile() ? 'Connecting...' : 'Log in first')
-    return { users: this.connected ? this.users.filter(user => user.userId !== me) : [], chat: this.chat, status, me }
+    const connecting = !this.connected && !this.failure && !!this.profile()
+    const status = this.connected ? '' : this.failure || (connecting ? 'Connecting...' : 'Log in first')
+    return { users: this.connected ? this.users.filter(user => user.userId !== me) : [], chat: this.chat, status, connecting, me }
   }
 
   private emit(): void {
@@ -305,7 +321,7 @@ class PartyKitLobbyClient {
           this.users = message.users ?? []
           this.chat = message.chat ?? []
           // A reconnect during a game restores the status the server lost with the old socket.
-          if (this.playing) socket.send(JSON.stringify({ type: 'lobby:status', playing: true }))
+          if (this.playing) this.sendStatus(socket)
           this.emit()
           if (!settled) {
             settled = true
@@ -390,11 +406,12 @@ class PartyKitChessGame implements ChessMultiplayerGame {
   private socket: WebSocket
   private closed = false
 
-  constructor(address: string, initial: ChessGameSnapshot, timeMs: number) {
+  /** `hello` is the first message: `join` to take a seat, `watch` to watch. */
+  constructor(address: string, initial: ChessGameSnapshot, hello: Record<string, unknown>) {
     this.current = initial
     this.socket = new WebSocket(address)
     this.socket.addEventListener('open', () => {
-      this.socket.send(JSON.stringify({ type: 'join', timeMs }))
+      this.socket.send(JSON.stringify(hello))
     })
     this.socket.addEventListener('message', event => this.receive(String(event.data)))
     this.socket.addEventListener('error', () => this.fail(new Error('Game: connection failed')))
@@ -530,8 +547,8 @@ export class PartyKitChessMultiplayer implements ChessMultiplayerTransport {
     this.lobby.sendChat(text)
   }
 
-  setPlaying(playing: boolean): void {
-    this.lobby.setPlaying(playing)
+  setPlaying(gameId: string | null): void {
+    this.lobby.setPlaying(gameId)
   }
 
   async sendInvite(userId: string, color: Color | 'random', timeMs: number): Promise<ChessInvite> {
@@ -539,15 +556,23 @@ export class PartyKitChessMultiplayer implements ChessMultiplayerTransport {
   }
 
   async openGame(invite: ChessInvite): Promise<ChessMultiplayerGame> {
+    return this.connectGame(invite.gameId, { type: 'join', timeMs: invite.timeMs ?? 0 })
+  }
+
+  async watchGame(gameId: string): Promise<ChessMultiplayerGame> {
+    return this.connectGame(gameId, { type: 'watch' })
+  }
+
+  private async connectGame(gameId: string, hello: Record<string, unknown>): Promise<ChessMultiplayerGame> {
     const initial: ChessGameSnapshot = {
-      gameId: invite.gameId,
+      gameId,
       revision: 0,
       state: newChessState(),
       whiteUserId: '',
       blackUserId: '',
       status: 'waiting',
     }
-    return new PartyKitChessGame(await partyUrl(this.options.baseUrl, invite.gameId, this.auth), initial, invite.timeMs ?? 0)
+    return new PartyKitChessGame(await partyUrl(this.options.baseUrl, gameId, this.auth), initial, hello)
   }
 
   watchInvites(listener: (invite: ChessInvite) => void): () => void {

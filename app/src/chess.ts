@@ -14,7 +14,7 @@ import type { CrtScreen } from '@cyberspace/crt'
 import type { Sound } from '@cyberspace/crt/audio'
 import { RENDER } from '@cyberspace/crt/config'
 import {
-  BG, BOLD, BRIGHT, DIM, FAINT, MUTED, NORMAL, InputLine, ScreenStack, SelectPopup, clear, drawLog, frame,
+  BG, BOLD, BRIGHT, DIM, FAINT, MUTED, NORMAL, InputLine, ScreenStack, SelectPopup, Spinner, clear, drawLog, frame,
   cells, hangingWrap, shadow, type Grid, type KeyInput, type LogLine, type Rect, type Screen, type Span,
 } from '@cyberspace/tui'
 import { grid } from './grid'
@@ -26,12 +26,14 @@ import {
 } from './chess/rules'
 import { TIME_CONTROLS, formatClock, remaining, switchClock, timeLabel, type Clock } from './chess/clock'
 import { ChessEngine } from './chess/engine'
+import { replay, san } from './chess/san'
 import {
   PendingChessMultiplayer,
   type ChessInvite,
   type ChessMultiplayerGame,
   type ChessMultiplayerTransport,
   type ChatLine,
+  type ChessGameSnapshot,
   type ChessRoomEvent,
   type LobbyView,
   type MultiplayerFriend,
@@ -52,7 +54,7 @@ import rookSvg from './chess/svg/rook.svg?raw'
 
 type Mode = 'menu' | 'lobby' | 'board'
 
-const MENU = ['Play with Machine', 'Play with someone']
+const MENU = ['Play against Machine', 'Play against Human']
 const COLOR_MENU = ['Random', 'White', 'Black']
 /** Index + 1 is the js-chess-engine level. */
 const LEVEL_MENU = ['Easy', 'Medium', 'Hard', 'Expert', 'Master']
@@ -81,8 +83,24 @@ const SVG_SOURCE: Record<PieceArt, string> = {
 }
 
 /** The game overlay. It is both the host's overlay and the screen on the stack. */
+export interface ChessHost {
+  /** Whether the config box or the switcher is over Chess. Chess does not paint until it is gone. */
+  covered?: () => boolean
+  /** Bring the chess job to the foreground, starting it if there is none. */
+  foreground?: () => void
+  /** Stop the chess job and return to the shell, as ^Z does. */
+  background?: () => void
+}
+
 export class Chess implements Overlay, Screen {
+  readonly yields = true
   private stack: ScreenStack | null = null
+  /** The job is stopped: the stack is hidden and the grid is free, games and the lobby stay connected. */
+  private suspended = false
+  /** A paint was skipped while covered. */
+  private stale = false
+  /** The side whose clock ran when a machine game was suspended. */
+  private pausedClock: Color | null = null
   private cursorWas = true
   private mode: Mode = 'menu'
   private menuIndex = 0
@@ -105,8 +123,10 @@ export class Chess implements Overlay, Screen {
   private cursor: Square = { row: 6, col: 4 }
   private selected: Square | null = null
   private moves: Move[] = []
-  /** Where the machine's last move landed, filled FAINT. Cleared by the player's next move. */
-  private lastMachineMove: Square | null = null
+  /** The opponent's last move, both squares filled FAINT. Cleared by the player's next move. Watching, the last move of either side. */
+  private lastMove: { from: Square; to: Square } | null = null
+  /** Moves of the game so far in SAN. */
+  private history: string[] = []
   private thinking = false
   private engine: ChessEngine | null = null
   private machineRequest = 0
@@ -125,7 +145,14 @@ export class Chess implements Overlay, Screen {
   private note = ''
   private art: Partial<Record<ArtName, ImageBitmap>> = {}
   private lobby: LobbyView = { users: [], chat: [], status: '' }
+  /** One cursor over the PLAYERS rows, then the GAMES rows. */
   private lobbyIndex = 0
+  private lobbyGames: LobbyGame[] = []
+  /** Before `Connecting...` in the lobby. */
+  private readonly spinner = new Spinner({ onTick: () => this.repaint() })
+  /** Watching someone else's game: no moves, no chat input. */
+  private watching = false
+  private watcherCount = 0
   private stopWatchingLobby: (() => void) | null = null
   private gameChat: ChatLine[] = []
   /** Set by draw: the chat line is on screen and InputLine.draw has placed term.cx/cy on its caret. */
@@ -141,6 +168,7 @@ export class Chess implements Overlay, Screen {
     private snd: Sound,
     private multiplayer: ChessMultiplayerTransport = new PendingChessMultiplayer(),
     private onInviteNotice?: (invite: ChessInvite) => void,
+    private host: ChessHost = {},
   ) {
     this.multiplayer.watchInvites(invite => this.receiveInvite(invite))
     this.multiplayer.watchInviteResults(invite => this.handleInviteResult(invite))
@@ -156,13 +184,14 @@ export class Chess implements Overlay, Screen {
     return new Promise(resolve => { this.onClosed = resolve })
   }
 
+  /** On screen: started and not suspended. */
   get open(): boolean {
-    return !!this.stack?.active
+    return !!this.stack?.active && !this.suspended
   }
 
   /** Open the title card. The picker calls this after its own screen is gone. */
   start(): void {
-    if (this.open || grid.locked) return
+    if (this.stack?.active || grid.locked) return
     this.ensureArt()
     this.stack ??= new ScreenStack(this.screen.term as never)
     grid.lock()
@@ -175,16 +204,70 @@ export class Chess implements Overlay, Screen {
     this.stack.push(this)
     this.ticker ??= setInterval(() => this.tickClock(), 50)
     this.multiplayer.online?.()
-    const pending = this.pendingInvites.values().next().value as ChessInvite | undefined
-    if (pending) {
-      this.pendingInvites.delete(pending.inviteId)
-      this.showIncomingInvite(pending)
+    this.showPendingInvite()
+    // Watched from the title card on, for the online count, until close().
+    this.stopWatchingLobby ??= this.multiplayer.watchLobby?.(view => {
+      this.lobby = view
+      this.lobbyGames = gamesOf(view.users)
+      this.lobbyIndex = Math.max(0, Math.min(this.lobbyIndex, view.users.length + this.lobbyGames.length - 1))
+      this.repaint()
+    }) ?? null
+  }
+
+  /** The job left the foreground. A machine game pauses: its clock stops and the machine stops thinking. */
+  suspend(): void {
+    if (!this.open) return
+    this.suspended = true
+    this.stack!.hide()
+    this.spinner.stop()
+    if (this.mode === 'board' && this.gameMode === 'machine') {
+      this.pausedClock = this.clock?.running ?? null
+      if (this.clock) this.clock = switchClock(this.clock, null)
+      this.stopMachine()
     }
+    grid.unlock()
+    RENDER.cursor = this.cursorWas
+  }
+
+  /** The job is back in the foreground. */
+  resume(): void {
+    if (!this.suspended || !this.stack) return
+    this.suspended = false
+    grid.lock()
+    this.cursorWas = RENDER.cursor
+    RENDER.cursor = false
+    this.stack.show()
+    if (this.mode === 'board' && this.gameMode === 'machine' && !this.result().over) {
+      if (this.clock && this.pausedClock) this.clock = switchClock(this.clock, this.pausedClock)
+      if (this.state.turn !== this.playerColor) this.startMachine()
+    }
+    this.pausedClock = null
+    this.syncCursor()
+    this.showPendingInvite()
+  }
+
+  private showPendingInvite(): void {
+    const pending = this.pendingInvites.values().next().value as ChessInvite | undefined
+    if (!pending) return
+    this.pendingInvites.delete(pending.inviteId)
+    this.showIncomingInvite(pending)
   }
 
   /** Keys reach the overlay through Keyboard's route, as the config box and DOOM do. */
   key(k: KeyInput): void {
+    // ^Z reaches no pty here, so Chess stops its own job. Taken before the stack, so it works under a card too.
+    if (k.ctrlKey && k.key.toLowerCase() === 'z' && this.host.background) {
+      this.host.background()
+      return
+    }
     this.stack?.key(k)
+  }
+
+  /** Paint every screen again, after something else drew over them. */
+  redraw(): void {
+    if (!this.open) return
+    this.stack!.show()
+    this.syncCursor()
   }
 
   silentKey(k: KeyInput): boolean {
@@ -192,10 +275,11 @@ export class Chess implements Overlay, Screen {
     return ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Escape'].includes(k.key)
   }
 
+  /** From the invite notice. Off screen, the invite waits for the chess job to come to the foreground. */
   openInvite(invite: ChessInvite): void {
-    if (!this.open) this.start()
     if (!this.open) {
       this.pendingInvites.set(invite.inviteId, invite)
+      this.host.foreground?.()
       return
     }
     this.pendingInvites.delete(invite.inviteId)
@@ -212,6 +296,8 @@ export class Chess implements Overlay, Screen {
   draw(term: Grid): void {
     clear(term, { x: 0, y: 0, w: term.cols, h: term.rows })
     this.inputShown = false
+    if (this.mode === 'lobby' && this.lobby.connecting) this.spinner.start()
+    else this.spinner.stop()
     if (this.mode === 'lobby') this.drawLobby(term)
     else if (this.mode !== 'board') this.drawMenu(term)
     else {
@@ -229,6 +315,7 @@ export class Chess implements Overlay, Screen {
 
   /** The CRT's blinking block cursor shows on the chat line only. The screen loop copies RENDER.cursor to term.showCursor every frame. */
   private syncCursor(): void {
+    if (this.suspended) return
     RENDER.cursor = this.open && this.active && this.inputShown
   }
 
@@ -268,7 +355,7 @@ export class Chess implements Overlay, Screen {
       return true
     }
     if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-      const count = this.lobby.users.length
+      const count = this.lobby.users.length + this.lobbyGames.length
       if (!count) {
         this.snd.beep(220, 0.04)
         return true
@@ -295,8 +382,10 @@ export class Chess implements Overlay, Screen {
         return true
       }
       const user = this.lobby.users[this.lobbyIndex]
-      if (!user) this.snd.beep(220, 0.04)
-      else this.openTimePicker('TIME', ms => this.sendMultiplayerInvite(user, ms), () => this.repaint())
+      const gameId = user ? user.gameId : this.lobbyGames[this.lobbyIndex - this.lobby.users.length]?.gameId
+      if (gameId) this.watchGame(gameId)
+      else if (user && user.status !== 'playing') this.openTimePicker('TIME', ms => this.sendMultiplayerInvite(user, ms), () => this.repaint())
+      else this.snd.beep(220, 0.04)
       return true
     }
     const handled = this.chatInput.onKey(e)
@@ -305,6 +394,11 @@ export class Chess implements Overlay, Screen {
   }
 
   private boardKey(e: KeyInput): boolean {
+    if (this.watching) {
+      if (e.key !== 'Escape') return false
+      this.toMenu()
+      return true
+    }
     const chatting = this.gameMode === 'multiplayer'
     if (e.key === 'Escape') {
       if (chatting && this.chatInput.value) {
@@ -401,6 +495,10 @@ export class Chess implements Overlay, Screen {
 
   /** Runs every 50 ms while Chess is open: flags a machine game, rewrites the clock cells when a digit changes. */
   private tickClock(): void {
+    if (this.stale && this.open && !this.host.covered?.()) {
+      this.stale = false
+      this.redraw()
+    }
     if (this.mode !== 'board' || !this.clock?.running) return
     const running = this.clock.running
     // Online, the server flags and sends the result; the client only shows 0.0.
@@ -419,6 +517,10 @@ export class Chess implements Overlay, Screen {
   /** Rewrites only the clock cells. A full repaint redraws every piece and is too slow at 10 per second. */
   private paintClocks(): void {
     if (!this.open || this.stack?.top !== this || this.mode !== 'board') return
+    if (this.host.covered?.()) {
+      this.stale = true
+      return
+    }
     const term = this.screen.term as unknown as Grid
     this.writeClocks(term)
     term.dirty = true
@@ -525,19 +627,11 @@ export class Chess implements Overlay, Screen {
     this.mode = 'lobby'
     this.chatInput.clear()
     this.multiplayer.online?.()
-    this.stopWatchingLobby?.()
-    this.stopWatchingLobby = this.multiplayer.watchLobby?.(view => {
-      this.lobby = view
-      this.lobbyIndex = Math.max(0, Math.min(this.lobbyIndex, view.users.length - 1))
-      this.repaint()
-    }) ?? null
     this.snd.tick()
     this.repaint()
   }
 
   private leaveLobby(): void {
-    this.stopWatchingLobby?.()
-    this.stopWatchingLobby = null
     this.chatInput.clear()
     this.mode = 'menu'
     this.snd.blip(420, 0.09, 0)
@@ -580,6 +674,16 @@ export class Chess implements Overlay, Screen {
       })
     }, cancel)
     this.stack?.push(card)
+  }
+
+  private watchGame(gameId: string): void {
+    if (!this.multiplayer.watchGame) return
+    void this.multiplayer.watchGame(gameId).then(game => {
+      if (this.open && this.mode === 'lobby' && this.stack?.top === this) this.startMultiplayerGame(game, true)
+      else game.close()
+    }).catch(() => {
+      if (this.open) this.showRoomNotice('WATCH', 'Game unavailable')
+    })
   }
 
   private receiveInvite(invite: ChessInvite): void {
@@ -742,18 +846,19 @@ export class Chess implements Overlay, Screen {
     if (this.gameMode === 'multiplayer' && this.multiplayerGame) {
       this.clearSelection()
       this.thinking = true
-      this.note = 'sending move...'
+      this.note = 'Sending move...'
       this.repaint()
       void this.multiplayerGame.submitMove(move).catch(() => {
         this.thinking = false
-        this.note = 'move rejected'
+        this.note = 'Move rejected'
         this.repaint()
       })
       return
     }
+    this.history.push(san(this.state, move))
     this.state = applyMove(this.state, move)
     this.cursor = move.to
-    this.lastMachineMove = null
+    this.lastMove = null
     this.clearSelection()
     this.passClock()
 
@@ -770,7 +875,7 @@ export class Chess implements Overlay, Screen {
   private startMachine(): void {
     const request = ++this.machineRequest
     this.thinking = true
-    this.note = 'machine is thinking...'
+    this.note = 'Machine is thinking...'
     this.repaint()
     this.timer = setTimeout(() => {
       this.timer = null
@@ -790,9 +895,10 @@ export class Chess implements Overlay, Screen {
         this.note = result.text
         if (result.over) this.showEndgame(result)
       } else {
+        this.history.push(san(this.state, move))
         this.state = applyMove(this.state, move)
         // The cursor stays where the player left it.
-        this.lastMachineMove = move.to
+        this.lastMove = { from: move.from, to: move.to }
         this.theirMoveSound()
         this.passClock()
         const result = this.result()
@@ -802,7 +908,7 @@ export class Chess implements Overlay, Screen {
     } catch {
       if (request !== this.machineRequest) return
       this.thinking = false
-      this.note = 'machine unavailable'
+      this.note = 'Machine unavailable'
     }
     this.repaint()
   }
@@ -813,7 +919,8 @@ export class Chess implements Overlay, Screen {
     this.gameMode = 'machine'
     this.state = newChessState()
     this.override = null
-    this.lastMachineMove = null
+    this.lastMove = null
+    this.history = []
     this.clock = this.timeMs ? { white: this.timeMs, black: this.timeMs, running: 'white', at: performance.now() } : null
     this.cursor = { row: this.playerColor === 'white' ? 6 : 1, col: 4 }
     this.clearSelection()
@@ -826,10 +933,14 @@ export class Chess implements Overlay, Screen {
     else this.repaint()
   }
 
-  private startMultiplayerGame(game: ChessMultiplayerGame): void {
+  private startMultiplayerGame(game: ChessMultiplayerGame, watching = false): void {
     this.stopMachine()
     this.closeMultiplayerGame()
     this.multiplayerGame = game
+    this.watching = watching
+    this.watcherCount = 0
+    this.lastMove = null
+    this.history = []
     this.gameMode = 'multiplayer'
     this.clock = null
     this.override = null
@@ -843,9 +954,15 @@ export class Chess implements Overlay, Screen {
     let revision = game.snapshot.revision
     this.gameChat = []
     this.chatInput.clear()
-    this.multiplayer.setPlaying?.(true)
+    if (!watching) this.multiplayer.setPlaying?.(game.snapshot.gameId)
     this.stopWatchingMultiplayer = game.watch(snapshot => {
       if (this.multiplayerGame !== game) return
+      this.watcherCount = snapshot.watchers ?? 0
+      if (watching) {
+        this.watchSnapshot(snapshot, revision)
+        revision = snapshot.revision
+        return
+      }
       // A new revision with the turn back on this side is the opponent's move.
       if (snapshot.revision > revision && snapshot.state.turn === (snapshot.playerColor ?? game.playerColor)) this.theirMoveSound()
       revision = snapshot.revision
@@ -857,11 +974,15 @@ export class Chess implements Overlay, Screen {
       this.whitePlayerName = snapshot.whiteName ?? this.whitePlayerName
       this.blackPlayerName = snapshot.blackName ?? this.blackPlayerName
       this.playerColor = snapshot.playerColor ?? game.playerColor
+      const played = replay(snapshot.moves ?? [])
+      this.history = played.san
+      // Only the opponent's move is marked, so it shows while this player is to move.
+      this.lastMove = snapshot.state.turn === this.playerColor ? played.moves.at(-1) ?? null : null
       if (snapshot.playerColor === 'black' && this.cursor.row === 6 && this.cursor.col === 4) this.cursor = { row: 1, col: 4 }
       this.thinking = snapshot.status === 'waiting' || (snapshot.status === 'active' && snapshot.state.turn !== this.playerColor)
       const opponentName = this.activeOpponentName || (this.playerColor === 'white' ? this.blackPlayerName : this.whitePlayerName)
       this.note = snapshot.status === 'waiting'
-        ? `waiting for ${shortPlayerName(opponentName)}...`
+        ? `Waiting for ${shortPlayerName(opponentName)}...`
         : snapshot.status === 'active' && snapshot.state.turn !== this.playerColor
           ? `${shortPlayerName(opponentName)} is thinking...`
           : ''
@@ -873,6 +994,34 @@ export class Chess implements Overlay, Screen {
       this.repaint()
     })
     this.snd.tick()
+    this.repaint()
+  }
+
+  private watchSnapshot(snapshot: ChessGameSnapshot, revision: number): void {
+    // A rematch restarts the room at revision 0, so the next result gets its own card.
+    if (snapshot.revision < revision) {
+      this.endgameShown = false
+      while (this.stack?.top && this.stack.top !== this) this.stack.pop()
+    }
+    // One revision per move. A larger step is the first snapshot of a game in progress.
+    if (snapshot.revision === revision + 1) this.theirMoveSound()
+    this.state = snapshot.state
+    const played = replay(snapshot.moves ?? [])
+    this.history = played.san
+    this.lastMove = played.moves.at(-1) ?? null
+    this.clock = snapshot.clock ? { ...snapshot.clock, at: performance.now() } : null
+    this.override = snapshot.status === 'finished' && snapshot.result ? { over: true, text: snapshot.result } : null
+    this.whitePlayerName = snapshot.whiteName || this.whitePlayerName
+    this.blackPlayerName = snapshot.blackName || this.blackPlayerName
+    this.playerColor = 'white'
+    this.thinking = false
+    const mover = snapshot.state.turn === 'white' ? this.whitePlayerName : this.blackPlayerName
+    this.note = snapshot.status === 'waiting' ? 'Waiting for players...' : `${shortPlayerName(mover)} to move`
+    const result = this.result()
+    if (result.over && !this.endgameShown) {
+      this.note = result.text
+      this.showEndgame(result)
+    }
     this.repaint()
   }
 
@@ -904,7 +1053,11 @@ export class Chess implements Overlay, Screen {
     this.repaint()
   }
 
-  private close(): void {
+  /** Close Chess and end its games. Also run when the job is killed, suspended or not. */
+  close(): void {
+    if (!this.stack?.active) return
+    const shown = !this.suspended
+    this.spinner.stop()
     if (this.ticker) clearInterval(this.ticker)
     this.ticker = null
     this.stopWatchingLobby?.()
@@ -912,9 +1065,15 @@ export class Chess implements Overlay, Screen {
     this.closeMultiplayerGame()
     this.stopMachine()
     while (this.stack?.active) this.stack.pop()
-    grid.unlock()
-    RENDER.cursor = this.cursorWas
-    this.snd.blip(420, 0.09, 0)
+    // Empty now, so this only clears the hidden flag.
+    this.stack?.show()
+    this.suspended = false
+    this.pausedClock = null
+    if (shown) {
+      grid.unlock()
+      RENDER.cursor = this.cursorWas
+      this.snd.blip(420, 0.09, 0)
+    }
     this.onClosed?.()
     this.onClosed = null
   }
@@ -933,7 +1092,8 @@ export class Chess implements Overlay, Screen {
   }
 
   private closeMultiplayerGame(notifyLeave = false): void {
-    if (this.multiplayerGame) this.multiplayer.setPlaying?.(false)
+    if (this.multiplayerGame && !this.watching) this.multiplayer.setPlaying?.(null)
+    this.watching = false
     this.stopWatchingMultiplayer?.()
     this.stopWatchingMultiplayer = null
     this.stopWatchingRoom?.()
@@ -946,6 +1106,10 @@ export class Chess implements Overlay, Screen {
 
   private repaint(): void {
     if (!this.open || this.stack?.top !== this) return
+    if (this.host.covered?.()) {
+      this.stale = true
+      return
+    }
     this.screen.term.dirty = true
     this.draw(this.screen.term as never)
   }
@@ -1001,7 +1165,9 @@ export class Chess implements Overlay, Screen {
       }
       term.text(button.x + 2, button.y + 1, label, selected ? DIM | BOLD : MUTED, selected ? 1 : 0)
     })
-    footer(term, [cap(ARROWS, 'Select'), cap('↵', 'Choose'), cap('ESC', 'Exit')])
+    // Other players only. Shown only while the lobby socket is connected.
+    if (!this.lobby.status) center(term, optionY + optionRows + 1, `${this.lobby.users.length} online`, MUTED)
+    footer(term, [...this.backgroundCap(), cap(ARROWS, 'Select'), cap('↵', 'Choose'), cap('ESC', 'Exit')])
   }
 
   private drawLobby(term: Grid): void {
@@ -1009,38 +1175,68 @@ export class Chess implements Overlay, Screen {
     const top = 3
     const inputY = term.rows - 4
     const narrow = term.cols < 60
-    const listW = narrow ? term.cols - 4 : Math.min(28, Math.floor(term.cols / 3))
-    const listH = narrow ? Math.min(6, Math.max(1, this.lobby.users.length)) : inputY - top - 1
-    const list: Rect = { x: 2, y: top + 2, w: listW, h: listH }
-    const chatX = narrow ? 2 : list.x + list.w + 3
-    const chatTop = narrow ? list.y + list.h + 1 : top
+    const { users } = this.lobby
+    const games = this.lobbyGames
+    // Wide: the lists and the chat get equal halves, so a game row fits both names.
+    const listW = narrow ? term.cols - 4 : Math.floor((term.cols - 7) / 2)
+    // Rows for both lists together. The two sections add five more: a heading and a blank row each, and one blank row between them.
+    // Narrow keeps at least five rows below for the chat heading, two log rows and the input line.
+    const room = narrow ? Math.min(8, inputY - top - 11) : inputY - top - 5
+    const want = (n: number) => Math.max(1, n)
+    const total = Math.max(2, Math.min(want(users.length) + want(games.length), room))
+    const gamesH = Math.max(1, total - Math.min(want(users.length), Math.ceil(total / 2)))
+    const playersH = Math.max(1, total - gamesH)
+
+    const players = users.map(user => ({
+      text: user.displayName ?? user.username ?? user.userId,
+      tag: user.status === 'playing' ? 'playing' : '',
+    }))
+    const empty = this.lobby.connecting ? this.spinner.text(this.lobby.status) : this.lobby.status || 'Nobody else here'
+    const gamesY = this.drawLobbyList(term, { x: 2, y: top, w: listW, h: playersH }, 'PLAYERS', players, 0, empty) + 1
+    const gameRows = games.map(game => ({ text: game.names.join(' vs '), tag: '' }))
+    const listEnd = this.drawLobbyList(term, { x: 2, y: gamesY, w: listW, h: gamesH }, 'GAMES', gameRows, users.length, 'No games')
+
+    const chatX = narrow ? 2 : 2 + listW + 3
+    const chatTop = narrow ? listEnd + 1 : top
     const chat: Rect = { x: chatX, y: chatTop + 2, w: term.cols - chatX - 2, h: Math.max(1, inputY - chatTop - 3) }
-
-    term.text(2, top, 'PLAYERS', BOLD | BRIGHT)
-    if (this.lobby.status) term.text(list.x, list.y, this.lobby.status.slice(0, list.w), MUTED)
-    else if (!this.lobby.users.length) term.text(list.x, list.y, 'Nobody else here'.slice(0, list.w), MUTED)
-    const first = Math.max(0, Math.min(this.lobbyIndex - list.h + 1, this.lobby.users.length - list.h))
-    this.lobby.users.slice(first, first + list.h).forEach((user, i) => {
-      const on = first + i === this.lobbyIndex
-      const tag = user.status === 'playing' ? 'playing' : ''
-      const name = (user.displayName ?? user.username ?? user.userId).slice(0, Math.max(1, list.w - tag.length - 2))
-      const row = ` ${name}`.padEnd(list.w - tag.length - 1) + tag + ' '
-      // DIM inverse with BOLD text, as SelectPopup marks its selected row.
-      term.text(list.x, list.y + i, row.slice(0, list.w), on ? DIM | BOLD : tag ? MUTED : NORMAL, on ? 1 : 0)
-    })
-
     term.text(chatX, chatTop, 'CHAT', BOLD | BRIGHT)
     drawLog(term, chat, chatLog(this.lobby.chat, this.lobby.me, chat.w))
     this.chatInput.draw(term, { x: chatX, y: inputY, w: chat.w, h: 1 })
     this.inputShown = true
+    const user = users[this.lobbyIndex]
+    const action = user ? (user.status === 'playing' ? 'Watch' : 'Challenge') : 'Watch'
     footer(term, this.chatInput.value
       ? [cap('↵', 'Send'), cap('ESC', 'Clear')]
-      : [cap(ARROWS, 'Select'), cap('↵', 'Challenge'), cap('ESC', 'Back')])
+      : [...this.backgroundCap(), cap(ARROWS, 'Select'), cap('↵', action), cap('ESC', 'Back')])
+  }
+
+  /**
+   * One lobby list: heading with count on `r.y`, rows from `r.y + 2`, `r.h` rows tall.
+   * `offset` is the list's first index in the shared lobby cursor. Returns the row after the list.
+   */
+  private drawLobbyList(term: Grid, r: Rect, title: string, rows: { text: string; tag: string }[], offset: number, empty: string): number {
+    term.text(r.x, r.y, `${title} ${rows.length}`.slice(0, r.w), BOLD | BRIGHT)
+    const y = r.y + 2
+    if (!rows.length) term.text(r.x, y, empty.slice(0, r.w), MUTED)
+    const selected = this.lobbyIndex - offset
+    const first = selected >= 0 && selected < rows.length ? Math.max(0, Math.min(selected - r.h + 1, rows.length - r.h)) : 0
+    rows.slice(first, first + r.h).forEach((item, i) => {
+      const on = first + i === selected
+      const text = item.text.slice(0, Math.max(1, r.w - item.tag.length - 2))
+      const row = ` ${text}`.padEnd(r.w - item.tag.length - 1) + item.tag + ' '
+      // DIM inverse with BOLD text, as SelectPopup marks its selected row.
+      term.text(r.x, y + i, row.slice(0, r.w), on ? DIM | BOLD : item.tag ? MUTED : NORMAL, on ? 1 : 0)
+    })
+    return y + r.h
   }
 
   /** In-game chat: log above the input line, both inside `r`. With one row, only the input line. */
   private drawGameChat(term: Grid, r: Rect): void {
     if (r.h < 1 || r.w < 8) return
+    if (this.watching) {
+      drawLog(term, r, chatLog(this.gameChat, undefined, r.w))
+      return
+    }
     this.inputShown = true
     if (r.h === 1) {
       this.chatInput.draw(term, r)
@@ -1112,7 +1308,7 @@ export class Chess implements Overlay, Screen {
     const result = this.result()
     this.clockSlots = []
     if (wide) {
-      this.drawStatus(term, board.x + board.w + gap, board.y + 1, panelW, result)
+      this.drawStatus(term, board.x + board.w + gap, board.y + 1, panelW, board.y + board.h, result)
       // Online, the left panel is chat and the controls move to one hint row: beside a 2-row board the controls leave no room for chat.
       if (this.gameMode === 'multiplayer') {
         term.text(margin, board.y + 1, 'CHAT', BOLD | BRIGHT)
@@ -1129,11 +1325,17 @@ export class Chess implements Overlay, Screen {
       const w = line().length
       this.clockSlots.push({ x: Math.max(0, Math.floor((term.cols - w) / 2)), y: 2, w, text: line, attr: () => BOLD })
     }
-    const turn = result.over ? result.text : this.note || `${this.state.turn} to move`
-    center(term, statusY, `${turn}  (you are ${this.playerColor})`, this.thinking ? MUTED : BOLD)
-    if (!result.over && isCheck(this.state, this.state.turn)) {
-      center(term, statusY + 1, 'check', BRIGHT)
+    const status = this.statusText(result)
+    center(term, statusY, this.watcherCount ? `${status}  (${this.watcherCount} watching)` : status, this.thinking ? MUTED : BOLD)
+    // The latest moves that fit on one row. A check shows as + in the notation.
+    const pairs = moveRows(this.history, false)
+    let recent = ''
+    for (let i = pairs.length - 1; i >= 0; i--) {
+      const next = recent ? `${pairs[i]}  ${recent}` : pairs[i]!
+      if (next.length > term.cols - 4) break
+      recent = next
     }
+    center(term, statusY + 1, recent, MUTED)
     // Between the status rows and the hint row, input on the last of them.
     if (this.gameMode === 'multiplayer') {
       this.drawGameChat(term, { x: 2, y: statusY + 2, w: term.cols - 4, h: term.rows - 3 - (statusY + 2) + 1 })
@@ -1142,16 +1344,27 @@ export class Chess implements Overlay, Screen {
   }
 
   private drawBoardFooter(term: Grid, over: boolean): void {
-    if (this.chatInput.value) footer(term, [cap('↵', 'Send'), cap('ESC', 'Clear')])
-    else if (over) footer(term, [cap('ESC', 'Quit')])
-    else footer(term, [cap(ARROWS, 'Move'), cap('↵', 'Play'), cap('ESC', 'Quit')])
+    const bg = this.backgroundCap()
+    if (this.watching) footer(term, [...bg, cap('ESC', 'Back')])
+    else if (this.chatInput.value) footer(term, [cap('↵', 'Send'), cap('ESC', 'Clear')])
+    else if (over) footer(term, [...bg, cap('ESC', 'Quit')])
+    else footer(term, [...bg, cap(ARROWS, 'Move'), cap('↵', 'Play'), cap('ESC', 'Quit')])
   }
 
-  private drawStatus(term: Grid, x: number, y: number, width: number, result: ReturnType<typeof resultOf>): void {
+  /** The ^Z hint, first so a narrow footer drops it first. Empty when no job can be stopped. */
+  private backgroundCap(): Span[][] {
+    return this.host.background ? [cap('^Z', 'Pause')] : []
+  }
+
+  private statusText(result: GameResult): string {
+    return result.over ? capitalize(result.text) : this.note || `${capitalize(this.state.turn)} to move`
+  }
+
+  /** The side panel, from row `y` down to the row before `bottom`. */
+  private drawStatus(term: Grid, x: number, y: number, width: number, bottom: number, result: GameResult): void {
     term.text(x, y, 'STATUS', MUTED)
     let row = y + 1
-    const status = result.over ? result.text : this.note || `${this.state.turn} to move`
-    row = writeLines(term, x, row, width, status.toUpperCase(), result.over ? BRIGHT : BOLD) + 1
+    row = writeLines(term, x, row, width, this.statusText(result), result.over ? BRIGHT : BOLD) + 1
 
     if (!result.over && isCheck(this.state, this.state.turn)) {
       term.text(x, row, 'CHECK', BRIGHT)
@@ -1170,9 +1383,21 @@ export class Chess implements Overlay, Screen {
       row += 2
     }
 
-    term.text(x, row, 'CURSOR', MUTED)
-    term.text(x, row + 1, squareName(this.cursor).toUpperCase(), BOLD)
-    term.text(x, row + 3, `You are ${this.playerColor}`.slice(0, width), MUTED)
+    if (!this.watching) {
+      term.text(x, row, 'CURSOR', MUTED)
+      term.text(x, row + 1, squareName(this.cursor).toUpperCase(), BOLD)
+      row += 3
+    }
+    if (this.watcherCount) {
+      term.text(x, row, `${this.watcherCount} watching`.slice(0, width), MUTED)
+      row += 2
+    }
+    // The latest moves, as many as fit above `bottom`.
+    const rows = moveRows(this.history)
+    const room = bottom - row - 1
+    if (!rows.length || room < 1) return
+    term.text(x, row, 'MOVES', MUTED)
+    rows.slice(-room).forEach((text, i) => term.text(x, row + 1 + i, text.slice(0, width), NORMAL))
   }
 
   private showEndgame(result: GameResult): void {
@@ -1183,11 +1408,24 @@ export class Chess implements Overlay, Screen {
     const onTime = match?.[2] === 'on time'
     const title = !winner ? 'GAME OVER' : onTime ? 'TIME' : 'CHECKMATE'
     const winnerName = winner === 'white' ? this.whitePlayerName : winner === 'black' ? this.blackPlayerName : ''
-    const message = winner
-      ? `${winnerName} wins ${match![2]}. ${winner === this.playerColor ? 'You won!' : 'You lost!'}`
-      : 'Draw game.'
-    const restart = this.gameMode === 'multiplayer' ? () => this.requestRematch() : () => this.newGame()
+    const message = !winner ? 'Draw game.'
+      : this.watching ? `${winnerName} wins ${match![2]}.`
+      : `${winnerName} wins ${match![2]}. ${winner === this.playerColor ? 'You won!' : 'You lost!'}`
     this.repaint()
+    if (this.watching) {
+      // Stay keeps watching for a rematch in the same room.
+      const stay = () => {
+        this.stack?.pop()
+        this.repaint()
+      }
+      this.stack?.push(new ChessCard(this.snd, title, message, ['Stay', 'Back'], 0, action => {
+        this.stack?.pop()
+        if (action === 'Back') this.toMenu()
+        else this.repaint()
+      }, stay))
+      return
+    }
+    const restart = this.gameMode === 'multiplayer' ? () => this.requestRematch() : () => this.newGame()
     this.stack?.push(new ChessCard(this.snd, title, message, ['Play again', 'Quit'], 0, action => {
       this.stack?.pop()
       if (action === 'Play again') restart()
@@ -1228,8 +1466,8 @@ export class Chess implements Overlay, Screen {
     const piece = getPiece(this.state, square)
     const selected = !!this.selected && sameSquare(this.selected, square)
     const target = this.moves.find(move => sameSquare(move.to, square))
-    const cursor = sameSquare(this.cursor, square)
-    const machineMoved = !!this.lastMachineMove && sameSquare(this.lastMachineMove, square)
+    const cursor = !this.watching && sameSquare(this.cursor, square)
+    const moved = !!this.lastMove && (sameSquare(this.lastMove.from, square) || sameSquare(this.lastMove.to, square))
     const check = piece?.kind === 'king' && piece.color === this.state.turn && isCheck(this.state, this.state.turn)
 
     const dark = (square.row + square.col) % 2 === 1
@@ -1238,10 +1476,11 @@ export class Chess implements Overlay, Screen {
     const highlight = selected || check ? BOLD | BRIGHT
       : cursor ? DIM | BOLD
       : target ? FAINT
-      : machineMoved ? FAINT
+      : moved ? FAINT
       : null
-    // The machine's last piece keeps its normal look on a FAINT field, through the glyph's faint plane rather than inverse.
-    const faintField = machineMoved && highlight === FAINT && !target
+    // The moved piece keeps its normal look on a FAINT field, through the glyph's faint plane rather than inverse.
+    // The square it left is empty and is filled FAINT directly.
+    const faintField = moved && highlight === FAINT && !target && !!piece
     const marked = highlight !== null && !faintField
     for (let dy = 0; dy < height; dy++) {
       for (let dx = 0; dx < width; dx++) {
@@ -1492,6 +1731,36 @@ function rasterSvg(
   }
 
   return { cols, rows, cells }
+}
+
+type LobbyGame = { gameId: string; names: string[] }
+
+/** Games with both players in the lobby list. A game with one player is a challenge still waiting for an answer. */
+function gamesOf(users: MultiplayerFriend[]): LobbyGame[] {
+  const games = new Map<string, LobbyGame>()
+  for (const user of users) {
+    if (user.status !== 'playing' || !user.gameId) continue
+    const game = games.get(user.gameId) ?? { gameId: user.gameId, names: [] }
+    game.names.push(user.displayName ?? user.username ?? user.userId)
+    games.set(user.gameId, game)
+  }
+  return [...games.values()].filter(game => game.names.length > 1)
+}
+
+function capitalize(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
+/** Full moves, one per entry: `12. Nf3     Nc6`, or `12. Nf3 Nc6` without `columns`. */
+function moveRows(history: readonly string[], columns = true): string[] {
+  const rows: string[] = []
+  for (let i = 0; i < history.length; i += 2) {
+    const number = `${i / 2 + 1}.`
+    const white = history[i]!
+    const black = history[i + 1] ?? ''
+    rows.push((columns ? `${number.padEnd(4)}${white.padEnd(8)}${black}` : `${number} ${white} ${black}`).trimEnd())
+  }
+  return rows
 }
 
 function squareName(square: Square): string {

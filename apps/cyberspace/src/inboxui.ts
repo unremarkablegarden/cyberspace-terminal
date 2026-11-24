@@ -10,7 +10,7 @@
 
 import { dec, type Proc, type Program } from '@cyberspace/kernel'
 import {
-  Surface, ScreenStack, Reveal, parseKeys,
+  Surface, ScreenStack, Reveal, Spinner, parseKeys,
   frame, hline, label, cells, plain, wrap,
   ConfirmPopup, TextPopup, YES_NO,
   NORMAL, BRIGHT, BOLD, DIM,
@@ -216,9 +216,9 @@ export function inboxProgram(
     const s = new Surface(cols, rows)
     const stack = new ScreenStack(s as never)
     const outer: Rect = { x: 0, y: 0, w: cols, h: rows }
-    const splitY = rows - 2
     const tabsY = 1
-    const list: Rect = { x: 2, y: 3, w: cols - 4, h: splitY - 3 }
+    // Runs to the bottom frame. The status sits in that frame on the left.
+    const list: Rect = { x: 2, y: 3, w: cols - 4, h: rows - 4 }
 
     let running = true
     let tab = 0
@@ -228,6 +228,11 @@ export function inboxProgram(
     let extras: Row[] = []
     let next: string | null | undefined = undefined
     let loading = true
+    /**
+     * A reload is out. Its rows arrive page by page, and the spinner repaints meanwhile,
+     * so the list is held back until it is complete and the reveal starts.
+     */
+    let filling = true
     let status = ''
     /** Bumped on every reload; a page that answers an older one is dropped. */
     let epoch = 0
@@ -251,6 +256,7 @@ export function inboxProgram(
       next = hit.next
       cursor = Math.min(hit.sel, Math.max(0, hit.items.length - 1))
       loading = false
+      filling = false
       status = ''
       draw()
     }
@@ -259,6 +265,7 @@ export function inboxProgram(
     const fetched = new Map<string, Fetched | null>()
 
     const reveal = new Reveal({ onTick: () => draw(), onBlip: () => snd.blip(BLIP_HZ) })
+    const spinner = new Spinner({ onTick: () => draw() })
     const paintNow = (): void => { tty.paint(s.render()) }
     const open = (screen: Screen): void => { stack.push(screen); paintNow() }
     const close = (): void => { stack.pop(); s.invalidate(); draw() }
@@ -304,8 +311,11 @@ export function inboxProgram(
       drawTabs()
 
       const all = shown()
-      if (loading && !all.length) {
-        s.text(list.x + ((list.w - 7) >> 1), list.y + (list.h >> 1), 'LOADING', DIM)
+      if (loading || status === 'LOADING') spinner.start()
+      else spinner.stop()
+      if (filling || (loading && !all.length)) {
+        const wait = spinner.text('LOADING')
+        s.text(list.x + ((list.w - cells(wait)) >> 1), list.y + (list.h >> 1), wait, DIM)
       } else if (!all.length) {
         const none = next ? 'None so far; ⬇ for older.' : unreadOnly ? 'Nothing unread.' : 'Nothing here.'
         s.text(list.x, list.y, none, DIM)
@@ -332,9 +342,11 @@ export function inboxProgram(
         }
       }
 
-      hline(s, splitY, 0, cols - 1)
-      const note = status || (loading ? 'LOADING' : next === null || !TABS[tab]!.fetch ? '~EOF~' : 'MORE')
-      if (note) s.text(cols - 4 - cells(note), splitY, ` ${note} `, status ? BRIGHT : DIM)
+      // A wait shows as the spinner alone, anything else as the status text.
+      // Not while the empty list already shows the centred LOADING.
+      const centred = filling || (loading && !all.length)
+      const note = loading || status === 'LOADING' ? (centred ? '' : spinner.glyph) : status
+      if (note) label(s, outer, note, { edge: 'bottom', attr: BRIGHT })
       s.showCursor = false
       paintNow()
     }
@@ -389,6 +401,7 @@ export function inboxProgram(
       items = []
       next = undefined
       loading = true
+      filling = true
       if (!keep) cursor = 0
       draw()
       try {
@@ -407,6 +420,7 @@ export function inboxProgram(
       }
       if (mine !== epoch) return
       loading = false
+      filling = false
       const moved = wasOn ? shown().findIndex(r => r.notice.id === wasOn) : -1
       if (moved >= 0) cursor = moved
       cursor = Math.min(cursor, Math.max(0, shown().length - 1))
@@ -619,7 +633,7 @@ export function inboxProgram(
       if (rose && !stack.active) void reload(true)
       else draw()
     })
-    p.onStop = () => { stopped = true }
+    p.onStop = () => { stopped = true; spinner.stop() }
 
     // Back from the program a row opened: what was read there is read here.
     p.onCont = () => {
@@ -650,6 +664,7 @@ export function inboxProgram(
       epoch++
       unwatch?.()
       reveal.stop()
+      spinner.stop()
       while (stack.active) stack.pop()
       p.out('\x1b[?1049l\x1b[?25h')
       tty.setCooked()

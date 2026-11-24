@@ -349,3 +349,17 @@
     - Against the machine, five difficulty levels
     - Online: lobby with chat, challenge, rematch, chat during a game
     - Clocks: 1, 3, 5, 10 or 20 min a side, loss on time
+
+## v0.9.8
+
+- `chess`
+    - Lobby: players and games lists, `Enter` on a game or a playing user to watch
+    - Online count under the buttons on the title card
+    - Opponent's last move marked on both its squares, online too
+    - Move list in algebraic notation, in place of the player's colour
+    - Title card: Play against Machine, Play against Human
+    - `F1`, the switcher and the notice bar over the game
+    - `^Z` or the switcher stops it as a job, `fg` resumes it, online games stay connected
+- C-Mail: inline `code` on the dim background, backticks hidden
+- Switcher: `CMD-K` opens the list on the current program, `K` again while held steps and letting go chooses
+- Braille spinner before every LOADING: inbox, feed, cIRC, C-Mail, globe, browse, chess lobby

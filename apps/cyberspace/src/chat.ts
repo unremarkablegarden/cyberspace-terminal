@@ -8,7 +8,7 @@
 // named rather than played; a GIF would need a frame clock to be worth drawing.
 
 import {
-  hangingWrap, plain, NORMAL, BRIGHT, DIM, BOLD, type LogLine, type LineSpan,
+  hangingWrap, plain, NORMAL, BRIGHT, DIM, BOLD, BG, type LogLine, type LineSpan,
 } from '@cyberspace/tui'
 
 /** Width of the nick field. */
@@ -145,6 +145,8 @@ export interface EntryOptions {
    * the attachment is named in the text instead.
    */
   picRows?: number
+  /** Draw `code` on the dim background, backticks removed. */
+  code?: boolean
 }
 
 /**
@@ -272,15 +274,18 @@ export function entryLines(m: ChatMessage, width: number, opts: EntryOptions = {
   // timestamp; it runs from the margin.
   const spans = m.status ? [] : m.action ? [name] : [{ at: 0, len: 5, attr: DIM }, name]
 
+  const attr = (m.deleted ? DIM : NORMAL) | lit
   const rows: LogLine[] = wrapped.map((text, i) => ({
     text,
-    attr: (m.deleted ? DIM : NORMAL) | lit,
-    spans: i === 0 ? spans : undefined,
+    attr,
+    spans: i === 0 ? [...spans] : undefined,
     bar: forMe,
     // The highlight covers the body and starts where the body does, for both
     // messages and actions, so continuation rows share one left edge.
     barFrom: head.length,
   }))
+
+  if (opts.code && reveal >= head.length) inlineCode(rows, head.length, said, attr | BG)
 
   // Nothing is hung under a prefix still typing out, or a picture would appear
   // before the name it belongs to.
@@ -300,6 +305,45 @@ export function entryLines(m: ChatMessage, width: number, opts: EntryOptions = {
     }]
   }
   return rows.concat(tail)
+}
+
+/**
+ * Removes the backticks of each `code` run in `rows` and spans the run with `attr`.
+ *
+ * Works on the wrapped rows, from column `from` on, because hangingWrap folds whitespace and offsets taken from `said` would not match.
+ * Backticks are never folded, so the n-th backtick in the rows is the n-th in `said`.
+ * Only backticks that pair within one line of `said` are delimiters; a lone one, or one whose pair is not typed out yet, stays as text.
+ * A run can continue onto the next row.
+ */
+function inlineCode(rows: LogLine[], from: number, said: string, attr: number): void {
+  const delimiters = new Set<number>()
+  let n = 0
+  for (const run of said.matchAll(/`[^`\n]*`|`/g)) {
+    if (run[0].length > 2) delimiters.add(n).add(n + 1)
+    n += run[0].length > 1 ? 2 : 1
+  }
+  if (!delimiters.size) return
+  let tick = 0
+  let inCode = false
+  for (const row of rows) {
+    let text = row.text.slice(0, from)
+    let start = -1
+    const close = () => {
+      if (start >= 0 && text.length > start) (row.spans ??= []).push({ at: start, len: text.length - start, attr })
+      start = -1
+    }
+    for (const ch of row.text.slice(from)) {
+      if (ch === '`' && delimiters.has(tick++)) {
+        if (inCode) close()
+        inCode = !inCode
+        continue
+      }
+      if (inCode && start < 0) start = text.length
+      text += ch
+    }
+    close()
+    row.text = text
+  }
 }
 
 /**

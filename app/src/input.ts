@@ -20,6 +20,8 @@ export interface Overlay {
   /** A key released. Only DOOM asks for these; the soft keyboard sends one SOFT_HOLD_MS after each press. */
   keyUp?(k: KeyInput): void
   silentKey(k: KeyInput): boolean
+  /** F1 and the switcher open over it. The overlay stops painting while either is up. */
+  readonly yields?: boolean
 }
 
 export interface KeyboardDeps {
@@ -28,7 +30,7 @@ export interface KeyboardDeps {
   snd: Sound
   scroll: Scrollback
   config: () => ConfigBox | null
-  /** The job switcher. CMD-K (CTRL-K off a Mac) opens and steps it; letting the modifier go chooses. */
+  /** The job switcher. CMD-K (CTRL-K off a Mac) opens it; pressed again it steps, and letting the modifier go chooses. */
   palette: () => JobPalette | null
   /** CMD-I (CTRL-I off a Mac): the notice on the bar, or the inbox when the bar is down. */
   inbox?: () => void
@@ -147,7 +149,8 @@ export class Keyboard {
     // 'Tab', and no program is sent a control byte for the letter.
     if (hostModifier(e) && !e.altKey && !e.shiftKey && e.code === 'KeyI') {
       e.preventDefault()
-      if (!this.d.overlay()?.open) this.d.inbox?.()
+      const overlay = this.d.overlay()
+      if (!overlay?.open || overlay.yields) this.d.inbox?.()
       return
     }
     this.click(e)
@@ -160,7 +163,7 @@ export class Keyboard {
     const overlay = this.d.overlay()
     // F1 opens the config box, except over the screensaver, which takes the
     // key like any other and wakes.
-    if (e.key === 'F1' && (!overlay?.open || overlay === config)) {
+    if (e.key === 'F1' && (!overlay?.open || overlay === config || overlay.yields)) {
       e.preventDefault()
       config?.toggle()
       return
@@ -205,14 +208,14 @@ export class Keyboard {
     this.click({ key: 'F1' })
     const config = this.d.config()
     const overlay = this.d.overlay()
-    if (!overlay?.open || overlay === config) config?.toggle()
+    if (!overlay?.open || overlay === config || overlay.yields) config?.toggle()
     else this.press('F1')
   }
 
   private stepSwitcher(dir: 1 | -1): void {
     const palette = this.d.palette()
     const overlay = this.d.overlay()
-    if (palette && this.d.live() && (!overlay?.open || overlay === palette)) palette.step(dir)
+    if (palette && this.d.live() && (!overlay?.open || overlay === palette || overlay.yields)) palette.step(dir, !!overlay?.yields)
   }
 
   /** A key released: the switcher's modifier takes its row, and an overlay that tracks releases gets the key. */

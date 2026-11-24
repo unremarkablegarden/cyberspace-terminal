@@ -1,11 +1,11 @@
 // The job switcher: CMD-K over the machine, on the CRT grid outside the pty.
 // CTRL-K off a Mac, the platform's own modifier either way; see config.ts.
 //
-// The chord opens the list with the row after the current one selected; again
-// moves down, with Shift up, and letting the modifier go takes the row. Any
-// other key makes the list ordinary: arrows, digits and Enter choose, Escape
-// leaves, Delete kills the selected job after a confirm. The switch itself is
-// the kernel's (Jobs.switchTo); the shell picks it up at its prompt.
+// The key combination opens an ordinary list on the current row: arrows, digits
+// and Enter choose, Escape leaves, Delete kills the selected job after a confirm.
+// Pressing it again while the list is up moves down, with Shift up, and from then
+// letting the modifier go takes the row. Any other key cancels that again. The
+// switch itself is the kernel's (Jobs.switchTo); the shell picks it up at its prompt.
 
 import type { CrtScreen } from '@cyberspace/crt'
 import type { Sound } from '@cyberspace/crt/audio'
@@ -36,8 +36,8 @@ export class JobPalette implements Overlay {
   private stack: ScreenStack | null = null
   private rows: Row[] = []
   private items: string[] = []
-  /** Set by any key; from then on letting go of Cmd no longer chooses. */
-  private sticky = false
+  /** True unless the last key was a repeat of the key combination: letting go of Cmd then does not choose. */
+  private sticky = true
   private cursorWas = true
 
   constructor(
@@ -59,18 +59,22 @@ export class JobPalette implements Overlay {
     return !!this.stack?.active
   }
 
-  /** Cmd+K: open on the next row, or move the selection by `dir`. */
-  step(dir: 1 | -1): void {
+  /**
+   * Cmd+K: open on the current row, or move the selection by `dir` and choose on release.
+   * `over` opens it over an overlay that yields, which holds the grid lock.
+   */
+  step(dir: 1 | -1, over = false): void {
     if (this.open) {
       this.stack!.key(arrow(dir))
+      this.sticky = false
       return
     }
     const kernel = this.kernel()
-    if (!kernel || grid.locked) return
+    if (!kernel || (grid.locked && !over)) return
     this.build(kernel)
     const jobs = kernel.jobs
     const here = this.rows.findIndex(r => jobs.fg ? r.kind === 'job' && r.job === jobs.fg : r.kind === 'shell')
-    this.show((here + dir + this.rows.length) % this.rows.length)
+    this.show(Math.max(0, here))
   }
 
   /** Cmd let go: take the selected row, unless another key made the list ordinary. */
@@ -108,7 +112,7 @@ export class JobPalette implements Overlay {
     grid.lock()
     this.cursorWas = RENDER.cursor
     RENDER.cursor = false
-    this.sticky = false
+    this.sticky = true
     this.snd.tick()
 
     const picker = new SelectPopup({

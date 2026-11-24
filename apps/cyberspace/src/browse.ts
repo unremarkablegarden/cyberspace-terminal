@@ -12,7 +12,7 @@
 
 import { dec, fs, paths, type Proc, type Program } from '@cyberspace/kernel'
 import {
-  Surface, ScreenStack, InputLine, Reveal, Pager, parseKeys, wrap,
+  Surface, ScreenStack, InputLine, Reveal, Spinner, Pager, parseKeys, wrap,
   clear, frame, hline, label, RULE,
   ConfirmPopup, TextPopup, YES_NO,
   NORMAL, BRIGHT, BOLD, DIM,
@@ -158,6 +158,7 @@ class BrowseScreen {
    * those would make the list unreadable on every keystroke of a filter.
    */
   private reveal: Reveal
+  private spinner: Spinner
 
   private loaded = false
   private failed = false
@@ -196,6 +197,7 @@ class BrowseScreen {
       // Output bleep rather than the selection tick: this is text arriving.
       onBlip: () => snd.blip(),
     })
+    this.spinner = new Spinner({ onTick: () => this.paint() })
   }
 
   private get home(): string {
@@ -234,8 +236,10 @@ class BrowseScreen {
     ])
     label(term, outer, HINT_EXIT, { align: 'right' })
 
+    if (!this.loaded && !this.failed) this.spinner.start()
+    else this.spinner.stop()
     if (this.failed) return this.problem(term)
-    if (!this.loaded) return this.centred(term, 'LOADING')
+    if (!this.loaded) return this.centred(term, this.spinner.text('LOADING'))
     if (!this.all.length) return this.centred(term, 'NOTHING PUBLISHED YET')
 
     this.drawHeader(term, box, outer)
@@ -842,6 +846,7 @@ class BrowseScreen {
 
   dispose(): void {
     this.reveal.stop()
+    this.spinner.stop()
   }
 }
 
