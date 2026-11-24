@@ -201,6 +201,11 @@ export function circProgram(
     let lastActivity = Date.now()
     let running = true
     let primed = false
+    /**
+     * A room change waits on the presence request. The log shows LOADING meanwhile, not the room being left.
+     * Without it, a resumed run paints the old room for the length of the request, then clears it for the new room's reveal.
+     */
+    let joining = false
     let switching = false
     /** Whether this room's roster has been revealed. Only the first one is. */
     let rostered = false
@@ -540,7 +545,8 @@ export function circProgram(
       // A modal holds the grid while open; painting beneath would erase it.
       if (stack.active) return
       blink.sync(wire.blinking)
-      if (!primed || status === 'LOADING') spinner.start()
+      const waiting = !primed || joining
+      if (waiting || status === 'LOADING') spinner.start()
       else spinner.stop()
       s.clear()
 
@@ -583,7 +589,7 @@ export function circProgram(
       // Bottom of the pane first. The log is drawn upwards from the last line,
       // so a picture that lands moves only the rows above it: read downwards,
       // every picture already drawn would be pushed up by the next one.
-      if (pics) {
+      if (pics && !joining) {
         const end = lines.length - scroll
         const top = end - logRect.h
         const { cols: pw, rows: ph } = picBounds()
@@ -591,10 +597,10 @@ export function circProgram(
         pics.ensure(shown.map(p => p.src), pw, ph)
       }
 
-      drawLog(s, logRect, printing(lines, logRect.h, print.count), scroll)
-      // Placeholder while the pane is empty. Cleared by the first feed(), which
-      // sets primed.
-      if (!primed) {
+      if (!joining) drawLog(s, logRect, printing(lines, logRect.h, print.count), scroll)
+      // Placeholder while the pane is empty or a room change is pending.
+      // Cleared by the first feed(), which sets primed.
+      if (waiting) {
         const wait = spinner.text('LOADING')
         s.text(logRect.x + Math.floor((logRect.w - cells(wait)) / 2),
           logRect.y + Math.floor(logRect.h / 2), wait, DIM)
@@ -752,14 +758,18 @@ export function circProgram(
       const list = rooms.length ? rooms : await loadRooms()
       const next = list.find(r => r.slug.toLowerCase() === slug || r.id === slug)
       if (!next) { say(`no such room: #${slug}`, true); return false }
+      if (room) { joining = true; paint() }
       try {
         const r = await api.post<{ heartbeatMs?: number }>(
           `/v1/circ/${next.id}/presence`, { lastActivity })
         if (r?.heartbeatMs) heartbeatMs = r.heartbeatMs
       } catch (e) {
+        // The old room is still joined, so its log comes back.
+        joining = false
         say(e instanceof ApiError ? e.message : 'cannot join room', true)
         return false
       }
+      joining = false
       // Room-change tone, suppressed on first entry.
       if (room) snd.blip(ROOM_HZ, 0.120, 0)
       await leaveRoom()

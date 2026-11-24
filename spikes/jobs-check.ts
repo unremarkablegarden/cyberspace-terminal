@@ -5,6 +5,7 @@
 import { configure, fs, InMemory } from '@zenfs/core'
 import { Kernel } from '../packages/kernel/src/kernel.ts'
 import { Tty } from '../packages/kernel/src/tty.ts'
+import { Jobs } from '../packages/kernel/src/jobs.ts'
 import { runOnTty } from '../packages/kernel/src/handoff.ts'
 import type { Proc } from '../packages/kernel/src/proc.ts'
 import { coreutils } from '../packages/coreutils/src/index.ts'
@@ -245,6 +246,22 @@ ok('shell at a prompt', atPrompt())
   await type('q')
   await settle()
   ok('child exits, outer exits', jobs.list().length === 0 && atPrompt())
+}
+
+// --- recency, the palette's order ----------------------------------------------
+{
+  const t = new Jobs()
+  t.device(new Tty(() => {}, 80, 24))
+  const a = t.create('inbox')
+  const b = t.create('feed')
+  const c = t.create('circ')
+  ok('never foregrounded: table order', t.recent().map(j => j.name).join() === 'inbox,feed,circ')
+  t.start(a); t.fg = null
+  t.start(b); t.fg = null
+  ok('most recent first, then table order', t.recent().map(j => j.name).join() === 'feed,inbox,circ', t.recent().map(j => j.name).join())
+  t.start(a); t.fg = null
+  ok('a return moves it to the top', t.recent().map(j => j.name).join() === 'inbox,feed,circ', t.recent().map(j => j.name).join())
+  ok('the table itself keeps job order', t.list().map(j => j.id).join() === [a, b, c].map(j => j.id).join())
 }
 
 console.log(fail ? `${fail} FAILED` : 'all ok')

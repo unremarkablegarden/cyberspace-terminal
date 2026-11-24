@@ -41,6 +41,8 @@ export interface Job {
   resolveStopped: () => void
   /** @internal */
   resolveExited: (code: number) => void
+  /** @internal When the job last took the terminal, as a count of foregrounds; 0 for never. See Jobs.recent(). */
+  seen: number
   /** The command line as typed, for ps and the Stopped line. */
   readonly line: string
 }
@@ -58,6 +60,8 @@ export class Jobs {
   private owner: Proc | null = null
   private tty: Tty | null = null
   private pendingFg: Job | null = null
+  /** Foregrounds so far. A counter, not a clock: two in one millisecond still order. */
+  private foregrounds = 0
   private request: JobRequest | null = null
   private requestFns = new Set<() => void>()
   /** Lines for the shell to print before its next prompt: Done and Terminated. */
@@ -95,6 +99,11 @@ export class Jobs {
 
   list(): Job[] {
     return [...this.jobs]
+  }
+
+  /** The jobs by when each last held the terminal, most recent first. Never-foregrounded jobs keep table order. */
+  recent(): Job[] {
+    return [...this.jobs].sort((a, b) => b.seen - a.seen)
   }
 
   byId(n: number): Job | undefined {
@@ -140,6 +149,7 @@ export class Jobs {
   start(job: Job): void {
     if (this.fg && this.fg !== job) throw new Error('jobs: foreground is taken')
     this.fg = job
+    job.seen = ++this.foregrounds
     this.tty?.foreground(job.tty)
   }
 
@@ -152,6 +162,7 @@ export class Jobs {
     job.state = 'fg'
     this.fg = job
     this.current = job
+    job.seen = ++this.foregrounds
     job.stopped = new Promise<void>(res => { job.resolveStopped = res })
     this.tty?.foreground(job.tty)
     if (wasStopped) for (const t of job.tasks) t.cont()
@@ -223,6 +234,8 @@ export class Jobs {
       this.jobs.push(job)
     }
     this.pendingFg = fg === null ? null : this.jobs[fg] ?? null
+    // A session stores no recency; the job that held the terminal ranks first.
+    if (this.pendingFg) this.pendingFg.seen = ++this.foregrounds
     this.current = this.pendingFg ?? this.jobs[this.jobs.length - 1] ?? null
   }
 
@@ -297,6 +310,7 @@ export class Jobs {
       stopped: new Promise<void>(res => { resolveStopped = res }),
       resolveStopped: () => resolveStopped(),
       resolveExited: code => resolveExited(code),
+      seen: 0,
       get line() { return resume.line ?? line },
     }
     return job

@@ -395,8 +395,13 @@ class FeedScreen implements Screen {
   private status = ''
   private loading = false
   private bioLoading = false
-  /** A reply just written, selected when the thread comes back with it. */
+  /** A reply just written, or the one `feed -p <post> <reply>` names, selected when the thread comes back with it. */
   private pendingReply?: string
+  /**
+   * A one-entry screen shows LOADING until its entry is open, and its targeted reply selected.
+   * Otherwise it reveals the list, then the post from the top, then jumps to the reply.
+   */
+  private seeking: boolean
   private posting = false
   private loaded = false
   private hasMore = true
@@ -429,6 +434,7 @@ class FeedScreen implements Screen {
   ) {
     this.author = opts.author
     this.only = opts.post
+    this.seeking = !!opts.post
     this.parent = opts.parent
     this.quit = opts.quit ?? (() => this.env.host.pop())
     this.print = new Reveal({
@@ -457,6 +463,8 @@ class FeedScreen implements Screen {
       this.pendingReply = this.only.reply
       this.setOpen(true)
     }
+    // With a reply still to find, fetchReplies() lands once the thread is in.
+    if (!this.pendingReply) this.land()
 
     const next = rest[0]
     if (next?.post) {
@@ -597,6 +605,8 @@ class FeedScreen implements Screen {
 
   /** Reveal the rows on screen, bounded by the screenful. */
   private printScreenful(rows: number, scroll: number): void {
+    // A screen under another one is drawn whole when it comes back, and its reveal would only bleep.
+    if (!this.active) return
     this.print.start(Math.min(this.pane.h, Math.max(0, rows - scroll)))
   }
 
@@ -784,7 +794,7 @@ class FeedScreen implements Screen {
       this.loaded = true
       if (!this.closed) {
         this.status = this.hasMore ? '' : EOF
-        if (opening) {
+        if (opening && !this.seeking) {
           this.layoutList()
           this.printScreenful(this.listRows, this.scroll)
         }
@@ -881,10 +891,32 @@ class FeedScreen implements Screen {
     }
 
     this.buildCards()
+    if (open && this.openReplies) this.selectPending()
+    if (!this.seeking) this.printOpened()
+    this.redraw()
+  }
+
+  /** Reveal the screenful just opened or closed. */
+  private printOpened(): void {
     // While the replies are in flight the column is the post and the divider,
     // so the reveal is bounded by the screenful rather than the short column.
-    if (open) this.printScreenful(this.openReplies ? this.columnRows : this.pane.h, 0)
+    if (this.open) this.printScreenful(this.openReplies ? this.columnRows : this.pane.h, this.readScroll)
     else { this.layoutList(); this.printScreenful(this.listRows, this.scroll) }
+  }
+
+  /** Select the pending reply in the column just built. Not found leaves the post selected. */
+  private selectPending(): void {
+    if (!this.pendingReply) return
+    const i = this.cards.findIndex(c => c.replyId === this.pendingReply)
+    this.pendingReply = undefined
+    if (i > 0) this.showCard(i)
+  }
+
+  /** End a one-entry screen's LOADING and reveal from where it opened. */
+  private land(): void {
+    if (!this.seeking) return
+    this.seeking = false
+    this.printOpened()
     this.redraw()
   }
 
@@ -924,12 +956,9 @@ class FeedScreen implements Screen {
     if (this.open && this.entries[this.sel]?.id === id) {
       this.openReplies = list
       this.buildCards()
-      if (this.pendingReply) {
-        const i = this.cards.findIndex(c => c.replyId === this.pendingReply)
-        this.pendingReply = undefined
-        if (i > 0) this.showCard(i)
-      }
+      this.selectPending()
     }
+    this.land()
     this.redraw()
   }
 
@@ -1125,6 +1154,7 @@ class FeedScreen implements Screen {
     this.drawChromeLabels(term)
 
     if (this.failed) { this.centred(term, this.only ? 'NO SUCH ENTRY' : 'FEED UNAVAILABLE'); return }
+    if (this.seeking) { this.centred(term, this.spinner.text('LOADING')); return }
     if (!this.entries.length) {
       this.centred(term, this.loaded ? 'NO ENTRIES' : this.spinner.text('LOADING'))
       return
@@ -1322,6 +1352,7 @@ class FeedScreen implements Screen {
   /** The list, the open entry's replies or the status rule waiting on a request. */
   private get waiting(): boolean {
     return (!this.entries.length && !this.loaded && !this.failed)
+      || this.seeking
       || (this.open && this.openReplies === null)
       || this.status.startsWith('LOADING')
   }
@@ -1865,7 +1896,10 @@ export function feedProgram(
       // push() draws the root, and the draw parks a fresh state over `screens`.
       const restoring = screens
       host.push(root)
-      void root.start(restoring).then(() => { if (want.post && running) root.goTo(want) })
+      // An entry asked for by id goes on top at once, so the list beneath it never shows.
+      // `restoring` is the root alone in that case, so start() pushes nothing over it.
+      if (want.post) root.goTo(want)
+      void root.start(restoring)
       p.onArgs = argv => { pending = target(argv) }
       p.onStop = () => root.pause()
       p.onCont = () => {

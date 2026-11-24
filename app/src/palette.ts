@@ -6,6 +6,9 @@
 // Pressing it again while the list is up moves down, with Shift up, and from then
 // letting the modifier go takes the row. Any other key cancels that again. The
 // switch itself is the kernel's (Jobs.switchTo); the shell picks it up at its prompt.
+//
+// Jobs are listed most recently used first (Jobs.recent), so CMD-K K and a release goes back to the job last left.
+// The digits follow that order.
 
 import type { CrtScreen } from '@cyberspace/crt'
 import type { Sound } from '@cyberspace/crt/audio'
@@ -94,7 +97,8 @@ export class JobPalette implements Overlay {
 
   private build(kernel: Kernel): void {
     const jobs = kernel.jobs
-    this.rows = jobs.list().map(job => ({ kind: 'job', job }) as Row)
+    // Most recently used first, so the job just left is one step down from the current one.
+    this.rows = jobs.recent().map(job => ({ kind: 'job', job }) as Row)
     // Logged out, login is offered first among the launchers.
     if (!this.authed() && kernel.resolveProgram('login')) this.rows.push({ kind: 'launch', name: 'login' })
     for (const name of MAIN) {

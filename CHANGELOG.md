@@ -362,4 +362,7 @@
     - `^Z` or the switcher stops it as a job, `fg` resumes it, online games stay connected
 - C-Mail: inline `code` on the dim background, backticks hidden
 - Switcher: `CMD-K` opens the list on the current program, `K` again while held steps and letting go chooses
+- Switcher: programs listed most recently used first
 - Braille spinner before every LOADING: inbox, feed, cIRC, C-Mail, globe, browse, chess lobby
+- Feed: a reply opened from the inbox shows its thread at the reply, not the post's top first
+- Fixed cIRC showing the previous room before revealing the one opened from the inbox
