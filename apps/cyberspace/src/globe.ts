@@ -425,8 +425,8 @@ export function globeProgram(api: ApiClient, deps: GlobeDeps, snd: ChatSound = S
     let world: World
     try {
       world = decodeWorld(await deps.world())
-    } catch {
-      p.err('\r\x1b[2Kglobe: world.bin: cannot read\n')
+    } catch (err) {
+      p.err(`\r\x1b[2Kglobe: world.bin: ${err instanceof Error ? err.message : 'cannot read'}\n`)
       return 1
     }
     const grid = graticule()
