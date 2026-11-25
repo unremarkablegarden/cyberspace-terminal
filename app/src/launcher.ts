@@ -22,6 +22,7 @@ const PROGRAMS: Launchable[] = [
   { line: 'circ', summary: 'chat rooms' },
   { line: 'cmail', summary: 'direct messages' },
   { line: 'globe', summary: 'members on a wireframe Earth' },
+  { line: 'directory', summary: 'members by profile picture' },
   { line: 'browse', summary: 'published programs' },
   { line: 'edit', summary: 'text editor' },
   { line: 'vim', summary: 'text editor' },

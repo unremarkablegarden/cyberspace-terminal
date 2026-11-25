@@ -21,7 +21,7 @@ import type { Overlay } from './input'
 /** Programs offered as launchers when no job of theirs is running. */
 const MAIN = ['inbox', 'feed', 'circ', 'cmail', 'globe']
 /** Launchers that exit with `not logged in` when logged out. Shown FAINT and not selectable until login. */
-export const NEEDS_LOGIN = new Set(['feed', 'circ', 'cmail', 'inbox'])
+export const NEEDS_LOGIN = new Set(['feed', 'circ', 'cmail', 'inbox', 'directory'])
 const TITLE = 'PROGRAMS'
 const GAP = 2
 

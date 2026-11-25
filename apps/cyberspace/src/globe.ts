@@ -7,7 +7,7 @@
 // FAINT; the limb and the pins BRIGHT. Land is filled at the CRT's ground
 // level as a second bitmap plane, under the lines pixel for pixel. Members with a location are pins; Tab
 // walks them, the selected pin is larger, named in the status rule, and Enter
-// opens the member's card.
+// opens the member's card (card.ts).
 //
 // Drawn at the face's resolution through picture handles (tui pixels.ts,
 // pict.ts), so the host must have a picture bank.
@@ -25,8 +25,7 @@ import {
 } from '@cyberspace/tui'
 import { ApiError, type ApiClient } from './api.js'
 import { SILENT, type ChatSound } from './chat.js'
-import { bioLines, fetchProfile, loadPortrait } from './bio.js'
-import { when, type FeedProfile } from './feedutil.js'
+import { MemberCard } from './card.js'
 
 export interface GlobeDeps {
   /** The baked outline file. See tools/globe.ts for the format. */
@@ -146,9 +145,9 @@ const ZOOM_EASE = TURN_EASE
 const ZOOM_DONE = 1e-3
 /** Eye distance in model units. See View. */
 const FOCAL = 6
-/** The site's opening view: Europe and Africa, tilted down from the north. */
-const YAW0 = -1.7
-const PITCH0 = 0.6
+/** The opening view is centred on this point: central Europe, in degrees. */
+const HOME_LAT = 50
+const HOME_LON = 15
 /** Below this width the hint keeps only the movement keys and the status is dropped. */
 const NARROW = 60
 /** Quantum of the baked coordinates, degrees. See tools/globe.ts. */
@@ -175,14 +174,6 @@ const HINT_FIND: Span[] = [{ text: ' / ', inverse: true, attr: DIM }, { text: ' 
 const HINT_CARD: Span[] = [{ text: ' ↵ ', inverse: true, attr: DIM }, { text: ' Card ' }]
 const HINT_SELECT: Span[] = [{ text: ' ↵ ', inverse: true, attr: DIM }, { text: ' Select ' }]
 const HINT_HELP: Span[] = [{ text: ' ? ', inverse: true, attr: DIM }, { text: ' Help ' }]
-/** The footer while a member's card is open: the card's own keys, nothing else. */
-const HINT_MAIL: Span[] = [{ text: ' C ', inverse: true, attr: DIM }, { text: ' C-Mail ' }]
-const HINT_POKE: Span[] = [{ text: ' P ', inverse: true, attr: DIM }, { text: ' Poke ' }]
-const HINT_CLOSE: Span[] = [{ text: ' ESC ', inverse: true, attr: DIM }, { text: ' Close ' }]
-const hintFollow = (following: boolean | undefined): Span[] =>
-  [{ text: ' F ', inverse: true, attr: DIM }, { text: following === undefined ? ' ... ' : following ? ' Unfollow ' : ' Follow ' }]
-/** Pages of the caller's following list read to learn whether a member is followed. 50 a page. */
-const FOLLOW_PAGES = 10
 /** On the top rule, right, beside the clock: the cap alone says enough. */
 const HINT_EXIT: Span[] = [{ text: ' ESC ', inverse: true, attr: DIM }]
 const POPUP_HINT = (...pairs: string[]): string => pairs.join('  ')
@@ -432,8 +423,9 @@ export function globeProgram(api: ApiClient, deps: GlobeDeps, snd: ChatSound = S
     const grid = graticule()
 
     const parked = readState(p.takeState())
-    let yaw = parked.yaw ?? YAW0
-    let pitch = parked.pitch ?? PITCH0
+    const home = lookAt(latLonToVector3(HOME_LAT, HOME_LON))
+    let yaw = parked.yaw ?? home.yaw
+    let pitch = parked.pitch ?? home.pitch
     let zoom = parked.zoom ?? ZOOM_MIN
     /** Where the zoom keys have sent the view; tick() eases `zoom` towards it. */
     let zoomTarget = zoom
@@ -453,8 +445,6 @@ export function globeProgram(api: ApiClient, deps: GlobeDeps, snd: ChatSound = S
     let status = ''
     let running = true
     let quit = false
-    /** The open member card, while there is one. `following` is unknown until the list is read. */
-    let card: { profile: FeedProfile; popup: TextPopup; following?: boolean } | undefined
 
     const outer: Rect = { x: 0, y: 0, w: cols, h: rows }
     const inner: Rect = { x: 1, y: 1, w: cols - 2, h: rows - 2 }
@@ -482,6 +472,16 @@ export function globeProgram(api: ApiClient, deps: GlobeDeps, snd: ChatSound = S
       draw()
       tty.paint(s.render())
     }
+
+    const members = new MemberCard({
+      api, proc: p, snd, stack, bounds: inner, pics: pixels,
+      paint,
+      footer: () => drawFooter(sel >= 0),
+      flush: () => tty.paint(s.render()),
+      invalidate: () => s.invalidate(),
+      status: text => { status = text },
+      live: () => running,
+    })
 
     /** Select a pin. The spin stops for the selection and resumes when it is cleared. */
     const select = (i: number): void => {
@@ -760,8 +760,9 @@ export function globeProgram(api: ApiClient, deps: GlobeDeps, snd: ChatSound = S
      * the keys left out are in the help box (the row is full at 80 columns).
      */
     const drawFooter = (selected: boolean): void => {
-      const groups: Span[][] = card
-        ? api.authed ? [HINT_MAIL, hintFollow(card.following), HINT_POKE, HINT_CLOSE] : [HINT_CLOSE]
+      const open = members.card?.profile
+      const groups: Span[][] = open
+        ? members.hints(open)
         : [
           HINT_TURN,
           ...(api.authed ? [HINT_FIND] : []),
@@ -774,168 +775,6 @@ export function globeProgram(api: ApiClient, deps: GlobeDeps, snd: ChatSound = S
       // Cleared first: the rule is redrawn in place when the follow state arrives.
       s.text(outer.x + 1, outer.y + outer.h - 1, '─'.repeat(outer.w - 2), DIM)
       label(s, outer, groups.flat(), { edge: 'bottom', align: 'right', max: budget })
-    }
-
-    /** The result of a card action, in the card's rule; the popup is gone if the card closed meanwhile. */
-    const report = (text: string): void => {
-      if (!card) return
-      card.popup.say(text)
-      tty.paint(s.render())
-    }
-
-    const failure = (err: unknown): string =>
-      err instanceof ApiError ? (err.code === 'NO_CARRIER' ? 'NO CARRIER' : err.message.toUpperCase()) : 'ERROR'
-
-    /**
-     * Whether the caller follows this member: the API has no flag for it, so
-     * the caller's following list is read, a page at a time, until the member
-     * turns up or FOLLOW_PAGES pages are exhausted (then taken as not followed).
-     */
-    const readFollowing = async (userId: string): Promise<boolean> => {
-      let cursor: string | null = null
-      for (let page = 0; page < FOLLOW_PAGES; page++) {
-        const res: { rows: { followedId?: string }[]; cursor: string | null } =
-          await api.page<{ followedId?: string }>(`/v1/follows?type=following&limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`)
-        if (res.rows.some(r => r.followedId === userId)) return true
-        cursor = res.cursor
-        if (!cursor) break
-      }
-      return false
-    }
-
-    const toggleFollow = async (): Promise<void> => {
-      const c = card
-      if (!c || c.following === undefined) { snd.beep(220, 0.04); return }
-      const them = c.profile.userId
-      if (!them || them === api.userId) { snd.beep(220, 0.12); report(them ? 'THAT IS YOU' : 'NO ID'); return }
-      snd.tick()
-      try {
-        if (c.following) {
-          await api.delete(`/v1/follows/${encodeURIComponent(`${api.userId}_${them}`)}`)
-          c.following = false
-          report('UNFOLLOWED')
-        } else {
-          await api.post('/v1/follows', { followedId: them })
-          c.following = true
-          report('FOLLOWING')
-        }
-        snd.blip(520, 0.09, 0)
-      } catch (err) {
-        // Already following: the list was stale, and the state is now known.
-        if (err instanceof ApiError && err.status === 409) c.following = true
-        else if (err instanceof ApiError && err.status === 404 && c.following) c.following = false
-        snd.beep(220, 0.12)
-        report(failure(err))
-      }
-      if (card === c) { drawFooter(true); tty.paint(s.render()) }
-    }
-
-    /** Members poked in this run: one poke each, whatever the server would allow. */
-    const poked = new Set<string>()
-
-    const poke = async (): Promise<void> => {
-      const c = card
-      if (!c) return
-      if (poked.has(c.profile.username)) { snd.beep(220, 0.12); report('ALREADY POKED'); return }
-      snd.tick()
-      try {
-        await api.post(`/v1/users/${encodeURIComponent(c.profile.username)}/poke`, {})
-        poked.add(c.profile.username)
-        snd.blip(520, 0.09, 0)
-        report('POKED')
-      } catch (err) {
-        snd.beep(220, 0.12)
-        report(failure(err))
-      }
-    }
-
-    /**
-     * C-Mail with the member: the card closes and the shell is asked to run
-     * cmail as its own job. The globe is stopped by the switch and comes back
-     * through the switcher or its name. Under a shell without job control
-     * there is nothing to switch to.
-     */
-    const openMail = (username: string): void => {
-      if (!card) return
-      card = undefined
-      stack.pop()
-      if (!p.kernel.jobs.fg) {
-        status = 'cmail: no job control'
-        snd.beep(220, 0.12)
-        paint()
-        return
-      }
-      void p.kernel.jobs.switchTo({ launch: `cmail @${username}` })
-    }
-
-    let cardLoading = false
-    /** The member's card, as feed's B box: bio beside the portrait, facts under a rule. */
-    const openCard = async (pin: Pin): Promise<void> => {
-      if (cardLoading) return
-      cardLoading = true
-      status = 'LOADING'
-      paint()
-      snd.blip(520, 0.09, 0)
-      const profile = await fetchProfile(api, pin.username)
-      cardLoading = false
-      if (!running || stack.active) return
-      status = ''
-      if (!profile) {
-        status = 'NO PROFILE'
-        snd.beep(220, 0.12)
-        paint()
-        return
-      }
-      const width = Math.max(24, Math.min(56, inner.w - 10))
-      const portrait = await loadPortrait(pixels, profile, width)
-      if (!running || stack.active) return
-      const site = profile.website?.url
-      const popup: TextPopup = new TextPopup({
-        title: `@${profile.username}`,
-        note: profile.badges.length
-          ? profile.badges.flatMap((b, i): Span[] => [
-            ...(i ? [{ text: ' ' }] : []),
-            { text: ` ${b} `, inverse: true, attr: DIM },
-          ])
-          : undefined,
-        lines: bioLines(profile, profile.joined ? when(profile.joined) : undefined, width, portrait),
-        // The card's keys are advertised on the globe's footer beneath, see drawFooter.
-        hint: site ? POPUP_HINT('L Link') : undefined,
-        actions: [
-          ...(site ? [{ key: 'l', silent: true, run: () => { tty.copy(site); popup.say('COPIED'); tty.paint(s.render()) } }] : []),
-          ...(api.authed ? [
-            { key: 'c', silent: true, run: () => openMail(profile.username) },
-            { key: 'f', silent: true, run: () => { void toggleFollow() } },
-            { key: 'p', silent: true, run: () => { void poke() } },
-          ] : []),
-        ],
-        bounds: inner,
-        shadow: true,
-        onFeedback: kind => {
-          if (kind === 'edge') snd.beep(220, 0.04)
-          else if (kind === 'move') snd.tick()
-        },
-        onDone: () => {
-          card = undefined
-          stack.pop()
-          s.invalidate()
-          paint()
-        },
-      })
-      card = { profile, popup }
-      // The footer is drawn before the push, so the snapshot beneath carries it.
-      paint()
-      stack.push(popup)
-      tty.paint(s.render())
-      if (api.authed && profile.userId) {
-        const mine = card
-        readFollowing(profile.userId).then(following => {
-          if (card !== mine) return
-          mine.following = following
-          drawFooter(true)
-          tty.paint(s.render())
-        }).catch(() => {})
-      }
     }
 
     const confirmQuit = (): void => {
@@ -1040,7 +879,7 @@ export function globeProgram(api: ApiClient, deps: GlobeDeps, snd: ChatSound = S
           openHelp()
           return
         case 'Enter': {
-          if (sel >= 0) { void openCard(pins[sel]!); return }
+          if (sel >= 0) { void members.open(pins[sel]!.username); return }
           // Nearest front-facing pin to the crosshair.
           const ox = inner.w * (metrics?.advance ?? 1) / 2, oy = inner.h * (metrics?.cellH ?? 1) / 2
           let best = -1, bestD = Infinity

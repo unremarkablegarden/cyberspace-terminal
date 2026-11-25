@@ -366,3 +366,11 @@
 - Braille spinner before every LOADING: inbox, feed, cIRC, C-Mail, globe, browse, chess lobby
 - Feed: a reply opened from the inbox shows its thread at the reply, not the post's top first
 - Fixed cIRC showing the previous room before revealing the one opened from the inbox
+
+## v0.9.9
+
+- `directory`
+    - Members with a profile picture, as a grid
+    - `S` Sort: newest, oldest, A-Z, Z-A, random
+    - `/` Find, filters as typed
+    - `Enter` Profile: `C` C-Mail, `F` Follow, `P` Poke

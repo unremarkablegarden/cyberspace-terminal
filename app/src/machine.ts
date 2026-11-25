@@ -6,7 +6,7 @@ import { Kernel, mountAll, type Program } from '@cyberspace/kernel'
 import { coreutils, sudoProgram } from '@cyberspace/coreutils'
 import { shellMain } from '@cyberspace/shell'
 import {
-  type ApiClient, circProgram, cmailProgram, feedProgram, globeProgram, cyberspacePrograms, registryPrograms,
+  type ApiClient, circProgram, cmailProgram, feedProgram, globeProgram, directoryProgram, cyberspacePrograms, registryPrograms,
   mountPages, umountPages, syncHome, syncedPaths, syncProgram, InboxService, inboxProgram, wardialProgram,
   type CsHooks, type DraftStore, type HomeKey,
 } from '@cyberspace/apps'
@@ -86,6 +86,19 @@ function registerPrograms(kernel: Kernel, { api, homeKey, snd, host, pictures, f
   kernel.register('chess', host.chess)
   kernel.register('config', host.config)
   kernel.register('launch', host.launch)
+  // A program's localStorage is a file in the home, so it syncs with it. JS
+  // programs get it through the compat host; directory keeps its sort there.
+  const storage = {
+    load: async (name: string): Promise<Record<string, string>> => {
+      const text = await fs.promises.readFile(storePath(api.username, name), 'utf8').catch(() => '')
+      return text ? JSON.parse(text) as Record<string, string> : {}
+    },
+    save: async (name: string, data: Record<string, string>): Promise<void> => {
+      const path = storePath(api.username, name)
+      await fs.promises.mkdir(STORE_DIR(api.username), { recursive: true })
+      await fs.promises.writeFile(path, JSON.stringify(data))
+    },
+  }
   // Registered after coreutils so the network whoami, which reports the logged-in
   // user, replaces the local one.
   // The chat screens request sounds through this; they hold no audio bus themselves.
@@ -111,6 +124,7 @@ function registerPrograms(kernel: Kernel, { api, homeKey, snd, host, pictures, f
     kernel.register('globe', globeProgram(api, { world, metrics, tiny, pixels: pictures }, chatSnd))
   }
   if (pictures) kernel.register('view', viewProgram(pictures))
+  if (pictures) kernel.register('directory', directoryProgram(api, pictures, chatSnd, storage))
   if (saveFile) kernel.register('download', downloadProgram(saveFile))
   kernel.registerAll(registryPrograms(api, chatSnd))
   kernel.register('sync', syncProgram(api, homeKey))
@@ -121,18 +135,7 @@ function registerPrograms(kernel: Kernel, { api, homeKey, snd, host, pictures, f
     username: () => api.username ?? ENV.USER,
     version: VERSION,
     pictures,
-    // A program's localStorage is a file in the home, so it syncs with it.
-    storage: {
-      load: async name => {
-        const text = await fs.promises.readFile(storePath(api.username, name), 'utf8').catch(() => '')
-        return text ? JSON.parse(text) as Record<string, string> : {}
-      },
-      save: async (name, data) => {
-        const path = storePath(api.username, name)
-        await fs.promises.mkdir(STORE_DIR(api.username), { recursive: true })
-        await fs.promises.writeFile(path, JSON.stringify(data))
-      },
-    },
+    storage,
     api: {
       get: path => api.get(path),
       post: (path, body) => api.post(path, body),
