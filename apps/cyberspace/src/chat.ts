@@ -315,7 +315,7 @@ export function entryLines(m: ChatMessage, width: number, opts: EntryOptions = {
  * Only backticks that pair within one line of `said` are delimiters; a lone one, or one whose pair is not typed out yet, stays as text.
  * A run can continue onto the next row.
  */
-function inlineCode(rows: LogLine[], from: number, said: string, attr: number): void {
+export function inlineCode(rows: LogLine[], from: number, said: string, attr: number): void {
   const delimiters = new Set<number>()
   let n = 0
   for (const run of said.matchAll(/`[^`\n]*`|`/g)) {
@@ -415,9 +415,9 @@ export function narrowLines(m: ChatMessage, width: number, opts: EntryOptions = 
   // still yield a row, and a blank line above a picture wastes one in this pane.
   const blank = m.blink && opts.blinkOn === false
   if (said || !tail.length) {
-    for (const line of wrapLines('', said, width)) {
-      rows.push({ text: blank ? '' : line, attr: NORMAL })
-    }
+    const body: LogLine[] = wrapLines('', said, width).map(line => ({ text: blank ? '' : line, attr: NORMAL }))
+    if (opts.code && !blank) inlineCode(body, 0, said, NORMAL | BG)
+    rows.push(...body)
   }
   return rows.concat(tail)
 }

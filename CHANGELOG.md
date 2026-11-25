@@ -374,3 +374,5 @@
     - `S` Sort: newest, oldest, A-Z, Z-A, random
     - `/` Find, filters as typed
     - `Enter` Profile: `C` C-Mail, `F` Follow, `P` Poke
+- cIRC: inline `code` on the dim background, backticks hidden
+- Fixed C-Mail showing `code` with its backticks in messages (only actions had it)

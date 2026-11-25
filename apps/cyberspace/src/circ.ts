@@ -329,6 +329,7 @@ export function circProgram(
         blinkOn: blink.on,
         picture: picture(m),
         picRows: drawsPicture(m.imageUrl) ? picBounds().rows : 0,
+        code: true,
       }
       return narrow ? narrowLines(m, logRect.w, opts) : entryLines(m, logRect.w, opts)
     }

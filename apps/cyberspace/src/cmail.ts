@@ -20,13 +20,13 @@ import {
   Surface, ScreenStack, InputLine, Reveal, Spinner, drawLog, parseKeys,
   frame, hline, label, cells, plain,
   ConfirmPopup, PromptPopup, TextPopup, YES_NO,
-  NORMAL, BRIGHT, BOLD, DIM,
+  NORMAL, BRIGHT, BOLD, DIM, BG,
   type LogLine, type Span, type Rect, type KeyInput, type Screen,
 } from '@cyberspace/tui'
 import { ApiClient, ApiError } from './api.js'
 import { artLines, bodyOf, followList, hasStyle, type MsgBody } from './chatui.js'
 import {
-  BLIP_HZ, Blinker, SILENT, Typewriter, entryLines, entryParts, hhmm,
+  BLIP_HZ, Blinker, SILENT, Typewriter, entryLines, entryParts, hhmm, inlineCode,
   printing, systemLines, type ChatMessage, type ChatPictureHost, type ChatSound,
   type Picture,
 } from './chat.js'
@@ -436,11 +436,16 @@ export function cmailProgram(
             { at: offset, len: 2, attr: DIM },
             { at: offset + w - 2, len: 2, attr: DIM },
           ]
-          for (const line of wrapBody(body, inner)) {
+          // Code runs are found on the bare rows, before the padding to the box
+          // width: removing a run's backticks shortens its row.
+          const attr = e.m.deleted ? DIM : NORMAL
+          const rows: LogLine[] = wrapBody(body, inner).map(line => ({ text: blank ? '' : line, attr }))
+          if (!blank) inlineCode(rows, 0, body, attr | BG)
+          for (const row of rows) {
             out.push({
-              text: pad + '│ ' + (blank ? '' : line).padEnd(inner) + ' │',
-              attr: e.m.deleted ? DIM : NORMAL,
-              spans: edges,
+              text: pad + '│ ' + row.text.padEnd(inner) + ' │',
+              attr,
+              spans: [...edges, ...(row.spans ?? []).map(sp => ({ ...sp, at: sp.at + offset + 2 }))],
             })
           }
           // Art rows are cut to the box, never wrapped: a wrapped row breaks the drawing.
